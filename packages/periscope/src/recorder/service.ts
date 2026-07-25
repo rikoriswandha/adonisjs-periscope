@@ -5,23 +5,35 @@
  * file that was distributed with this source code.
  */
 
+import app from '@adonisjs/core/services/app'
+
+import { Recorder } from './recorder.ts'
+
 /**
- * Implemented in Phase 1 (P1.3 — recorder pipeline, `src/recorder/recorder.ts`). Phase 0 ships
- * the module so the package `exports` map resolves and `npm run build` produces every declared
- * entry point.
+ * The container service behind the `periscope/services/recorder` subpath.
  *
- * This file is the container service behind the `periscope/services/recorder` subpath. P1.3
- * replaces the placeholder with the resolved singleton
- * (`await app.container.make('periscope.recorder')`) and fills the `Recorder` contract with
- * `record` / `flush` / `mute` / hook registration.
+ * ```ts
+ * import recorder from 'periscope/services/recorder'
+ * import { EntryType, IncomingEntry } from 'periscope'
+ *
+ * recorder.record(IncomingEntry.make(EntryType.EVENT, { name: 'order.placed' }))
+ * ```
+ *
+ * Both names come from the package root rather than `periscope/types`: they are used here as
+ * *values*, and `periscope/types` exports `IncomingEntry` as a type only — copy-pasting an
+ * import from there fails at runtime with "does not provide an export named 'IncomingEntry'".
+ *
+ * Resolving the singleton requires `PeriscopeProvider` to be registered in `adonisrc.ts` — the
+ * provider is what binds the class, wiring in the resolved config and the storage driver. Import
+ * this module without it and the container will hand back an unconfigured instance.
+ *
+ * Same shape as the official `@adonisjs/lucid` and `@adonisjs/mail` services: a top-level await on
+ * `app.booted()` so the singleton is resolved exactly once, after providers have registered.
  */
+let recorder: Recorder
 
-/**
- * The recorder contract. Deliberately empty in Phase 0 — the real members land in P1.3 rather
- * than being guessed at here.
- */
-export interface Recorder {}
+await app.booted(async () => {
+  recorder = await app.container.make(Recorder)
+})
 
-const recorder: Recorder = {}
-
-export default recorder
+export { recorder as default }

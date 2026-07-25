@@ -41,6 +41,12 @@ export default defineConfig({
   providers: [
     () => import('@adonisjs/core/providers/app_provider'),
     () => import('@adonisjs/core/providers/hash_provider'),
+    /**
+     * Registered early on purpose: AdonisJS shuts providers down in reverse order, so an early
+     * registration means Periscope's final flush runs *after* the providers whose work it
+     * watches have stopped producing entries.
+     */
+    () => import('periscope/provider'),
     {
       file: () => import('@adonisjs/core/providers/repl_provider'),
       environment: ['repl', 'test'],

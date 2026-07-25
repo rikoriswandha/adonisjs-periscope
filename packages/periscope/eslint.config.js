@@ -16,6 +16,12 @@ import { configPkg } from '@adonisjs/eslint-config'
  * Periscope observes the host application; it never phones home, never fetches remote assets and
  * never proxies traffic. The only carve-out is `src/watchers/http_client/**`, which subscribes to
  * `diagnostics_channel` events emitted by undici — it observes requests, it never makes them.
+ *
+ * `stubs/` is in scope because it ships in the published package: `stubs/main.ts` is real code
+ * that runs inside the host application during `node ace add periscope`. The `.stub` templates
+ * beside it are not JavaScript as far as ESLint is concerned and cannot be linted, so the ban is
+ * a review rule for those — a template that emits a `fetch()` into a host app is the one leak
+ * this config cannot catch.
  */
 const NETWORK_BAN_MESSAGE =
   'Outbound network access is banned in Periscope (implementation plan §0, invariant 3). ' +
@@ -36,7 +42,7 @@ const BANNED_NETWORK_MODULES = [
 export default configPkg(
   {
     name: 'periscope/no-outbound-network',
-    files: ['src/**/*.ts', 'providers/**/*.ts', 'commands/**/*.ts'],
+    files: ['src/**/*.ts', 'providers/**/*.ts', 'commands/**/*.ts', 'stubs/**/*.ts'],
     rules: {
       'no-restricted-globals': ['error', { name: 'fetch', message: NETWORK_BAN_MESSAGE }],
       'no-restricted-imports': [

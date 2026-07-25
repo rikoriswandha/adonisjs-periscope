@@ -1,0 +1,104 @@
+{{{
+  exports({ to: app.configPath('periscope.ts') })
+}}}
+// Add `DEFAULT_REDACT_KEYS` / `DEFAULT_REDACT_HEADERS` to this import to extend, rather than
+// replace, the redaction lists Periscope ships with — see the `redact` block below.
+import { defineConfig } from 'periscope/periscope_config'
+
+export default defineConfig({
+  /**
+   * Master switch. Combined with `enabledIn` and the `PERISCOPE_ENABLED` environment variable:
+   * `PERISCOPE_ENABLED=1` forces recording on and `PERISCOPE_ENABLED=0` forces it off, whatever
+   * this file says.
+   *
+   * Default: true
+   */
+  enabled: true,
+
+  /**
+   * The `NODE_ENV` values Periscope is allowed to record in. Production is opt-in on purpose.
+   *
+   * Default: ['development', 'test']
+   */
+  enabledIn: ['development', 'test'],
+
+  storage: {
+    /**
+     * Where entries are persisted.
+     *
+     * - `memory`: nothing survives a restart. Fine for tests, useless for debugging a crash.
+     * - `sqlite-local`: a local SQLite file, no application database involved.
+     * - `database`: a Lucid connection, sharing your application's database.
+     *
+     * Default: 'memory'
+     */
+    driver: 'memory',
+
+    /**
+     * Lucid connection name, used by the `database` driver only. Omit it for the other drivers.
+     */
+    // connection: 'primary',
+
+    /**
+     * Hard ceiling on stored entries; the oldest are trimmed away past it.
+     *
+     * Default: 10_000
+     */
+    maxEntries: 10_000,
+  },
+
+  recording: {
+    /**
+     * Per-entry-type caps applied within a single batch, so one runaway loop cannot turn a
+     * single request into fifty thousand query entries. `default` covers every type you do not
+     * list; `0` records none of that type.
+     *
+     * Default: 100 for every type, except `query` which defaults to 200.
+     */
+    caps: {
+      default: 100,
+      query: 200,
+    },
+
+    /**
+     * How often the ambient batch — everything recorded outside a request, command or job — is
+     * rotated and flushed, in milliseconds.
+     *
+     * Default: 10_000
+     */
+    ambientRotationMs: 10_000,
+
+    /**
+     * How long the recorder caches the "paused" flag before re-reading it, in milliseconds.
+     * Lower means `node ace periscope:pause` takes effect faster, at the cost of more reads.
+     *
+     * Default: 5_000
+     */
+    pausedFlagTtlMs: 5_000,
+  },
+
+  redact: {
+    /**
+     * Keys whose values are scrubbed wherever they appear, at any depth. Matching ignores case,
+     * underscores, hyphens and spaces, so `apiKey`, `api_key` and `API-KEY` all match `apikey`.
+     *
+     * This list REPLACES the shipped defaults rather than extending them. To add to them,
+     * import and spread `DEFAULT_REDACT_KEYS` from 'periscope/periscope_config':
+     *
+     *   keys: [...DEFAULT_REDACT_KEYS, 'internal_reference'],
+     */
+    // keys: [...DEFAULT_REDACT_KEYS, 'internal_reference'],
+
+    /**
+     * HTTP header names to scrub. Replaces `DEFAULT_REDACT_HEADERS`, same as above.
+     */
+    // headers: [...DEFAULT_REDACT_HEADERS, 'x-internal-token'],
+
+    /**
+     * What redacted values are replaced with.
+     *
+     * Default: '[REDACTED]'
+     */
+    replacement: '[REDACTED]',
+  },
+})

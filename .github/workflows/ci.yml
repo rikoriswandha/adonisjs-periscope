@@ -48,6 +48,15 @@ jobs:
       - name: Install
         run: npm ci
 
+      # `npm run typecheck` fans out to every workspace, and the playground is a
+      # real consumer: it imports `periscope/provider`, `periscope/services/recorder`
+      # and `periscope`, all of which resolve through the package's `exports` map
+      # into `build/`. On a clean checkout `build/` does not exist, so without this
+      # step the job fails on unresolved modules rather than on a type error. Same
+      # reason the test job below builds before running the playground suite.
+      - name: Build periscope (the playground typechecks against the built package)
+        run: npm -w periscope run build
+
       - name: tsc --noEmit
         run: npm run typecheck
 
@@ -89,6 +98,14 @@ jobs:
 
       - name: Unit tests (packages/periscope)
         run: npm -w periscope run test
+
+      # The playground consumes `periscope` through its published `exports` map, which points at
+      # `build/`. Without this the app cannot even resolve `periscope/provider` and every
+      # integration test fails on an import error rather than on anything meaningful. The unit
+      # tests above deliberately run first, against `src/`, so a compile problem is reported as a
+      # compile problem.
+      - name: Build periscope (the playground imports the built package)
+        run: npm -w periscope run build
 
       - name: Integration tests (playground, booted app)
         run: npm -w playground run test

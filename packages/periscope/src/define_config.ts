@@ -6,14 +6,493 @@
  */
 
 /**
- * Implemented in Phase 1 (P1.5 — Config + `defineConfig`). Phase 0 ships the module so the
- * package `exports` map resolves and `npm run build` produces every declared entry point.
+ * Implementation plan P1.5 — configuration.
  *
- * P1.5 replaces the identity function below with the full config shape, runtime validation
- * (negative caps, unknown storage driver) and resolved defaults, returned as an AdonisJS
- * config provider. Until then `defineConfig` only preserves the literal type of whatever
- * `config/periscope.ts` exports, which is enough for the playground to declare a config file.
+ * `config/periscope.ts` is written by the application as a sparse object and handed to
+ * {@link defineConfig}, which deep-merges it over the defaults, validates every value and
+ * returns the dense {@link ResolvedPeriscopeConfig} the rest of the package reads. Nothing
+ * downstream carries its own fallbacks: the recorder, the storage drivers and the watchers all
+ * assume every key is present and already correct.
+ *
+ * Two deliberate design decisions:
+ *
+ * - This is a plain function, not an AdonisJS config provider. Resolution needs nothing from the
+ *   container, and a plain function means an invalid config throws while `config/periscope.ts`
+ *   is being imported — the application fails at boot with a readable list of problems instead
+ *   of silently recording nothing.
+ * - Validation runs to completion and reports *every* problem in one
+ *   {@link PeriscopeConfigError}. Fixing a config file one error per boot is miserable, and the
+ *   whole pass costs microseconds, once.
+ *
+ * The unknown-key checks matter more than they look. A typo'd `redaction:` block would otherwise
+ * be accepted in silence and leak passwords into the dashboard for months; instead it names the
+ * offending key and the accepted set.
  */
-export function defineConfig<T extends Record<string, unknown>>(config: T): T {
-  return config
+
+import { PeriscopeConfigError } from './errors.ts'
+import { DEFAULT_REDACT_HEADERS, DEFAULT_REDACT_KEYS } from './recorder/redactor.ts'
+import { ENTRY_TYPES, EntryType } from './types.ts'
+import type {
+  FilterHook,
+  PeriscopeConfig,
+  ResolvedPeriscopeConfig,
+  StorageDriverName,
+  TagHook,
+} from './types.ts'
+
+/**
+ * Re-exported so a `config/periscope.ts` that wants to *extend* the shipped redaction lists
+ * rather than replace them needs a single import next to `defineConfig`, instead of reaching
+ * into the recorder's internals:
+ *
+ * ```ts
+ * redact: { keys: [...DEFAULT_REDACT_KEYS, 'internal_reference'] }
+ * ```
+ */
+export { DEFAULT_REDACT_HEADERS, DEFAULT_REDACT_KEYS } from './recorder/redactor.ts'
+
+/**
+ * Top-level keys of `config/periscope.ts`. Doubles as the accepted-key list quoted back to the
+ * application when it misspells one.
+ *
+ * `serialization` is deliberately absent: nothing reads it yet, so `safeSerialize`'s own
+ * `SERIALIZER_DEFAULTS` are the only serialisation limits in phase 1 and a config block would
+ * be a knob wired to nothing. Writing one is therefore an unknown-key error rather than a
+ * silently ignored setting. Phase 3 adds it back when a watcher needs to override those
+ * defaults.
+ */
+const TOP_LEVEL_KEYS = ['enabled', 'enabledIn', 'storage', 'recording', 'redact', 'hooks'] as const
+
+/**
+ * Drivers `storage.driver` accepts. Kept as an array rather than derived from a registry: the
+ * shipped set is fixed at build time and the order here is the order shown in error messages.
+ */
+const STORAGE_DRIVERS: readonly StorageDriverName[] = ['memory', 'sqlite-local', 'database']
+
+const DEFAULT_ENABLED_IN: readonly string[] = ['development', 'test']
+const DEFAULT_MAX_ENTRIES = 10_000
+const DEFAULT_AMBIENT_ROTATION_MS = 10_000
+const DEFAULT_PAUSED_FLAG_TTL_MS = 5_000
+
+/**
+ * Per-batch cap applied to every entry type without one of its own. Queries get a higher one:
+ * a single request legitimately runs dozens of them, and the N+1 detector is worthless if the
+ * evidence is truncated before the pattern is visible.
+ */
+const DEFAULT_CAP = 100
+const DEFAULT_QUERY_CAP = 200
+
+const DEFAULT_REPLACEMENT = '[REDACTED]'
+
+/**
+ * Recognised values of `PERISCOPE_ENABLED`, compared trimmed and lower-cased. Anything else is
+ * ignored rather than guessed at — see {@link isRecordingEnabled}.
+ */
+const ENABLED_OVERRIDES: Record<string, boolean> = {
+  '1': true,
+  'true': true,
+  '0': false,
+  'false': false,
+}
+
+/**
+ * Renders a rejected value for an error message.
+ *
+ * Never invokes user code: no `toString` on objects, no `JSON.stringify` of a structure that may
+ * be a throwing proxy or hold a cycle. A config value can be literally anything, and the
+ * validator must not fail while explaining why something else failed.
+ */
+function describe(value: unknown): string {
+  if (value === null) {
+    return 'null'
+  }
+
+  if (Array.isArray(value)) {
+    return 'an array'
+  }
+
+  switch (typeof value) {
+    case 'string':
+      return JSON.stringify(value)
+    case 'object':
+      return 'an object'
+    case 'function':
+      return 'a function'
+    default:
+      return String(value)
+  }
+}
+
+/**
+ * True for values that can be merged key-by-key. Arrays are excluded on purpose — they replace
+ * rather than merge — and so is `null`, which is the value a half-finished config file most
+ * often holds. `{ storage: null }` must be an error, never a silent fall-through to the
+ * defaults.
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Records an issue for every key the block does not define. `prefix` is the dotted path of the
+ * containing block, with its trailing dot, or `''` at the top level.
+ */
+function rejectUnknownKeys(
+  prefix: string,
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  issues: string[]
+): void {
+  for (const key of Object.keys(value)) {
+    if (!allowed.includes(key)) {
+      issues.push(`${prefix}${key}: unknown option; accepted keys are ${allowed.join(', ')}`)
+    }
+  }
+}
+
+/**
+ * Reads one nested block, returning `{}` when it is absent or unusable so the caller can carry
+ * on collecting issues from the remaining blocks instead of bailing out at the first mistake.
+ */
+function readBlock(
+  input: Record<string, unknown>,
+  key: string,
+  allowed: readonly string[],
+  issues: string[]
+): Record<string, unknown> {
+  const value = input[key]
+
+  if (value === undefined) {
+    return {}
+  }
+
+  if (!isPlainObject(value)) {
+    issues.push(`${key}: must be an object; got ${describe(value)}`)
+    return {}
+  }
+
+  rejectUnknownKeys(`${key}.`, value, allowed, issues)
+
+  return value
+}
+
+/**
+ * Every `read*` helper below returns `undefined` for "absent or invalid" and pushes its own
+ * issue when the value was present but wrong. The caller then applies the default unconditionally
+ * — safe, because a recorded issue means `defineConfig` throws before the resolved object is
+ * ever returned.
+ */
+function readBoolean(path: string, value: unknown, issues: string[]): boolean | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+
+  if (typeof value !== 'boolean') {
+    issues.push(`${path}: must be a boolean; got ${describe(value)}`)
+    return undefined
+  }
+
+  return value
+}
+
+/**
+ * Safe integers only: a cap of `1e21` or `NaN` is a mistake that would otherwise surface as a
+ * mystery much later, inside the recorder's accounting or a `LIMIT` clause.
+ */
+function readInteger(
+  path: string,
+  value: unknown,
+  minimum: number,
+  issues: string[]
+): number | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum) {
+    issues.push(`${path}: must be an integer >= ${minimum}; got ${describe(value)}`)
+    return undefined
+  }
+
+  return value
+}
+
+function readString(path: string, value: unknown, issues: string[]): string | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+
+  if (typeof value !== 'string') {
+    issues.push(`${path}: must be a string; got ${describe(value)}`)
+    return undefined
+  }
+
+  return value
+}
+
+function readNonEmptyString(path: string, value: unknown, issues: string[]): string | undefined {
+  const string = readString(path, value, issues)
+
+  if (string === undefined) {
+    return undefined
+  }
+
+  if (string.trim() === '') {
+    issues.push(`${path}: must be a non-empty string`)
+    return undefined
+  }
+
+  return string
+}
+
+/**
+ * Arrays are copied, never aliased: the resolved config must not share identity with the
+ * application's literal, or a later `config.redact.keys.push()` in user land would mutate what
+ * the recorder is using mid-flight.
+ */
+function readStringArray(path: string, value: unknown, issues: string[]): string[] | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+
+  if (!Array.isArray(value)) {
+    issues.push(`${path}: must be an array of non-empty strings; got ${describe(value)}`)
+    return undefined
+  }
+
+  const items: readonly unknown[] = value
+  let valid = true
+
+  for (const [index, item] of items.entries()) {
+    if (typeof item !== 'string' || item.trim() === '') {
+      issues.push(`${path}[${index}]: must be a non-empty string; got ${describe(item)}`)
+      valid = false
+    }
+  }
+
+  return valid ? (items as readonly string[]).slice() : undefined
+}
+
+function readFunctionArray<T>(path: string, value: unknown, issues: string[]): T[] | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+
+  if (!Array.isArray(value)) {
+    issues.push(`${path}: must be an array of functions; got ${describe(value)}`)
+    return undefined
+  }
+
+  const items: readonly unknown[] = value
+  let valid = true
+
+  for (const [index, item] of items.entries()) {
+    if (typeof item !== 'function') {
+      issues.push(`${path}[${index}]: must be a function; got ${describe(item)}`)
+      valid = false
+    }
+  }
+
+  return valid ? (items as readonly T[]).slice() : undefined
+}
+
+/**
+ * Resolves the sparse `recording.caps` map into a dense one covering every {@link EntryType}.
+ *
+ * Precedence is explicit per-type value, then the user's `default`, then the built-in per-type
+ * default. Densifying here is what lets the recorder's cap check be a single property read on
+ * the hot path, with no fallback lookup and no `undefined` branch.
+ */
+function resolveCaps(value: unknown, issues: string[]): Record<EntryType, number> {
+  const overrides: Partial<Record<EntryType | 'default', number>> = {}
+
+  if (isPlainObject(value)) {
+    for (const [key, raw] of Object.entries(value)) {
+      if (key !== 'default' && !(ENTRY_TYPES as readonly string[]).includes(key)) {
+        issues.push(
+          `recording.caps.${key}: unknown entry type; accepted keys are default and ` +
+            ENTRY_TYPES.join(', ')
+        )
+        continue
+      }
+
+      /**
+       * Zero is a legitimate cap: it means "record none of this type", which is how an
+       * application turns a single noisy watcher off without disabling Periscope.
+       */
+      const cap = readInteger(`recording.caps.${key}`, raw, 0, issues)
+
+      if (cap !== undefined) {
+        overrides[key as EntryType | 'default'] = cap
+      }
+    }
+  } else if (value !== undefined) {
+    issues.push(
+      `recording.caps: must be an object mapping entry types to integers; got ${describe(value)}`
+    )
+  }
+
+  const fallback = overrides.default
+  const caps = {} as Record<EntryType, number>
+
+  for (const type of ENTRY_TYPES) {
+    caps[type] =
+      overrides[type] ?? fallback ?? (type === EntryType.QUERY ? DEFAULT_QUERY_CAP : DEFAULT_CAP)
+  }
+
+  return caps
+}
+
+/**
+ * Validates `config/periscope.ts` and fills in every default.
+ *
+ * Merging rules, which are the part applications actually trip over:
+ *
+ * - Nested blocks merge key-by-key, so `{ storage: { driver: 'memory' } }` keeps the default
+ *   `maxEntries`.
+ * - Arrays **replace**, they never concatenate. That holds for `enabledIn`, `redact.keys`,
+ *   `redact.headers` and both hook lists. To extend the shipped redaction lists rather than
+ *   replace them, spread them: `keys: [...DEFAULT_REDACT_KEYS, 'internal_ref']`.
+ * - `recording.caps` is sparse on the way in and dense on the way out.
+ * - `storage.connection` stays absent unless the application sets it, rather than being
+ *   materialised as an explicit `undefined`.
+ *
+ * @throws {PeriscopeConfigError} with one issue per problem found, each formatted
+ *   `"<dotted.path>: <what is wrong and what is allowed>"`.
+ */
+export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
+  const issues: string[] = []
+  let input: Record<string, unknown> = {}
+
+  if (isPlainObject(config)) {
+    input = config
+    rejectUnknownKeys('', input, TOP_LEVEL_KEYS, issues)
+  } else {
+    issues.push(`config: must be an object; got ${describe(config)}`)
+  }
+
+  const enabled = readBoolean('enabled', input.enabled, issues)
+  const enabledIn = readStringArray('enabledIn', input.enabledIn, issues)
+
+  if (enabledIn !== undefined && enabledIn.length === 0) {
+    issues.push(
+      'enabledIn: must list at least one NODE_ENV value; set enabled: false to switch Periscope off'
+    )
+  }
+
+  const storage = readBlock(input, 'storage', ['driver', 'connection', 'maxEntries'], issues)
+  const rawDriver = storage.driver
+  let driver: StorageDriverName | undefined
+
+  if (rawDriver !== undefined) {
+    if (
+      typeof rawDriver !== 'string' ||
+      !(STORAGE_DRIVERS as readonly string[]).includes(rawDriver)
+    ) {
+      issues.push(
+        `storage.driver: unknown driver ${describe(rawDriver)}; must be one of ` +
+          STORAGE_DRIVERS.join(', ')
+      )
+    } else {
+      driver = rawDriver as StorageDriverName
+    }
+  }
+
+  const connection = readNonEmptyString('storage.connection', storage.connection, issues)
+  const maxEntries = readInteger('storage.maxEntries', storage.maxEntries, 1, issues)
+
+  const recording = readBlock(
+    input,
+    'recording',
+    ['caps', 'ambientRotationMs', 'pausedFlagTtlMs'],
+    issues
+  )
+  const caps = resolveCaps(recording.caps, issues)
+  const ambientRotationMs = readInteger(
+    'recording.ambientRotationMs',
+    recording.ambientRotationMs,
+    1,
+    issues
+  )
+  const pausedFlagTtlMs = readInteger(
+    'recording.pausedFlagTtlMs',
+    recording.pausedFlagTtlMs,
+    1,
+    issues
+  )
+
+  const redact = readBlock(input, 'redact', ['keys', 'headers', 'replacement'], issues)
+  const redactKeys = readStringArray('redact.keys', redact.keys, issues)
+  const redactHeaders = readStringArray('redact.headers', redact.headers, issues)
+  const replacement = readString('redact.replacement', redact.replacement, issues)
+
+  const hooks = readBlock(input, 'hooks', ['filter', 'tag'], issues)
+  const filter = readFunctionArray<FilterHook>('hooks.filter', hooks.filter, issues)
+  const tag = readFunctionArray<TagHook>('hooks.tag', hooks.tag, issues)
+
+  if (issues.length > 0) {
+    throw new PeriscopeConfigError(issues)
+  }
+
+  const resolvedStorage: ResolvedPeriscopeConfig['storage'] = {
+    driver: driver ?? 'memory',
+    maxEntries: maxEntries ?? DEFAULT_MAX_ENTRIES,
+  }
+
+  /**
+   * Assigned conditionally so an unset connection is an absent key rather than an own property
+   * holding `undefined` — the latter is invisible to `??` but very visible to `deepEqual`, to
+   * `Object.keys` and to a Lucid call that would receive it verbatim.
+   */
+  if (connection !== undefined) {
+    resolvedStorage.connection = connection
+  }
+
+  return {
+    enabled: enabled ?? true,
+    enabledIn: enabledIn ?? [...DEFAULT_ENABLED_IN],
+    storage: resolvedStorage,
+    recording: {
+      caps,
+      ambientRotationMs: ambientRotationMs ?? DEFAULT_AMBIENT_ROTATION_MS,
+      pausedFlagTtlMs: pausedFlagTtlMs ?? DEFAULT_PAUSED_FLAG_TTL_MS,
+    },
+    redact: {
+      keys: redactKeys ?? [...DEFAULT_REDACT_KEYS],
+      headers: redactHeaders ?? [...DEFAULT_REDACT_HEADERS],
+      replacement: replacement ?? DEFAULT_REPLACEMENT,
+    },
+    hooks: {
+      filter: filter ?? [],
+      tag: tag ?? [],
+    },
+  }
+}
+
+/**
+ * The environment gate: should this process record at all?
+ *
+ * Used by the provider when it builds the recorder (P1.6) and again by the dashboard's
+ * `authorize` middleware (P4.1), which is why it lives here rather than inside the recorder —
+ * both callers must reach the same verdict from the same rule.
+ *
+ * `periscopeEnabled` is the raw `process.env.PERISCOPE_ENABLED` string, passed in rather than
+ * read here so the function stays pure and testable. A recognised truthy value forces recording
+ * on and a recognised falsy value forces it off, both overriding `enabled`/`enabledIn` — that is
+ * the escape hatch for "record this one production box for ten minutes" and for "shut it up
+ * right now" alike. Anything else, including the empty string a shell exports for an unset
+ * variable, is ignored as if the variable were absent: guessing at `PERISCOPE_ENABLED=maybe`
+ * would be worse than falling back to the config file.
+ */
+export function isRecordingEnabled(
+  config: Pick<ResolvedPeriscopeConfig, 'enabled' | 'enabledIn'>,
+  environment: { nodeEnv: string; periscopeEnabled?: string | undefined }
+): boolean {
+  const override = environment.periscopeEnabled?.trim().toLowerCase()
+
+  if (override !== undefined && Object.hasOwn(ENABLED_OVERRIDES, override)) {
+    return ENABLED_OVERRIDES[override]
+  }
+
+  return config.enabled && config.enabledIn.includes(environment.nodeEnv)
 }
