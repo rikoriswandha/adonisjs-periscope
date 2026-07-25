@@ -1,0 +1,76 @@
+{
+  "name": "periscope",
+  "version": "0.0.0",
+  "description": "A Laravel-Telescope-style debug assistant for AdonisJS v7",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "exports": {
+    ".": "./build/src/index.js",
+    "./package.json": "./package.json",
+    "./provider": "./build/providers/periscope_provider.js",
+    "./services/recorder": "./build/src/recorder/service.js",
+    "./middleware/request_watcher": "./build/src/watchers/request/middleware.js",
+    "./exception_reporter": "./build/src/watchers/exception/mixin.js",
+    "./dump": "./build/src/dump.js",
+    "./hooks": "./build/src/hooks/doctor.js",
+    "./commands": "./build/commands/main.js",
+    "./types": "./build/src/types.js",
+    "./periscope_config": "./build/src/define_config.js"
+  },
+  "files": [
+    "build",
+    "!build/bin",
+    "!build/tests",
+    "!build/tests_helpers"
+  ],
+  "scripts": {
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('build', { recursive: true, force: true })\"",
+    "compile": "tsc",
+    "copy:templates": "copyfiles \"stubs/**/*.stub\" --up=1 build",
+    "build": "npm run clean && npm run compile && npm run copy:templates",
+    "test": "node --import=@poppinss/ts-exec --enable-source-maps bin/test.ts",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.10.0"
+  },
+  "peerDependencies": {
+    "@adonisjs/core": "^7.0.0",
+    "@adonisjs/lucid": ">=22.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@adonisjs/lucid": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@adonisjs/core": "^7.3.5",
+    "@adonisjs/eslint-config": "^3.1.0",
+    "@adonisjs/lucid": "^22.4.2",
+    "@adonisjs/prettier-config": "^1.5.0",
+    "@adonisjs/tsconfig": "^2.0.0",
+    "@japa/assert": "^4.2.0",
+    "@japa/expect-type": "^2.0.4",
+    "@japa/file-system": "^3.0.0",
+    "@japa/plugin-adonisjs": "^5.2.0",
+    "@japa/runner": "^5.3.0",
+    "@poppinss/ts-exec": "^1.4.4",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/luxon": "^3.7.1",
+    "@types/node": "~25.9.1",
+    "copyfiles": "^2.4.1",
+    "eslint": "^10.4.0",
+    "luxon": "^3.7.2",
+    "typescript": "~6.0.3"
+  },
+  "prettier": "@adonisjs/prettier-config"
+}

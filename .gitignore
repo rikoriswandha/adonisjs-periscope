@@ -1,0 +1,18 @@
+node_modules
+build
+dist
+coverage
+.DS_Store
+*.log
+*.swp
+
+# Adonis
+.env
+**/tmp/*
+!**/tmp/.gitkeep
+
+# Local caches
+.tsbuildinfo
+*.tsbuildinfo
+.vite
+codedb.snapshot

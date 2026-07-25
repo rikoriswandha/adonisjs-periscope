@@ -1,0 +1,24 @@
+/*
+|--------------------------------------------------------------------------
+| JavaScript entrypoint for running ace commands
+|--------------------------------------------------------------------------
+|
+| DO NOT MODIFY THIS FILE AS IT WILL BE OVERRIDDEN DURING THE BUILD
+| PROCESS.
+|
+| See docs.adonisjs.com/guides/typescript-build-process#creating-production-build
+|
+| Since, we cannot run TypeScript source code using "node" binary, we need
+| a JavaScript entrypoint to run ace commands.
+|
+*/
+
+/**
+ * Register hook to process TypeScript files using @poppinss/ts-exec
+ */
+import '@poppinss/ts-exec'
+
+/**
+ * Import ace console entrypoint
+ */
+await import('./bin/console.js')

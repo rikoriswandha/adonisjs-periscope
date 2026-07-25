@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# One in-flight run per ref. A new push supersedes the previous run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+
+      # `npm ci` must run install scripts: better-sqlite3 builds/fetches a
+      # native binding here. The allow-list lives in /.npmrc — see the comment
+      # in that file. Never add --ignore-scripts to any job below.
+      - name: Install
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: tsc --noEmit
+        run: npm run typecheck
+
+  test:
+    # The package declares engines.node >= 24. 24 is the floor we promise;
+    # 26 is the current release line and what contributors actually run.
+    name: Test (Node ${{ matrix.node }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['24', '26']
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # The playground is a real AdonisJS app: it refuses to boot without
+      # APP_KEY and friends. `.env.test` is committed and layers on top of
+      # `.env`, which may or may not be committed — provide it either way.
+      - name: Provision playground env
+        shell: bash
+        run: |
+          if [ -f playground/.env ]; then
+            echo "playground/.env already present; leaving it untouched."
+          elif [ -f playground/.env.example ]; then
+            cp playground/.env.example playground/.env
+            echo "Copied playground/.env.example -> playground/.env"
+          else
+            echo "::error::playground/.env.example is missing; the playground cannot boot."
+            exit 1
+          fi
+
+      - name: Unit tests (packages/periscope)
+        run: npm -w periscope run test
+
+      - name: Integration tests (playground, booted app)
+        run: npm -w playground run test
+
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build package + dashboard
+        run: npm run build
+
+      # Risk R6 / task P9.1: "dashboard assets missing from published tarball".
+      # packages/dashboard builds into packages/periscope/build/dashboard, and
+      # the package ships `files: ["build"]`. If the SPA build silently no-ops
+      # or retargets its outDir, the published package serves a 404 dashboard
+      # and nothing else in CI notices. This is the early, cheap version of the
+      # gate; P9.1 replaces it with a real `npm pack` + tarball inspection.
+      - name: Assert dashboard assets are in the build output
+        shell: bash
+        run: |
+          asset="packages/periscope/build/dashboard/index.html"
+          if [ ! -f "$asset" ]; then
+            echo "::error file=packages/dashboard/vite.config.ts::$asset is missing after 'npm run build'. The dashboard SPA did not emit into the published package (risk R6)."
+            echo "--- packages/periscope/build (top level) ---"
+            ls -la packages/periscope/build || echo "build/ does not exist"
+            exit 1
+          fi
+          echo "OK: $asset present ($(wc -c <"$asset") bytes)."

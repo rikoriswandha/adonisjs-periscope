@@ -1,0 +1,12 @@
+# The repo-root .gitignore ignores `.env` everywhere. The playground is a throwaway
+# fixture app that must boot with zero setup, so it is negated here — and only here.
+# Never copy this negation into a real application.
+
+!.env
+.env.local
+.env.production.local
+.env.development.local
+
+# Assembler regenerates these route/entity type indexes on every `serve` and `test`
+# run, and nothing in this app imports them (no `indexEntities` hook, no `#generated/*`).
+.adonisjs
