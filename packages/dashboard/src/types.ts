@@ -137,3 +137,83 @@ export type ExceptionContent = EntryContent & {
   }
   context?: unknown
 }
+
+export type CommandContent = EntryContent & {
+  command: string
+  args: unknown
+  flags: unknown
+  isMain: boolean
+  exitCode: number
+  durationMs: number
+  output?: string
+  error?: unknown
+}
+
+export type MailLifecycle = 'sending' | 'sent' | 'queueing' | 'queued' | 'queue_error'
+
+export type MailContent = EntryContent & {
+  event: MailLifecycle
+  mailer: string
+  envelope?: unknown
+  subject?: string
+  html?: string
+  text?: string
+  raw?: string
+  messageId?: string
+  metadata?: unknown
+  response?: unknown
+  error?: unknown
+  truncated?: boolean
+}
+
+export type CacheOperation = 'hit' | 'miss' | 'set' | 'delete' | 'clear'
+
+export type CacheContent = EntryContent & {
+  operation: CacheOperation
+  store: string
+  key?: string
+  layer?: 'l1' | 'l2'
+  graced?: boolean
+  value?: unknown
+}
+
+export type ModelContent = EntryContent & {
+  action: 'create' | 'update' | 'delete'
+  model: string
+  primaryKey?: string
+  primaryKeyValue?: unknown
+  attributes?: unknown
+  dirty?: unknown
+}
+
+export type GateContent = EntryContent & {
+  ability: string
+  allowed: boolean
+  userId?: string | number
+  user?: unknown
+  args: unknown
+  status?: number
+  message?: string
+}
+
+export type DumpCaller = {
+  file: string
+  line: number
+  column?: number
+}
+
+export type DumpContent = EntryContent & {
+  values: unknown
+  caller?: DumpCaller
+}
+
+export type HttpClientContent = EntryContent & {
+  method: string
+  url: string
+  status?: number
+  durationMs: number
+  requestHeaders?: Record<string, unknown>
+  responseHeaders?: Record<string, unknown>
+  error?: unknown
+  completed: boolean
+}

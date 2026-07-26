@@ -5,6 +5,9 @@
  * file that was distributed with this source code.
  */
 
+import { performance } from 'node:perf_hooks'
+import '@adonisjs/lucid/orm'
+
 import { getActiveTest, test } from '@japa/runner'
 import { LoggerFactory } from '@adonisjs/core/factories/logger'
 import type { LoggerService } from '@adonisjs/core/types'
@@ -40,6 +43,13 @@ const WATCHER_EVENTS: Record<WatcherName, string> = {
   exception: 'test:exception',
   log: 'test:log',
   event: 'test:event',
+  command: 'test:command',
+  mail: 'test:mail',
+  cache: 'test:cache',
+  model: 'test:model',
+  gate: 'test:gate',
+  dump: 'test:dump',
+  http_client: 'test:http_client',
 }
 
 async function makeContext(options: { config?: PeriscopeConfig; enabled?: boolean } = {}) {
@@ -64,6 +74,81 @@ function fakeFactories(create: (name: WatcherName, context: TestContext) => Watc
   }
 
   return factories
+}
+
+type StructuralListener = (...values: unknown[]) => unknown
+
+/**
+ * The registration budget must not include booting an AdonisJS application. This is the exact
+ * host surface used by the shipped watchers when optional logger and Ace providers are absent,
+ * plus a deterministic in-memory emitter for their subscriptions.
+ */
+function makeStructuralContext(enabled = true): TestContext {
+  const listeners = new Map<string, Set<StructuralListener>>()
+  const anyListeners = new Set<StructuralListener>()
+  const emitter = {
+    on(event: string, listener: StructuralListener) {
+      const eventListeners = listeners.get(event) ?? new Set<StructuralListener>()
+      eventListeners.add(listener)
+      listeners.set(event, eventListeners)
+
+      return () => {
+        eventListeners.delete(listener)
+      }
+    },
+    onAny(listener: StructuralListener) {
+      anyListeners.add(listener)
+      return () => {
+        anyListeners.delete(listener)
+      }
+    },
+  }
+  const app = {
+    getEnvironment() {
+      return 'test'
+    },
+    container: {
+      hasBinding() {
+        return false
+      },
+    },
+    config: {
+      get() {
+        return undefined
+      },
+    },
+  }
+  const config = defineConfig({
+    storage: { driver: 'memory' },
+    watchers: { exception: { captureProcessErrors: false } },
+  })
+  const store = new MemoryStore({ maxEntries: 100 })
+  const recorder = new Recorder({ config, store, enabled })
+
+  return { app, emitter, recorder, config, dev: true } as unknown as TestContext
+}
+
+function observeShippedFactories(
+  constructed: WatcherName[],
+  registered: WatcherName[],
+  cleaned: WatcherName[]
+): Record<WatcherName, WatcherFactory> {
+  return fakeFactories((name, context) => {
+    constructed.push(name)
+    const watcher = WATCHER_FACTORIES[name](context)
+
+    return {
+      name: watcher.name,
+      register() {
+        registered.push(name)
+        return watcher.register()
+      },
+      cleanup() {
+        cleaned.push(name)
+        return watcher.cleanup?.()
+      },
+    }
+  })
 }
 
 function track(registry: WatcherRegistry): WatcherRegistry {
@@ -94,6 +179,55 @@ test.group('WatcherRegistry', () => {
     )
   })
 
+  test('retain an early model watcher and reuse it during full registration', async ({
+    assert,
+  }) => {
+    const { context } = await makeContext()
+    const constructed: WatcherName[] = []
+    const registered: WatcherName[] = []
+    const cleaned: WatcherName[] = []
+    const factories = fakeFactories((name) => {
+      constructed.push(name)
+
+      return {
+        name,
+        register() {
+          registered.push(name)
+        },
+        cleanup() {
+          cleaned.push(name)
+        },
+      }
+    })
+    const registry = track(new WatcherRegistry(context, factories))
+
+    await registry.register(['model'])
+    const earlyModelWatcher = registry.watchers[0]
+    assert.deepEqual(constructed, ['model'])
+    assert.deepEqual(registered, ['model'])
+    assert.deepEqual(
+      registry.watchers.map((watcher) => watcher.name),
+      ['model']
+    )
+
+    await registry.register(['model'])
+    await registry.register()
+    await registry.register()
+
+    const expectedOrder = ['model', ...WATCHER_NAMES.filter((name) => name !== 'model')]
+    assert.strictEqual(registry.watchers[0], earlyModelWatcher)
+    assert.deepEqual(
+      registry.watchers.map((watcher) => watcher.name),
+      expectedOrder
+    )
+    assert.deepEqual(constructed, expectedOrder)
+    assert.deepEqual(registered, expectedOrder)
+
+    await registry.cleanup()
+
+    assert.deepEqual(cleaned, [...expectedOrder].reverse())
+  })
+
   test('register nothing when the recorder is disabled', async ({ assert }) => {
     const { context, emitter } = await makeContext({ enabled: false })
     let constructed = 0
@@ -115,6 +249,63 @@ test.group('WatcherRegistry', () => {
     assert.equal(emitter.listenerCount('db:query'), 0)
     assert.equal(emitter.listenerCount('http:request_completed'), 0)
     assert.equal(emitter.listenerCount('application:event'), 0)
+  })
+
+  test('register the shipped watcher set within the Phase 6 startup budget', async ({ assert }) => {
+    /**
+     * ModelWatcher's one-time optional Lucid import is prepared at module evaluation above.
+     */
+    const constructed: WatcherName[] = []
+    const registered: WatcherName[] = []
+    const cleaned: WatcherName[] = []
+    const registry = track(
+      new WatcherRegistry(
+        makeStructuralContext(),
+        observeShippedFactories(constructed, registered, cleaned)
+      )
+    )
+
+    const startedAt = performance.now()
+    await registry.register()
+    const elapsedMs = performance.now() - startedAt
+
+    assert.lengthOf(WATCHER_NAMES, 12)
+    assert.deepEqual(constructed, WATCHER_NAMES)
+    assert.deepEqual(registered, WATCHER_NAMES)
+    assert.deepEqual(
+      registry.watchers.map((watcher) => watcher.name),
+      WATCHER_NAMES
+    )
+    assert.isBelow(
+      elapsedMs,
+      50,
+      `expected all watcher registrations below 50ms, completed in ${elapsedMs.toFixed(3)}ms`
+    )
+
+    await registry.cleanup()
+    await registry.cleanup()
+
+    assert.deepEqual(cleaned, [...WATCHER_NAMES].reverse())
+    assert.isEmpty(registry.watchers)
+
+    const disabledConstructed: WatcherName[] = []
+    const disabledRegistered: WatcherName[] = []
+    const disabledCleaned: WatcherName[] = []
+    const disabledRegistry = track(
+      new WatcherRegistry(
+        makeStructuralContext(false),
+        observeShippedFactories(disabledConstructed, disabledRegistered, disabledCleaned)
+      )
+    )
+
+    await disabledRegistry.register()
+    await disabledRegistry.cleanup()
+    await disabledRegistry.cleanup()
+
+    assert.isEmpty(disabledConstructed)
+    assert.isEmpty(disabledRegistered)
+    assert.isEmpty(disabledCleaned)
+    assert.isEmpty(disabledRegistry.watchers)
   })
 
   test('skip a factory that throws and continue registering later watchers', async ({ assert }) => {
@@ -146,6 +337,13 @@ test.group('WatcherRegistry', () => {
           exception: { enabled: false },
           log: { enabled: false },
           event: { enabled: false },
+          command: { enabled: false },
+          mail: { enabled: false },
+          cache: { enabled: false },
+          model: { enabled: false },
+          gate: { enabled: false },
+          dump: { enabled: false },
+          http_client: { enabled: false },
         },
       },
     })

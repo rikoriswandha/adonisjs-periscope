@@ -25,7 +25,8 @@ import type { Watcher } from '../../types.ts'
 import type { WatcherContext } from '../context.ts'
 import type { EventEntryContent } from './types.ts'
 
-const FRAMEWORK_EVENT = /^(http|db|session|mail|cache|queued?|container_binding|periscope):/
+const FRAMEWORK_EVENT =
+  /^(http|db|session|mail|cache|authorization|queued?|container_binding|periscope):/
 const MAX_PAYLOAD_BYTES = 8 * 1024
 
 type EventIdentifier = string | symbol | number | Function

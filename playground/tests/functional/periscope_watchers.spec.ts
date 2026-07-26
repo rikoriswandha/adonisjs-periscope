@@ -1,8 +1,13 @@
+import { execFile } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import { setTimeout as sleep } from 'node:timers/promises'
+import cache from '@adonisjs/cache/services/main'
+import db from '@adonisjs/lucid/services/db'
 import testUtils from '@adonisjs/core/services/test_utils'
 import type { Assert } from '@japa/assert'
 import { test } from '@japa/runner'
-import { EntryType } from 'periscope'
+import { EntryType, Flag } from 'periscope'
 import type { StoredEntry } from 'periscope'
 import recorder from 'periscope/services/recorder'
 
@@ -10,6 +15,9 @@ import periscopeConfig from '#config/periscope'
 
 const POLL_INTERVAL_MS = 10
 const POLL_TIMEOUT_MS = 2_000
+const execFileAsync = promisify(execFile)
+const PLAYGROUND_ROOT = fileURLToPath(new URL('../..', import.meta.url))
+const WAVE2_USER_EMAIL = 'wave2@periscope.test'
 
 /**
  * One page of everything recorded so far. Small enough to be the whole store, since every test
@@ -311,4 +319,175 @@ test.group('periscope watchers (playground wiring)', (group) => {
     assert.isFalse(events.some((entry) => entry.content.name === 'db:query'))
     assertNoPeriscopeTraffic(assert, recorded.entries)
   })
+  test('GET /wave2 exercises every Phase 6 watcher with redaction and clean state', async ({
+    client,
+    assert,
+    cleanup,
+  }) => {
+    cleanup(async () => {
+      await recorder.store.deleteFlag(Flag.DUMP_OPEN)
+      await cache.clear()
+      await db.from('users').where('email', WAVE2_USER_EMAIL).delete()
+      await recorder.flush()
+      await recorder.store.clear()
+    })
+
+    await recorder.store.setFlag(Flag.DUMP_OPEN, '1')
+    await sleep(1_100)
+
+    const response = await client.get('/wave2')
+    response.assertStatus(200)
+    response.assertBodyContains({
+      cache: { missed: true, phase: 6 },
+      model: { fullName: 'Wave 2 Updated' },
+      gate: { allowed: true },
+      dump: { phase: 6 },
+      httpClient: { status: 200 },
+    })
+
+    await recorder.flush()
+    const recorded = await waitForRequestBatches('/wave2', 200)
+    const batch = recorded.batches[0]!
+    assertRequestBatch(assert, batch, '/wave2', 200)
+
+    const caches = batch.filter((entry) => entry.type === EntryType.CACHE)
+    assert.sameMembers(
+      caches.map((entry) => entry.content.operation),
+      ['clear', 'miss', 'set', 'hit', 'delete']
+    )
+    const cacheSet = caches.find((entry) => entry.content.operation === 'set')
+    const cacheHit = caches.find((entry) => entry.content.operation === 'hit')
+    assert.deepInclude(cacheSet!.content, {
+      store: 'default',
+      key: 'wave2:fixture',
+      value: { phase: 6, password: '[REDACTED]' },
+    })
+    assert.deepInclude(cacheHit!.content, {
+      store: 'default',
+      key: 'wave2:fixture',
+      value: { phase: 6, password: '[REDACTED]' },
+    })
+
+    const models = batch.filter((entry) => entry.type === EntryType.MODEL)
+    assert.deepEqual(models.map((entry) => entry.content.action).sort(), [
+      'create',
+      'delete',
+      'update',
+    ])
+    const created = models.find((entry) => entry.content.action === 'create')
+    const updated = models.find((entry) => entry.content.action === 'update')
+    assert.deepInclude(created!.content, {
+      model: 'User',
+      primaryKey: 'id',
+    })
+    assert.deepInclude(created!.content.attributes, {
+      fullName: 'Wave 2 Fixture',
+      email: WAVE2_USER_EMAIL,
+      password: '[REDACTED]',
+    })
+    assert.deepInclude(updated!.content, {
+      model: 'User',
+      dirty: { fullName: 'Wave 2 Updated' },
+    })
+    const deleted = models.find((entry) => entry.content.action === 'delete')
+    assert.deepInclude(deleted!.content.attributes, {
+      email: WAVE2_USER_EMAIL,
+      password: '[REDACTED]',
+    })
+
+    const gates = batch.filter((entry) => entry.type === EntryType.GATE)
+    assert.lengthOf(gates, 1)
+    assert.deepInclude(gates[0]!.content, {
+      ability: 'inspectWave2',
+      allowed: true,
+      args: [
+        {
+          ownerId: created!.content.primaryKeyValue,
+          password: '[REDACTED]',
+        },
+      ],
+    })
+
+    const dumps = batch.filter((entry) => entry.type === EntryType.DUMP)
+    assert.lengthOf(dumps, 1)
+    assert.deepEqual(dumps[0]!.content.values, [{ phase: 6, password: '[REDACTED]' }])
+    const dumpCaller = dumps[0]!.content.caller
+    if (
+      !dumpCaller ||
+      typeof dumpCaller !== 'object' ||
+      !('file' in dumpCaller) ||
+      typeof dumpCaller.file !== 'string'
+    ) {
+      assert.fail('expected dump caller file metadata')
+      return
+    }
+    assert.include(dumpCaller.file, 'wave2_controller')
+
+    const sentMail = batch.find(
+      (entry) => entry.type === EntryType.MAIL && entry.content.event === 'sent'
+    )
+    assert.exists(sentMail)
+    assert.deepInclude(sentMail!.content, {
+      mailer: 'json',
+      subject: 'Periscope playground fanout',
+      text: 'The /fanout route dispatched an event, logged a warning and sent this mail.',
+    })
+
+    const outbound = batch.filter((entry) => entry.type === EntryType.HTTP_CLIENT)
+    assert.lengthOf(outbound, 1)
+    const outboundUrl = new URL(outbound[0]!.content.url as string)
+    assert.equal(outboundUrl.pathname, '/')
+    assert.equal(outboundUrl.searchParams.get('token'), '[REDACTED]')
+    assert.equal(outboundUrl.searchParams.get('phase'), '[REDACTED]')
+    assert.deepInclude(outbound[0]!.content, {
+      method: 'GET',
+      status: 200,
+      completed: true,
+    })
+    assert.deepInclude(outbound[0]!.content.requestHeaders, {
+      'authorization': '[REDACTED]',
+      'x-wave2-probe': 'true',
+    })
+
+    await execFileAsync(
+      process.execPath,
+      ['ace.js', 'wave2:exercise', 'phase-six', '--password=wave2-command-secret'],
+      {
+        cwd: PLAYGROUND_ROOT,
+        env: { ...process.env, NODE_ENV: 'test' },
+      }
+    )
+    await recorder.flush()
+
+    const allEntries = await waitForEntries((entries) =>
+      entries.some((entry) => entry.type === EntryType.COMMAND)
+    )
+    const commands = allEntries.filter((entry) => entry.type === EntryType.COMMAND)
+    assert.lengthOf(commands, 1)
+    assert.deepInclude(commands[0]!.content, {
+      command: 'wave2:exercise',
+      args: ['phase-six'],
+      flags: { password: '[REDACTED]' },
+      isMain: true,
+      exitCode: 0,
+    })
+    assert.isAtLeast(commands[0]!.content.durationMs as number, 0)
+
+    assert.isFalse(
+      allEntries.some((entry) => {
+        if (entry.type === EntryType.HTTP_CLIENT) {
+          return new URL(entry.content.url as string).pathname.startsWith(
+            periscopeConfig.dashboard.path
+          )
+        }
+
+        return (
+          entry.type === EntryType.REQUEST &&
+          typeof entry.content.url === 'string' &&
+          entry.content.url.startsWith(periscopeConfig.dashboard.path)
+        )
+      })
+    )
+    assertNoPeriscopeTraffic(assert, allEntries)
+  }).timeout(30_000)
 })

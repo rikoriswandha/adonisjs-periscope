@@ -1,8 +1,8 @@
 import { BaseMail } from '@adonisjs/mail'
 
 /**
- * Sent by `GET /fanout` through the JSON transport configured in
- * `config/mail.ts`. Plain text on purpose — the playground has no view layer.
+ * Sent through the JSON transport with literal text and HTML bodies, so the playground can
+ * exercise both dashboard preview paths without needing a template engine.
  */
 export default class FanoutNotification extends BaseMail {
   subject = 'Periscope playground fanout'
@@ -15,5 +15,8 @@ export default class FanoutNotification extends BaseMail {
     this.message
       .to(this.recipient)
       .text('The /fanout route dispatched an event, logged a warning and sent this mail.')
+      .html(
+        '<main><h1>Periscope playground</h1><p>The /fanout route exercised the mail watcher.</p></main>'
+      )
   }
 }

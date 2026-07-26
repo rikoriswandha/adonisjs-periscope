@@ -79,10 +79,11 @@ test.group('EventWatcher', () => {
       await runtimeEmitter.emit('http:request_completed', { status: 200 })
       await runtimeEmitter.emit('session:initiated', { id: 'session-1' })
       await runtimeEmitter.emit('periscope:flushed', { entries: 1 })
+      await runtimeEmitter.emit('authorization:finished', { authorized: true })
     })
 
     assert.lengthOf(context.buffer, 0)
-    assert.deepEqual(watcher.stats, { recorded: 0, ignored: 4 })
+    assert.deepEqual(watcher.stats, { recorded: 0, ignored: 5 })
   })
 
   test('record a BaseEvent subclass under its class name', async ({ assert }) => {

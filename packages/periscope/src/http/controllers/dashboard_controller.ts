@@ -12,10 +12,8 @@ import { Flag } from '../../types.ts'
 import type { PeriscopeStore, ResolvedPeriscopeConfig } from '../../types.ts'
 import type { DashboardEnvironment } from '../middleware/authorize.ts'
 
-const ALLOWED_FLAGS: Record<string, true> = {
-  [Flag.PAUSED]: true,
-  [Flag.DUMP_OPEN]: true,
-}
+const DUMP_OPEN_LEASE_FLAG_PATTERN = /^dump-open:[A-Za-z0-9_-]{1,128}$/
+const DUMP_OPEN_TTL_MS = 30_000
 
 export class DashboardController {
   constructor(
@@ -43,23 +41,34 @@ export class DashboardController {
   }
 
   async setFlag({ params, request, response }: HttpContext) {
-    if (!Object.hasOwn(ALLOWED_FLAGS, params.name)) {
+    const name = params.name
+    const dumpOpenLease = typeof name === 'string' && DUMP_OPEN_LEASE_FLAG_PATTERN.test(name)
+
+    if (name !== Flag.PAUSED && !dumpOpenLease) {
       response.notFound()
       return
     }
 
     const value = request.input('value')
-    await this.store.setFlag(params.name, value === undefined ? '1' : String(value))
+    const options = dumpOpenLease
+      ? { expiresAt: new Date(Date.now() + DUMP_OPEN_TTL_MS) }
+      : undefined
+    await this.store.setFlag(name, value === undefined ? '1' : String(value), options)
     response.noContent()
   }
 
   async deleteFlag({ params, response }: HttpContext) {
-    if (!Object.hasOwn(ALLOWED_FLAGS, params.name)) {
+    const name = params.name
+
+    if (
+      name !== Flag.PAUSED &&
+      (typeof name !== 'string' || !DUMP_OPEN_LEASE_FLAG_PATTERN.test(name))
+    ) {
       response.notFound()
       return
     }
 
-    await this.store.deleteFlag(params.name)
+    await this.store.deleteFlag(name)
     response.noContent()
   }
 

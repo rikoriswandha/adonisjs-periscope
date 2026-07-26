@@ -42,6 +42,7 @@ export function registerDashboardRoutes(options: RegisterDashboardRoutesOptions)
   const routes = router.group(() => {
     router.get('/api/entries', entries.index.bind(entries))
     router.get('/api/entries/:uuid', entries.show.bind(entries))
+    router.get('/api/entries/:uuid/eml', entries.eml.bind(entries))
     router.get('/api/batches/:batchId', entries.batch.bind(entries))
     router.get('/api/counts', dashboard.counts.bind(dashboard))
     router.get('/api/status', dashboard.status.bind(dashboard))

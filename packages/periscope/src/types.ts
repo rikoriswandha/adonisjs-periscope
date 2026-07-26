@@ -235,8 +235,8 @@ export type PruneOptions = {
  */
 export type FlagOptions = {
   /**
-   * Instant after which the flag reads back as absent. Backs the dashboard's `dump-open`
-   * heartbeat, which must fail closed if the tab goes away without clearing it.
+   * Instant after which the flag reads back as absent. Backs the dashboard's per-tab `dump-open:`
+   * leases, which must fail closed if a tab goes away without clearing its lease.
    */
   expiresAt?: Date
 }
@@ -326,6 +326,11 @@ export interface PeriscopeStore {
   getFlag(name: string): Promise<string | null>
 
   /**
+   * Test whether any unexpired flag name starts with the literal prefix.
+   */
+  hasFlagWithPrefix(prefix: string): Promise<boolean>
+
+  /**
    * Write a flag, replacing any previous value and expiry.
    */
   setFlag(name: string, value: string, options?: FlagOptions): Promise<void>
@@ -363,8 +368,8 @@ export const Flag = {
   PAUSED: 'paused',
 
   /**
-   * Set by the dashboard while a tab is watching dumps, expiring on a heartbeat so a closed tab
-   * cannot leave `dump()` recording forever.
+   * Namespace base for the dashboard's per-tab dump leases. A legacy exact flag is still read by
+   * the watcher for store-level API compatibility.
    */
   DUMP_OPEN: 'dump-open',
 } as const
@@ -414,9 +419,8 @@ export interface Watcher {
 }
 
 /**
- * The watchers shipped in wave 1 (P3). Wave 2 (P6) extends the union; the key is also the
- * watcher's config key and its `Watcher.name`, so a watcher is turned off by the same string it
- * is registered under.
+ * The shipped watcher catalogue. Each value is also the watcher's config key and its
+ * `Watcher.name`, so a watcher is turned off by the same string it is registered under.
  */
 export const WatcherName = {
   REQUEST: 'request',
@@ -424,6 +428,13 @@ export const WatcherName = {
   EXCEPTION: 'exception',
   LOG: 'log',
   EVENT: 'event',
+  COMMAND: 'command',
+  MAIL: 'mail',
+  CACHE: 'cache',
+  MODEL: 'model',
+  GATE: 'gate',
+  DUMP: 'dump',
+  HTTP_CLIENT: 'http_client',
 } as const
 
 export type WatcherName = (typeof WatcherName)[keyof typeof WatcherName]
@@ -524,6 +535,54 @@ export type WatchersConfig = {
      */
     ignore?: string[]
   }
+
+  command?: {
+    enabled?: boolean
+
+    /**
+     * Command names to ignore in addition to Periscope's own commands.
+     */
+    ignore?: string[]
+  }
+
+  mail?: {
+    enabled?: boolean
+  }
+
+  cache?: {
+    enabled?: boolean
+
+    /**
+     * Capture cache values on hit and write events. Defaults to `false`.
+     */
+    captureValues?: boolean
+  }
+
+  model?: {
+    enabled?: boolean
+
+    /**
+     * Capture dirty attributes for model updates. Defaults to `false`.
+     */
+    captureDirty?: boolean
+  }
+
+  gate?: {
+    enabled?: boolean
+
+    /**
+     * Ability names the gate watcher should ignore.
+     */
+    ignoreAbilities?: string[]
+  }
+
+  dump?: {
+    enabled?: boolean
+  }
+
+  http_client?: {
+    enabled?: boolean
+  }
 }
 
 /**
@@ -554,6 +613,31 @@ export type ResolvedWatchersConfig = {
   event: {
     enabled: boolean
     ignore: string[]
+  }
+  command: {
+    enabled: boolean
+    ignore: string[]
+  }
+  mail: {
+    enabled: boolean
+  }
+  cache: {
+    enabled: boolean
+    captureValues: boolean
+  }
+  model: {
+    enabled: boolean
+    captureDirty: boolean
+  }
+  gate: {
+    enabled: boolean
+    ignoreAbilities: string[]
+  }
+  dump: {
+    enabled: boolean
+  }
+  http_client: {
+    enabled: boolean
   }
 }
 

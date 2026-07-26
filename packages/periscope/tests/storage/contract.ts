@@ -1056,6 +1056,27 @@ export function runStoreContractTests(driverName: string, createStore: StoreFact
       assert.equal(await store.getFlag(Flag.DUMP_OPEN), 'live')
     })
 
+    test('find any unexpired flag by literal name prefix', async ({ assert }) => {
+      await store.setFlag('dump-open:stale', '1', {
+        expiresAt: new Date(Date.now() - 60_000),
+      })
+      await store.setFlag('dump-open:live', '1', {
+        expiresAt: new Date(Date.now() + 60_000),
+      })
+      await store.setFlag('dump%open:wildcard-lookalike', '1')
+      await store.setFlag('dumpZZopen:unrelated', '1')
+
+      assert.isTrue(await store.hasFlagWithPrefix('dump-open:'))
+      assert.isTrue(await store.hasFlagWithPrefix('dump%open:'))
+      assert.isFalse(await store.hasFlagWithPrefix('dump_open:'))
+      await store.deleteFlag('dump%open:wildcard-lookalike')
+      assert.isFalse(await store.hasFlagWithPrefix('dump%open:'))
+
+      await store.deleteFlag('dump-open:live')
+
+      assert.isFalse(await store.hasFlagWithPrefix('dump-open:'))
+    })
+
     test('delete a flag', async ({ assert }) => {
       await store.setFlag(Flag.PAUSED, 'yes')
       await store.deleteFlag(Flag.PAUSED)

@@ -125,6 +125,9 @@ jobs:
         env:
           PERISCOPE_PG_URL: postgres://periscope:periscope@127.0.0.1:5432/periscope
 
+      - name: Unit tests (packages/dashboard)
+        run: npm -w @periscope/dashboard run test
+
       # The playground consumes `periscope` through its published `exports` map, which points at
       # `build/`. Without this the app cannot even resolve `periscope/provider` and every
       # integration test fails on an import error rather than on anything meaningful. The unit
@@ -135,6 +138,56 @@ jobs:
 
       - name: Integration tests (playground, booted app)
         run: npm -w playground run test
+
+  lucid-compatibility:
+    # ModelWatcher is coupled to Lucid's hook and model contracts. Exercise the exact minimum
+    # peer version as well as the newest release so compatibility regressions cannot hide behind
+    # the lockfile's single resolved version.
+    name: Lucid compatibility (${{ matrix.lucid }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        lucid: ['22.0.0', 'latest']
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Install Lucid ${{ matrix.lucid }} in package and playground
+        shell: bash
+        run: |
+          npm pkg set "devDependencies.@adonisjs/lucid=${{ matrix.lucid }}" -w periscope
+          npm pkg set "dependencies.@adonisjs/lucid=${{ matrix.lucid }}" -w playground
+          npm install --package-lock=false
+
+      # Keep this identical to the main test job: the focused functional spec boots the real
+      # AdonisJS application and therefore needs the same environment contract.
+      - name: Provision playground env
+        shell: bash
+        run: |
+          if [ -f playground/.env ]; then
+            echo "playground/.env already present; leaving it untouched."
+          elif [ -f playground/.env.example ]; then
+            cp playground/.env.example playground/.env
+            echo "Copied playground/.env.example -> playground/.env"
+          else
+            echo "::error::playground/.env.example is missing; the playground cannot boot."
+            exit 1
+          fi
+
+      - name: Build periscope (the playground imports the built package)
+        run: npm -w periscope run build
+
+      - name: ModelWatcher functional spec (booted playground)
+        run: npm -w playground test -- --files="functional/periscope_watchers.spec.ts"
 
   build:
     name: Build

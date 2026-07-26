@@ -636,6 +636,17 @@ export class SqliteLocalStore implements PeriscopeStore {
     return row.value
   }
 
+  async hasFlagWithPrefix(prefix: string): Promise<boolean> {
+    const pattern = `${prefix.replaceAll('!', '!!').replaceAll('%', '!%').replaceAll('_', '!_')}%`
+    const row = this.#prepare<{ present: number }>(
+      `select 1 as present from ${FLAGS_TABLE}
+       where name like ? escape '!' and (expires_at is null or expires_at > ?)
+       limit 1`
+    ).get(pattern, Date.now())
+
+    return row !== undefined
+  }
+
   async setFlag(name: string, value: string, options: FlagOptions = {}): Promise<void> {
     // Both columns are overwritten, so setting a flag without an expiry clears the one it had.
     this.#prepare(

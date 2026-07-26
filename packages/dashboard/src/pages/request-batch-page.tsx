@@ -1,13 +1,19 @@
 import {
   ArrowLeft,
+  Box,
+  Braces,
   Bug,
   CircleAlert,
   Clock3,
   Database,
+  DatabaseZap,
   FileJson,
   Globe2,
   Inbox,
+  Mail,
   Network,
+  ShieldCheck,
+  SquareTerminal,
   UserRound,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -19,13 +25,7 @@ import { JsonTree } from '@/components/json-tree'
 import { StatusBadge } from '@/components/status-badge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from '@/components/ui/empty'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsPanel, TabsTab } from '@/components/ui/tabs'
 import { api } from '@/lib/api'
@@ -37,23 +37,93 @@ import {
   sequenceCompareAscending,
   truncate,
 } from '@/lib/format'
-import type { RequestContent, StoredEntry } from '@/types'
+import type {
+  CacheContent,
+  CommandContent,
+  DumpContent,
+  GateContent,
+  HttpClientContent,
+  MailContent,
+  ModelContent,
+  RequestContent,
+  StoredEntry,
+} from '@/types'
 
 function entrySummary(entry: StoredEntry): string {
-  if (entry.type === 'request') {
-    const content = entry.content as RequestContent
-    return `${content.method} ${content.url}`
+  switch (entry.type) {
+    case 'request': {
+      const content = entry.content as RequestContent
+      return `${asString(content.method, 'Request')} ${asString(content.url, '')}`.trim()
+    }
+    case 'query':
+      return truncate(asString(entry.content.sql, 'Database query'), 120)
+    case 'exception':
+      return asString(entry.content.message, 'Exception')
+    case 'command': {
+      const content = entry.content as CommandContent
+      return asString(content.command, 'Command')
+    }
+    case 'mail': {
+      const content = entry.content as MailContent
+      const subject = asString(content.subject, '').trim()
+      if (subject) return subject
+      const event = asString(content.event, 'mail').replace('_', ' ')
+      return `${event} via ${asString(content.mailer, 'mailer')}`
+    }
+    case 'cache': {
+      const content = entry.content as CacheContent
+      const operation = asString(content.operation, 'cache')
+      return `${operation} ${asString(content.key, content.store)}`.trim()
+    }
+    case 'model': {
+      const content = entry.content as ModelContent
+      return `${asString(content.action, 'model')} ${asString(content.model, 'Model')}`
+    }
+    case 'gate': {
+      const content = entry.content as GateContent
+      const decision = content.allowed === true ? 'Allowed' : 'Denied'
+      return `${decision} ${asString(content.ability, 'ability')}`
+    }
+    case 'dump': {
+      const content = entry.content as DumpContent
+      return content.caller
+        ? `Dump at ${content.caller.file}:${content.caller.line}`
+        : 'Dumped value'
+    }
+    case 'http_client': {
+      const content = entry.content as HttpClientContent
+      return `${asString(content.method, 'HTTP')} ${asString(content.url, 'request')}`
+    }
+    default:
+      return asString(entry.content.message, `${entry.type.replace('_', ' ')} entry`)
   }
-  if (entry.type === 'query') return truncate(asString(entry.content.sql, 'Database query'), 120)
-  if (entry.type === 'exception') return asString(entry.content.message, 'Exception')
-  return asString(entry.content.message, `${entry.type.replace('_', ' ')} entry`)
 }
 
 function TimelineIcon({ type }: { type: StoredEntry['type'] }) {
-  if (type === 'query') return <Database aria-hidden="true" />
-  if (type === 'exception') return <Bug aria-hidden="true" />
-  if (type === 'request') return <Network aria-hidden="true" />
-  return <FileJson aria-hidden="true" />
+  switch (type) {
+    case 'query':
+      return <Database aria-hidden="true" />
+    case 'exception':
+      return <Bug aria-hidden="true" />
+    case 'request':
+      return <Network aria-hidden="true" />
+    case 'command':
+      return <SquareTerminal aria-hidden="true" />
+    case 'mail':
+      return <Mail aria-hidden="true" />
+    case 'cache':
+      return <DatabaseZap aria-hidden="true" />
+    case 'model':
+      return <Box aria-hidden="true" />
+    case 'gate':
+      return <ShieldCheck aria-hidden="true" />
+    case 'dump':
+      return <Braces aria-hidden="true" />
+    case 'http_client':
+      return <Globe2 aria-hidden="true" />
+    default:
+      return <FileJson aria-hidden="true" />
+  }
 }
 
 function BatchTimeline({
@@ -64,7 +134,10 @@ function BatchTimeline({
   onSelect: (entry: StoredEntry) => void
 }) {
   return (
-    <section aria-label="Batch timeline" className="overflow-hidden rounded-lg border bg-background">
+    <section
+      aria-label="Batch timeline"
+      className="overflow-hidden rounded-lg border bg-background"
+    >
       <ol className="divide-y">
         {timeline.map((entry, index) => {
           const duration = asNumber(entry.content.durationMs)
@@ -89,9 +162,7 @@ function BatchTimeline({
                 </span>
                 <span className="col-start-2 flex items-center gap-2 sm:col-auto">
                   {duration !== undefined && <DurationBadge value={duration} />}
-                  {entry.type === 'exception' && (
-                    <Badge variant="destructive">exception</Badge>
-                  )}
+                  {entry.type === 'exception' && <Badge variant="destructive">exception</Badge>}
                 </span>
               </button>
             </li>
@@ -135,7 +206,8 @@ export function RequestBatchPage() {
   }, [load])
 
   const timeline = useMemo(
-    () => [...entries].sort((left, right) => sequenceCompareAscending(left.sequence, right.sequence)),
+    () =>
+      [...entries].sort((left, right) => sequenceCompareAscending(left.sequence, right.sequence)),
     [entries]
   )
   const requestEntry = entries.find((entry) => entry.type === 'request')
@@ -246,13 +318,18 @@ export function RequestBatchPage() {
           <dl className="grid divide-y bg-muted/25 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
             <div className="p-4">
               <dt className="text-xs text-muted-foreground">Batch ID</dt>
-              <dd className="mt-1 truncate font-mono text-xs font-medium" title={firstEntry.batchId}>
+              <dd
+                className="mt-1 truncate font-mono text-xs font-medium"
+                title={firstEntry.batchId}
+              >
                 {firstEntry.batchId}
               </dd>
             </div>
             <div className="p-4">
               <dt className="text-xs text-muted-foreground">Entries</dt>
-              <dd className="mt-1 font-mono text-sm font-medium">{entries.length.toLocaleString()}</dd>
+              <dd className="mt-1 font-mono text-sm font-medium">
+                {entries.length.toLocaleString()}
+              </dd>
             </div>
             <div className="p-4">
               <dt className="text-xs text-muted-foreground">Entry types</dt>
@@ -343,7 +420,10 @@ export function RequestBatchPage() {
           </div>
           <div className="p-4">
             <dt className="text-xs text-muted-foreground">Batch ID</dt>
-            <dd className="mt-1 truncate font-mono text-xs font-medium" title={requestEntry.batchId}>
+            <dd
+              className="mt-1 truncate font-mono text-xs font-medium"
+              title={requestEntry.batchId}
+            >
               {requestEntry.batchId}
             </dd>
           </div>

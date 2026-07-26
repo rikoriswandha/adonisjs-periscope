@@ -9,9 +9,16 @@ import { safeguard, safeguardAsync } from '../safeguard.ts'
 import { WATCHER_NAMES } from '../types.ts'
 import type { Watcher, WatcherName } from '../types.ts'
 import type { WatcherContext } from './context.ts'
+import { CacheWatcher } from './cache/watcher.ts'
+import { CommandWatcher } from './command/watcher.ts'
+import { DumpWatcher } from './dump/watcher.ts'
 import { EventWatcher } from './event/watcher.ts'
 import { ExceptionWatcher } from './exception/watcher.ts'
+import { GateWatcher } from './gate/watcher.ts'
+import { HttpClientWatcher } from './http_client/watcher.ts'
 import { LogWatcher } from './log/watcher.ts'
+import { MailWatcher } from './mail/watcher.ts'
+import { ModelWatcher } from './model/watcher.ts'
 import { QueryWatcher } from './query/watcher.ts'
 import { RequestWatcher } from './request/watcher.ts'
 
@@ -24,9 +31,9 @@ export type WatcherFactory = (context: WatcherContext) => Watcher
 /**
  * The shipped watchers, keyed by config key.
  *
- * Iteration order is {@link WATCHER_NAMES}, which puts the request watcher first. That is not
- * cosmetic: it owns the batch every other wave-1 watcher records into, and registering it first
- * means the middleware slot is live before anything else can start producing entries.
+ * Full registration iterates {@link WATCHER_NAMES}, which puts the request watcher first so its
+ * middleware slot is live before the other ready-phase watchers. Provider boot is the deliberate
+ * exception: it requests the model watcher alone to cover models booted before that full pass.
  */
 export const WATCHER_FACTORIES: Record<WatcherName, WatcherFactory> = {
   request: (context) => new RequestWatcher(context),
@@ -34,6 +41,13 @@ export const WATCHER_FACTORIES: Record<WatcherName, WatcherFactory> = {
   exception: (context) => new ExceptionWatcher(context),
   log: (context) => new LogWatcher(context),
   event: (context) => new EventWatcher(context),
+  command: (context) => new CommandWatcher(context),
+  mail: (context) => new MailWatcher(context),
+  cache: (context) => new CacheWatcher(context),
+  model: (context) => new ModelWatcher(context),
+  gate: (context) => new GateWatcher(context),
+  dump: (context) => new DumpWatcher(context),
+  http_client: (context) => new HttpClientWatcher(context),
 }
 
 /**
@@ -54,6 +68,13 @@ export class WatcherRegistry {
    */
   readonly #registered: Watcher[] = []
 
+  /**
+   * Config keys already constructed by this registry. A name is claimed before its watcher
+   * starts registering so overlapping or repeated lifecycle calls cannot construct a second
+   * instance while the first one is still subscribing.
+   */
+  readonly #registeredNames = new Set<WatcherName>()
+
   constructor(
     context: WatcherContext,
     factories: Record<WatcherName, WatcherFactory> = WATCHER_FACTORIES
@@ -70,19 +91,24 @@ export class WatcherRegistry {
   }
 
   /**
-   * Construct and register every enabled watcher.
+   * Construct and register the requested enabled watchers.
    *
-   * A disabled recorder registers nothing whatsoever — no emitter listener, no logger tee, no
-   * process handler. "Periscope off costs nothing" has to mean the subscriptions never happen,
-   * not that the entries are dropped after the fact.
+   * The optional list lets the provider install the model watcher during `boot()`, before Lucid
+   * models can be booted by later providers, while leaving every other watcher for `ready()`.
+   * A later full registration reuses that exact retained instance and fills in only the names
+   * that have not already been claimed.
+   *
+   * A disabled recorder registers nothing whatsoever — no optional Lucid import, emitter
+   * listener, logger tee, or process handler. "Periscope off costs nothing" has to mean the
+   * subscriptions never happen, not that the entries are dropped after the fact.
    */
-  async register(): Promise<void> {
+  async register(names: readonly WatcherName[] = WATCHER_NAMES): Promise<void> {
     if (!this.#context.recorder.enabled) {
       return
     }
 
-    for (const name of WATCHER_NAMES) {
-      if (!this.#context.config.watchers[name].enabled) {
+    for (const name of names) {
+      if (this.#registeredNames.has(name) || !this.#context.config.watchers[name].enabled) {
         continue
       }
 
@@ -93,6 +119,7 @@ export class WatcherRegistry {
       if (watcher === undefined) {
         continue
       }
+      this.#registeredNames.add(name)
 
       /**
        * Pushed before `register()` resolves: a watcher that fails halfway through subscribing
@@ -108,9 +135,9 @@ export class WatcherRegistry {
   /**
    * Unsubscribe every registered watcher, newest first, and forget them.
    *
-   * Reverse order mirrors the registration dependency: the request watcher is registered first
-   * because it opens the batches the others fill, so it is retired last — anything still
-   * finishing has a batch to land in until the very end.
+   * Reverse order mirrors actual subscription order. The model watcher may be registered alone
+   * during provider boot, in which case it is deliberately retired last; its callbacks become
+   * inert before the recorder drains, even for models that cannot remove Lucid hooks.
    */
   async cleanup(): Promise<void> {
     for (const watcher of this.#registered.reverse()) {
@@ -118,5 +145,6 @@ export class WatcherRegistry {
     }
 
     this.#registered.length = 0
+    this.#registeredNames.clear()
   }
 }

@@ -139,6 +139,16 @@ class FakeStore implements PeriscopeStore {
     return this.#flags.get(name) ?? null
   }
 
+  async hasFlagWithPrefix(prefix: string): Promise<boolean> {
+    for (const name of this.#flags.keys()) {
+      if (name.startsWith(prefix)) {
+        return true
+      }
+    }
+
+    return false
+  }
+
   async setFlag(name: string, value: string): Promise<void> {
     this.#flags.set(name, value)
   }
@@ -213,6 +223,13 @@ function makeConfig(overrides: ConfigOverrides = {}): ResolvedPeriscopeConfig {
       exception: { enabled: true, captureCodeFrame: 'dev', captureProcessErrors: true },
       log: { enabled: true, level: 'warn' },
       event: { enabled: true, ignore: [] },
+      command: { enabled: true, ignore: [] },
+      mail: { enabled: true },
+      cache: { enabled: true, captureValues: false },
+      model: { enabled: true, captureDirty: false },
+      gate: { enabled: true, ignoreAbilities: [] },
+      dump: { enabled: true },
+      http_client: { enabled: true },
     },
     dashboard: { path: '/periscope', authorize: () => true, nPlusOneThreshold: 5 },
   }
@@ -486,6 +503,19 @@ test.group('Recorder | pipeline', (group) => {
     assert.equal(first.batchId, context.batchId)
     assert.isTrue(second.sequence > first.sequence)
     assert.isTrue(third.sequence > second.sequence)
+  })
+
+  test('capture the current batch or retain the active ambient generation', ({ assert }) => {
+    const recorder = new Recorder({ config: makeConfig(), store: new FakeStore() })
+    const ambient = recorder.captureContext()
+
+    assert.equal(ambient.kind, 'ambient')
+    assert.strictEqual(recorder.captureContext(), ambient)
+
+    const request = BatchScope.createContext('request')
+    BatchScope.runWith(request, () => {
+      assert.strictEqual(recorder.captureContext(), request)
+    })
   })
 
   test('record into the ambient batch when there is no active scope', async ({ assert }) => {

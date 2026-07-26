@@ -1,13 +1,20 @@
 import {
+  Box,
+  Braces,
   Bug,
   CirclePause,
   Database,
+  DatabaseZap,
   Gauge,
+  Globe2,
+  Mail,
   Search,
+  ShieldCheck,
+  SquareTerminal,
   Trash2,
   TriangleAlert,
 } from 'lucide-react'
-import { useCallback, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 
 import { DashboardContext } from '@/dashboard-context'
@@ -26,23 +33,48 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupInput,
-} from '@/components/ui/input-group'
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group'
 import { Switch } from '@/components/ui/switch'
 
-const navigation = [
-  { to: '/requests', label: 'Requests', type: 'request', icon: Gauge },
-  { to: '/queries', label: 'Queries', type: 'query', icon: Database },
-  { to: '/exceptions', label: 'Exceptions', type: 'exception', icon: Bug },
+const navigationGroups = [
+  {
+    label: 'Core',
+    items: [
+      { to: '/requests', label: 'Requests', type: 'request', icon: Gauge },
+      { to: '/queries', label: 'Queries', type: 'query', icon: Database },
+      { to: '/exceptions', label: 'Exceptions', type: 'exception', icon: Bug },
+    ],
+  },
+  {
+    label: 'Application',
+    items: [
+      { to: '/commands', label: 'Commands', type: 'command', icon: SquareTerminal },
+      { to: '/mail', label: 'Mail', type: 'mail', icon: Mail },
+      { to: '/cache', label: 'Cache', type: 'cache', icon: DatabaseZap },
+      { to: '/models', label: 'Models', type: 'model', icon: Box },
+      { to: '/gates', label: 'Gates', type: 'gate', icon: ShieldCheck },
+    ],
+  },
+  {
+    label: 'Diagnostics',
+    items: [
+      { to: '/dumps', label: 'Dumps', type: 'dump', icon: Braces },
+      { to: '/http-client', label: 'HTTP client', type: 'http_client', icon: Globe2 },
+    ],
+  },
 ] as const
 
 const titleByPath: Record<string, string> = {
-  requests: 'Requests',
-  queries: 'Queries',
-  exceptions: 'Exceptions',
+  'requests': 'Requests',
+  'queries': 'Queries',
+  'exceptions': 'Exceptions',
+  'commands': 'Commands',
+  'mail': 'Mail',
+  'cache': 'Cache',
+  'models': 'Models',
+  'gates': 'Gates',
+  'dumps': 'Dumps',
+  'http-client': 'HTTP client',
 }
 
 export function AppShell() {
@@ -55,6 +87,7 @@ export function AppShell() {
   const [mutating, setMutating] = useState(false)
   const [revision, setRevision] = useState(0)
   const refreshGenerationRef = useRef(0)
+  const activeNavigationRef = useRef<HTMLAnchorElement>(null)
 
   const refreshCounts = useCallback(async () => {
     const generation = refreshGenerationRef.current
@@ -82,7 +115,6 @@ export function AppShell() {
       setStatusError(cause instanceof Error ? cause : new Error('Dashboard API unavailable'))
     }
   }, [])
-
 
   usePolling(refreshDashboard, {
     enabled: status === null || (status.enabled && !status.paused),
@@ -135,16 +167,7 @@ export function AppShell() {
       clearEntries,
       refreshCounts,
     }),
-    [
-      clearEntries,
-      counts,
-      mutating,
-      refreshCounts,
-      revision,
-      status,
-      statusError,
-      togglePaused,
-    ]
+    [clearEntries, counts, mutating, refreshCounts, revision, status, statusError, togglePaused]
   )
 
   const submitSearch = (event: FormEvent<HTMLFormElement>) => {
@@ -162,6 +185,10 @@ export function AppShell() {
   const pageSegment = location.pathname.split('/').filter(Boolean)[0] ?? 'requests'
   const pageTitle = titleByPath[pageSegment] ?? 'Periscope'
 
+  useEffect(() => {
+    activeNavigationRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [location.pathname])
+
   return (
     <DashboardContext.Provider value={contextValue}>
       <div className="min-h-screen bg-background text-foreground">
@@ -175,33 +202,57 @@ export function AppShell() {
               <div className="text-2xs text-muted-foreground">Runtime recorder</div>
             </div>
             <Badge className="ms-auto" size="sm" variant={status?.paused ? 'warning' : 'secondary'}>
-              {!status ? 'checking' : status.paused ? 'paused' : status.enabled ? 'live' : 'offline'}
+              {!status
+                ? 'checking'
+                : status.paused
+                  ? 'paused'
+                  : status.enabled
+                    ? 'live'
+                    : 'offline'}
             </Badge>
           </div>
 
-          <nav aria-label="Entry types" className="flex gap-1 overflow-x-auto px-2 pb-2 md:flex-col md:px-3 md:py-3">
-            {navigation.map((item) => {
-              const Icon = item.icon
-              return (
-                <NavLink
-                  className={({ isActive }) =>
-                    `flex min-h-9 shrink-0 items-center gap-2 rounded-md px-3 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring ${
-                      isActive
-                        ? 'bg-background text-foreground shadow-xs'
-                        : 'text-muted-foreground hover:bg-accent/55 hover:text-foreground'
-                    }`
-                  }
-                  key={item.to}
-                  to={`${item.to}${searchParams.get('tag') ? `?tag=${encodeURIComponent(searchParams.get('tag')!)}` : ''}`}
-                >
-                  <Icon aria-hidden="true" className="size-4" />
-                  <span>{item.label}</span>
-                  <span className="ms-auto font-mono text-xs tabular-nums text-muted-foreground">
-                    {(counts[item.type] ?? 0).toLocaleString()}
-                  </span>
-                </NavLink>
-              )
-            })}
+          <nav
+            aria-label="Entry types"
+            className="flex gap-1 overflow-x-auto px-2 pb-2 md:min-h-0 md:flex-1 md:flex-col md:overflow-y-auto md:px-3 md:py-3"
+          >
+            {navigationGroups.map((group) => (
+              <div
+                aria-label={group.label}
+                className="flex shrink-0 gap-1 md:mb-2 md:block md:space-y-1"
+                key={group.label}
+                role="group"
+              >
+                <div className="hidden px-3 pb-1 pt-2 text-2xs font-medium text-muted-foreground md:block">
+                  {group.label}
+                </div>
+                {group.items.map((item) => {
+                  const Icon = item.icon
+                  const isCurrent =
+                    location.pathname === item.to || location.pathname.startsWith(`${item.to}/`)
+                  return (
+                    <NavLink
+                      className={({ isActive }) =>
+                        `flex min-h-9 shrink-0 items-center gap-2 rounded-md px-3 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring ${
+                          isActive
+                            ? 'bg-background text-foreground shadow-xs'
+                            : 'text-muted-foreground hover:bg-accent/55 hover:text-foreground'
+                        }`
+                      }
+                      key={item.to}
+                      ref={isCurrent ? activeNavigationRef : undefined}
+                      to={`${item.to}${searchParams.get('tag') ? `?tag=${encodeURIComponent(searchParams.get('tag')!)}` : ''}`}
+                    >
+                      <Icon aria-hidden="true" className="size-4" />
+                      <span>{item.label}</span>
+                      <span className="ms-auto font-mono text-xs tabular-nums text-muted-foreground">
+                        {(counts[item.type] ?? 0).toLocaleString()}
+                      </span>
+                    </NavLink>
+                  )
+                })}
+              </div>
+            ))}
           </nav>
 
           <div className="mt-auto hidden border-t p-4 text-xs leading-5 text-muted-foreground md:block">
@@ -216,7 +267,11 @@ export function AppShell() {
                 <h1 className="text-base font-semibold tracking-tight">{pageTitle}</h1>
               </div>
 
-              <form className="order-last w-full sm:order-none sm:w-72" onSubmit={submitSearch} role="search">
+              <form
+                className="order-last w-full sm:order-none sm:w-72"
+                onSubmit={submitSearch}
+                role="search"
+              >
                 <InputGroup>
                   <InputGroupInput
                     aria-label="Filter by exact tag"
@@ -246,9 +301,7 @@ export function AppShell() {
               <AlertDialog>
                 <AlertDialogTrigger
                   aria-label="Clear recorded entries"
-                  render={
-                    <Button disabled={mutating} size="sm" variant="destructive-outline" />
-                  }
+                  render={<Button disabled={mutating} size="sm" variant="destructive-outline" />}
                 >
                   <Trash2 aria-hidden="true" />
                   <span className="hidden sm:inline">Clear</span>
@@ -275,7 +328,10 @@ export function AppShell() {
             </div>
 
             {statusError && (
-              <div className="flex items-start gap-2 border-t bg-destructive/6 px-4 py-2 text-xs text-destructive-foreground sm:px-6 lg:px-8" role="alert">
+              <div
+                className="flex items-start gap-2 border-t bg-destructive/6 px-4 py-2 text-xs text-destructive-foreground sm:px-6 lg:px-8"
+                role="alert"
+              >
                 <TriangleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
                 <span>{statusError.message}</span>
               </div>

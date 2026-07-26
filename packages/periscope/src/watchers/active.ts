@@ -5,37 +5,40 @@
  * file that was distributed with this source code.
  */
 
+import type { DumpWatcher } from './dump/watcher.ts'
 import type { ExceptionWatcher } from './exception/watcher.ts'
 import type { RequestWatcher } from './request/watcher.ts'
 
 /**
- * The two watchers an application wires into its own code, and therefore the two that need a
+ * The watchers an application wires into its own code, and therefore the ones that need a
  * rendezvous point.
  *
- * Most watchers subscribe to something and are done. These two cannot: the request watcher
- * needs a middleware in the host's server stack, and the exception watcher needs the host's
- * exception handler to call it. Both of those live in the application's source, are imported
- * long before Periscope registers anything, and must keep working when Periscope is disabled,
- * absent from the container, or never registered at all.
+ * Most watchers subscribe to something and are done. These cannot: the request watcher needs a
+ * middleware in the host's server stack, the exception watcher needs the host's exception handler
+ * to call it, and the dump watcher is reached through the package's synchronous `dump()` export.
+ * Those host-side pieces are imported long before Periscope registers anything and must keep
+ * working when Periscope is disabled, absent from the container, or never registered at all.
  *
- * So the host-side pieces — `periscope/middleware/request_watcher` and
- * `periscope/exception_reporter` — hold no state and make no container lookups. They ask this
- * module for the live watcher and, finding none, do nothing at all. That is what makes a
- * disabled Periscope literally free on the request path: an empty slot and a branch.
+ * So the host-side pieces — `periscope/middleware/request_watcher`,
+ * `periscope/exception_reporter`, and `periscope/dump` — hold no state and make no container
+ * lookups. They ask this module for the live watcher and, finding none, do nothing at all. That is
+ * what makes disabled Periscope literally free on these paths: an empty slot and a branch.
  *
  * The slots are module-level, which means one per process. That is correct for the thing they
- * model — an application has one server middleware stack and one exception handler — and it is
- * why {@link WatcherRegistry.cleanup} clears them: a test that boots a second application must
- * not find the first one's watcher.
+ * model — an application has one middleware stack, one exception handler, and one dump helper —
+ * and it is why {@link WatcherRegistry.cleanup} clears them: a test that boots a second application
+ * must not find the first one's watcher.
  */
 type ActiveWatchers = {
   request: RequestWatcher | null
   exception: ExceptionWatcher | null
+  dump: DumpWatcher | null
 }
 
 const active: ActiveWatchers = {
   request: null,
   exception: null,
+  dump: null,
 }
 
 /**

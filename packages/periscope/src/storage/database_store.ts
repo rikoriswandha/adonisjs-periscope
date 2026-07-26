@@ -245,14 +245,14 @@ export class DatabaseStore implements PeriscopeStore {
          * rows are identical, so the cheapest correct answer is to keep what is already there.
          * Failing instead would cost every other entry in the batch.
          */
-        await trx.insertQuery().table(ENTRIES_TABLE).multiInsert(chunk).onConflict('uuid').ignore()
+        await trx.knexQuery().table(ENTRIES_TABLE).insert(chunk).onConflict('uuid').ignore()
       }
 
       for (const chunk of chunked(tagRows, INSERT_CHUNK_SIZE)) {
         await trx
-          .insertQuery()
+          .knexQuery()
           .table(TAGS_TABLE)
-          .multiInsert(chunk)
+          .insert(chunk)
           .onConflict(['entry_uuid', 'tag'])
           .ignore()
       }
@@ -436,7 +436,7 @@ export class DatabaseStore implements PeriscopeStore {
   async monitorTag(tag: string): Promise<void> {
     // Monitoring an already-monitored tag is a no-op, which is precisely `on conflict do nothing`.
     await this.#client()
-      .insertQuery()
+      .knexQuery()
       .table(MONITORED_TAGS_TABLE)
       .insert({ tag })
       .onConflict('tag')
@@ -470,6 +470,23 @@ export class DatabaseStore implements PeriscopeStore {
     return row.value
   }
 
+  async hasFlagWithPrefix(prefix: string): Promise<boolean> {
+    /*
+     * `!` is the escape character because backslash string-literal rules differ between postgres
+     * and MySQL. Escaping makes the contract a literal starts-with query, not wildcard access.
+     */
+    const pattern = `${prefix.replaceAll('!', '!!').replaceAll('%', '!%').replaceAll('_', '!_')}%`
+    const row = await this.#client()
+      .query()
+      .from(FLAGS_TABLE)
+      .select('name')
+      .whereRaw("name like ? escape '!'", [pattern])
+      .whereRaw('(expires_at is null or expires_at > ?)', [Date.now()])
+      .first()
+
+    return row !== null && row !== undefined
+  }
+
   async setFlag(name: string, value: string, options: FlagOptions = {}): Promise<void> {
     const expiresAt = options.expiresAt === undefined ? null : options.expiresAt.getTime()
 
@@ -479,7 +496,7 @@ export class DatabaseStore implements PeriscopeStore {
      * expiry behind and make a freshly set flag read back as absent.
      */
     await this.#client()
-      .insertQuery()
+      .knexQuery()
       .table(FLAGS_TABLE)
       .insert({ name, value, expires_at: expiresAt })
       .onConflict('name')

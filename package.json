@@ -15,7 +15,7 @@
   "scripts": {
     "build": "npm -w periscope run build && npm -w @periscope/dashboard run build",
     "dev": "npm -w periscope run build && npm -w playground run dev",
-    "test": "npm -w periscope run test && npm -w periscope run build && npm -w playground run test",
+    "test": "npm -w periscope run test && npm -w @periscope/dashboard run test && npm -w periscope run build && npm -w playground run test",
     "lint": "npm -w periscope run lint && npm -w @periscope/dashboard run lint && npm -w playground run lint",
     "typecheck": "npm -w periscope run typecheck && npm -w @periscope/dashboard run typecheck && npm -w playground run typecheck",
     "format": "prettier --write ."

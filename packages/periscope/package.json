@@ -48,19 +48,34 @@
     "better-sqlite3": "^12.10.0"
   },
   "peerDependencies": {
+    "@adonisjs/bouncer": "^4.0.0",
+    "@adonisjs/cache": "^2.0.0",
     "@adonisjs/core": "^7.0.0",
-    "@adonisjs/lucid": ">=22.0.0"
+    "@adonisjs/lucid": ">=22.0.0",
+    "@adonisjs/mail": "^10.0.0"
   },
   "peerDependenciesMeta": {
+    "@adonisjs/bouncer": {
+      "optional": true
+    },
+    "@adonisjs/cache": {
+      "optional": true
+    },
     "@adonisjs/lucid": {
+      "optional": true
+    },
+    "@adonisjs/mail": {
       "optional": true
     }
   },
   "devDependencies": {
     "@adonisjs/assembler": "^8.4.0",
+    "@adonisjs/bouncer": "^4.0.0",
+    "@adonisjs/cache": "^2.1.0",
     "@adonisjs/core": "^7.3.5",
     "@adonisjs/eslint-config": "^3.1.0",
     "@adonisjs/lucid": "^22.4.2",
+    "@adonisjs/mail": "^10.4.0",
     "@adonisjs/prettier-config": "^1.5.0",
     "@adonisjs/tsconfig": "^2.0.0",
     "@japa/assert": "^4.2.0",

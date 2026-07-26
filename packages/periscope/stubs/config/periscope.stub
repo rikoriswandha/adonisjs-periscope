@@ -210,6 +210,60 @@ export default defineConfig({
        */
       ignore: [],
     },
+
+    command: {
+      /**
+       * Disable command capture, or ignore commands that are too noisy for the command timeline.
+       * Periscope's own commands are always ignored.
+       */
+      enabled: true,
+      ignore: [],
+    },
+
+    mail: {
+      /**
+       * Disable this when mail lifecycle details and previews must not be retained.
+       */
+      enabled: true,
+    },
+
+    cache: {
+      /**
+       * Values are excluded by default because cache payloads can be large or sensitive.
+       */
+      enabled: true,
+      captureValues: false,
+    },
+
+    model: {
+      /**
+       * Dirty attributes are excluded by default; enable them when update diffs are useful.
+       */
+      enabled: true,
+      captureDirty: false,
+    },
+
+    gate: {
+      /**
+       * Ignore abilities that are too noisy or carry authorization data you do not want retained.
+       */
+      enabled: true,
+      ignoreAbilities: [],
+    },
+
+    dump: {
+      /**
+       * Disable this to make calls to \`dump()\` return values without recording them.
+       */
+      enabled: true,
+    },
+
+    http_client: {
+      /**
+       * Disable this when outbound HTTP traffic is already observed elsewhere.
+       */
+      enabled: true,
+    },
   },
 
   dashboard: {

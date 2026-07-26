@@ -12,7 +12,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "lint": "eslint",
-    "test": "node --test src/hooks/walk-cursor-pages.test.ts src/lib/exception-groups.test.ts",
+    "test": "node --test src/components/http-client-duration-data.test.ts src/components/mail-preview-sanitizer.test.ts src/hooks/use-dump-open-heartbeat.test.ts src/hooks/walk-cursor-pages.test.ts src/lib/exception-groups.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

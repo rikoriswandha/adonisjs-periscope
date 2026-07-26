@@ -80,6 +80,10 @@ export const api = {
     }).then((response) => response.data)
   },
 
+  getEntryEmlUrl(uuid: string): string {
+    return endpoint(`entries/${encodeURIComponent(uuid)}/eml`).toString()
+  },
+
   getBatch(batchId: string, signal?: AbortSignal): Promise<StoredEntry[]> {
     return request<{ data: StoredEntry[] }>(`batches/${encodeURIComponent(batchId)}`, {
       signal,
@@ -101,8 +105,9 @@ export const api = {
     })
   },
 
-  deleteFlag(name: string): Promise<void> {
+  deleteFlag(name: string, options: Pick<RequestInit, 'keepalive'> = {}): Promise<void> {
     return request<void>(`flags/${encodeURIComponent(name)}`, {
+      ...options,
       method: 'DELETE',
     })
   },

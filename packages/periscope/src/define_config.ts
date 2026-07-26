@@ -107,7 +107,7 @@ const DEFAULT_QUERY_CAP = 200
 const DEFAULT_REPLACEMENT = '[REDACTED]'
 
 /**
- * Watcher defaults (P3).
+ * Watcher defaults (P3 and P6).
  *
  * The two thresholds are the interesting numbers. A second is the point at which a human
  * notices a page is slow, and 100 ms is the point at which a single query stops being noise in
@@ -447,7 +447,20 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
   const watchers = readBlock(
     input,
     'watchers',
-    ['request', 'query', 'exception', 'log', 'event'],
+    [
+      'request',
+      'query',
+      'exception',
+      'log',
+      'event',
+      'command',
+      'mail',
+      'cache',
+      'model',
+      'gate',
+      'dump',
+      'http_client',
+    ],
     issues
   )
 
@@ -474,6 +487,13 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
   )
   const log = readBlock(watchers, 'log', ['enabled', 'level'], issues, 'watchers.log')
   const event = readBlock(watchers, 'event', ['enabled', 'ignore'], issues, 'watchers.event')
+  const command = readBlock(watchers, 'command', ['enabled', 'ignore'], issues, 'watchers.command')
+  const mail = readBlock(watchers, 'mail', ['enabled'], issues, 'watchers.mail')
+  const cache = readBlock(watchers, 'cache', ['enabled', 'captureValues'], issues, 'watchers.cache')
+  const model = readBlock(watchers, 'model', ['enabled', 'captureDirty'], issues, 'watchers.model')
+  const gate = readBlock(watchers, 'gate', ['enabled', 'ignoreAbilities'], issues, 'watchers.gate')
+  const dump = readBlock(watchers, 'dump', ['enabled'], issues, 'watchers.dump')
+  const httpClient = readBlock(watchers, 'http_client', ['enabled'], issues, 'watchers.http_client')
 
   return {
     request: {
@@ -524,6 +544,33 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
     event: {
       enabled: readBoolean('watchers.event.enabled', event.enabled, issues) ?? true,
       ignore: readStringArray('watchers.event.ignore', event.ignore, issues) ?? [],
+    },
+    command: {
+      enabled: readBoolean('watchers.command.enabled', command.enabled, issues) ?? true,
+      ignore: readStringArray('watchers.command.ignore', command.ignore, issues) ?? [],
+    },
+    mail: {
+      enabled: readBoolean('watchers.mail.enabled', mail.enabled, issues) ?? true,
+    },
+    cache: {
+      enabled: readBoolean('watchers.cache.enabled', cache.enabled, issues) ?? true,
+      captureValues:
+        readBoolean('watchers.cache.captureValues', cache.captureValues, issues) ?? false,
+    },
+    model: {
+      enabled: readBoolean('watchers.model.enabled', model.enabled, issues) ?? true,
+      captureDirty: readBoolean('watchers.model.captureDirty', model.captureDirty, issues) ?? false,
+    },
+    gate: {
+      enabled: readBoolean('watchers.gate.enabled', gate.enabled, issues) ?? true,
+      ignoreAbilities:
+        readStringArray('watchers.gate.ignoreAbilities', gate.ignoreAbilities, issues) ?? [],
+    },
+    dump: {
+      enabled: readBoolean('watchers.dump.enabled', dump.enabled, issues) ?? true,
+    },
+    http_client: {
+      enabled: readBoolean('watchers.http_client.enabled', httpClient.enabled, issues) ?? true,
     },
   }
 }

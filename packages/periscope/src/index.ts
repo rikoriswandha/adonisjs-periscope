@@ -94,6 +94,27 @@ export type {
 export { EventWatcher } from './watchers/event/watcher.ts'
 export type { EventEntryContent } from './watchers/event/types.ts'
 
+export { CommandWatcher } from './watchers/command/watcher.ts'
+export type { CommandEntryContent } from './watchers/command/types.ts'
+
+export { MailWatcher } from './watchers/mail/watcher.ts'
+export type { MailEntryContent } from './watchers/mail/types.ts'
+
+export { CacheWatcher } from './watchers/cache/watcher.ts'
+export type { CacheEntryContent } from './watchers/cache/types.ts'
+
+export { ModelWatcher } from './watchers/model/watcher.ts'
+export type { ModelEntryContent } from './watchers/model/types.ts'
+
+export { GateWatcher } from './watchers/gate/watcher.ts'
+export type { GateEntryContent } from './watchers/gate/types.ts'
+
+export { DumpWatcher } from './watchers/dump/watcher.ts'
+export type { DumpEntryContent } from './watchers/dump/types.ts'
+
+export { HttpClientWatcher } from './watchers/http_client/watcher.ts'
+export type { HttpClientEntryContent } from './watchers/http_client/types.ts'
+
 export { ENTRY_TYPES, EntryType, Flag, WATCHER_NAMES, WatcherName } from './types.ts'
 export type {
   BatchContext,

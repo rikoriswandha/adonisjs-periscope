@@ -8,7 +8,7 @@
 import { test } from '@japa/runner'
 
 import { IncomingEntry } from '../../src/entry.ts'
-import { ENTRY_TYPES, EntryType } from '../../src/types.ts'
+import { ENTRY_TYPES, EntryType, WATCHER_NAMES } from '../../src/types.ts'
 import type {
   BatchContext,
   BatchKind,
@@ -24,9 +24,12 @@ import type {
   PeriscopeStore,
   PruneOptions,
   ResolvedPeriscopeConfig,
+  ResolvedWatchersConfig,
   StorageDriverName,
   StoredEntry,
   TagHook,
+  WatchersConfig,
+  WatcherName,
 } from '../../src/types.ts'
 
 /**
@@ -59,6 +62,7 @@ const storeDouble: PeriscopeStore = {
   monitorTag: async () => {},
   unmonitorTag: async () => {},
   getFlag: async () => null,
+  hasFlagWithPrefix: async () => false,
   setFlag: async () => {},
   deleteFlag: async () => {},
   close: async () => {},
@@ -95,6 +99,29 @@ test.group('Types | EntryType', () => {
 
     expectTypeOf(EntryType.HTTP_CLIENT).toEqualTypeOf<'http_client'>()
     expectTypeOf<EntryType>().toExtend<string>()
+  })
+})
+
+test.group('Types | WatcherName', () => {
+  test('append every Phase 6 watcher in registration order', ({ assert, expectTypeOf }) => {
+    assert.deepEqual(WATCHER_NAMES, [
+      'request',
+      'query',
+      'exception',
+      'log',
+      'event',
+      'command',
+      'mail',
+      'cache',
+      'model',
+      'gate',
+      'dump',
+      'http_client',
+    ])
+
+    expectTypeOf<(typeof WATCHER_NAMES)[number]>().toEqualTypeOf<WatcherName>()
+    expectTypeOf<keyof WatchersConfig>().toEqualTypeOf<WatcherName>()
+    expectTypeOf<keyof ResolvedWatchersConfig>().toEqualTypeOf<WatcherName>()
   })
 })
 
@@ -210,6 +237,7 @@ test.group('Types | PeriscopeStore', () => {
       'exceptionGroups',
       'find',
       'getFlag',
+      'hasFlagWithPrefix',
       'list',
       'monitorTag',
       'monitoredTags',
@@ -234,6 +262,7 @@ test.group('Types | PeriscopeStore', () => {
       | 'monitorTag'
       | 'unmonitorTag'
       | 'getFlag'
+      | 'hasFlagWithPrefix'
       | 'setFlag'
       | 'deleteFlag'
       | 'close'
@@ -431,6 +460,13 @@ test.group('Types | configuration', () => {
         exception: { enabled: true, captureCodeFrame: 'dev', captureProcessErrors: true },
         log: { enabled: true, level: 'warn' },
         event: { enabled: true, ignore: [] },
+        command: { enabled: true, ignore: [] },
+        mail: { enabled: true },
+        cache: { enabled: true, captureValues: false },
+        model: { enabled: true, captureDirty: false },
+        gate: { enabled: true, ignoreAbilities: [] },
+        dump: { enabled: true },
+        http_client: { enabled: true },
       },
       dashboard: { path: '/periscope', authorize: () => true, nPlusOneThreshold: 5 },
     }

@@ -8,6 +8,7 @@
 import { existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { test } from '@japa/runner'
+import { BaseModel } from '@adonisjs/lucid/orm'
 import { LoggerFactory } from '@adonisjs/core/factories/logger'
 import { RouterFactory } from '@adonisjs/core/factories/http'
 import type { ApplicationService, LoggerService } from '@adonisjs/core/types'
@@ -568,6 +569,52 @@ test.group('PeriscopeProvider', (group) => {
     await provider.shutdown()
   })
 
+  test('capture a model booted after provider boot and reuse its watcher at ready', async ({
+    assert,
+  }) => {
+    const originalBoot = BaseModel.boot
+    const { app, provider } = await createProvider({ periscope: inertConfig() })
+
+    try {
+      await provider.boot()
+
+      const installedBoot = BaseModel.boot
+      assert.notStrictEqual(installedBoot, originalBoot)
+      assert.isNull(getActiveWatcher('request'))
+      assert.isNull(getActiveWatcher('exception'))
+
+      class BootWindowModel extends BaseModel {}
+
+      BootWindowModel.boot()
+      const model = new BootWindowModel()
+      model.$attributes = { id: 41, state: 'before-ready' }
+      await BootWindowModel.$hooks.runner('after:create').run(model)
+
+      await provider.boot()
+      await provider.ready()
+      await provider.ready()
+
+      assert.strictEqual(BaseModel.boot, installedBoot)
+
+      const recorder = await app.container.make(Recorder)
+      await recorder.flush()
+      const page = await recorder.store.list({ type: EntryType.MODEL })
+
+      assert.lengthOf(page.data, 1)
+      assert.deepEqual(page.data[0].content, {
+        action: 'create',
+        model: 'BootWindowModel',
+        primaryKey: 'id',
+        primaryKeyValue: 41,
+        attributes: { id: 41, state: 'before-ready' },
+      })
+    } finally {
+      await provider.shutdown()
+    }
+
+    assert.strictEqual(BaseModel.boot, originalBoot)
+  })
+
   test('register watchers in ready and unsubscribe them in shutdown', async ({ assert }) => {
     const { app, provider } = await createProvider({ periscope: inertConfig() })
     const emitter = (await app.container.make('emitter')) as unknown as ListenerProbe
@@ -732,6 +779,10 @@ test.group('PeriscopeProvider', (group) => {
         unhandledRejection: process.listenerCount('unhandledRejection'),
       }
 
+      const originalModelBoot = BaseModel.boot
+      await provider.boot()
+      await provider.boot()
+      await provider.ready()
       await provider.ready()
 
       const recorder = await app.container.make(Recorder)
@@ -749,6 +800,7 @@ test.group('PeriscopeProvider', (group) => {
         listeners.unhandledRejection,
         scenario.name
       )
+      assert.strictEqual(BaseModel.boot, originalModelBoot, scenario.name)
       assert.strictEqual(pinoDestination(logger.pino), originalDestination, scenario.name)
       assert.isNull(getActiveWatcher('request'), scenario.name)
       assert.isNull(getActiveWatcher('exception'), scenario.name)

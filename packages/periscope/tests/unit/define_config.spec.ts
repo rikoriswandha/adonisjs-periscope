@@ -87,6 +87,31 @@ const DEFAULTS: ResolvedPeriscopeConfig = {
       enabled: true,
       ignore: [],
     },
+    command: {
+      enabled: true,
+      ignore: [],
+    },
+    mail: {
+      enabled: true,
+    },
+    cache: {
+      enabled: true,
+      captureValues: false,
+    },
+    model: {
+      enabled: true,
+      captureDirty: false,
+    },
+    gate: {
+      enabled: true,
+      ignoreAbilities: [],
+    },
+    dump: {
+      enabled: true,
+    },
+    http_client: {
+      enabled: true,
+    },
   },
   dashboard: {
     path: '/periscope',
@@ -157,9 +182,13 @@ test.group('defineConfig | defaults', () => {
 
     first.redact.keys.push('mutated')
     first.enabledIn.push('staging')
+    first.watchers.command.ignore.push('mutated')
+    first.watchers.gate.ignoreAbilities.push('mutated')
 
     assert.notInclude(second.redact.keys, 'mutated')
     assert.notInclude(second.enabledIn, 'staging')
+    assert.notInclude(second.watchers.command.ignore, 'mutated')
+    assert.notInclude(second.watchers.gate.ignoreAbilities, 'mutated')
   })
 })
 
@@ -182,6 +211,41 @@ test.group('defineConfig | merging', () => {
     assert.deepEqual(config.watchers.exception, DEFAULTS.watchers.exception)
     assert.deepEqual(config.watchers.log, DEFAULTS.watchers.log)
     assert.deepEqual(config.watchers.event, DEFAULTS.watchers.event)
+    assert.deepEqual(config.watchers.command, DEFAULTS.watchers.command)
+    assert.deepEqual(config.watchers.mail, DEFAULTS.watchers.mail)
+    assert.deepEqual(config.watchers.cache, DEFAULTS.watchers.cache)
+    assert.deepEqual(config.watchers.model, DEFAULTS.watchers.model)
+    assert.deepEqual(config.watchers.gate, DEFAULTS.watchers.gate)
+    assert.deepEqual(config.watchers.dump, DEFAULTS.watchers.dump)
+    assert.deepEqual(config.watchers.http_client, DEFAULTS.watchers.http_client)
+  })
+
+  test('resolve every Phase 6 watcher override into its dense shape', ({ assert }) => {
+    const config = defineConfig({
+      watchers: {
+        command: { enabled: false, ignore: ['health:check'] },
+        mail: { enabled: false },
+        cache: { enabled: false, captureValues: true },
+        model: { enabled: false, captureDirty: true },
+        gate: { enabled: false, ignoreAbilities: ['admin'] },
+        dump: { enabled: false },
+        http_client: { enabled: false },
+      },
+    })
+
+    assert.deepEqual(config.watchers.command, {
+      enabled: false,
+      ignore: ['health:check'],
+    })
+    assert.deepEqual(config.watchers.mail, { enabled: false })
+    assert.deepEqual(config.watchers.cache, { enabled: false, captureValues: true })
+    assert.deepEqual(config.watchers.model, { enabled: false, captureDirty: true })
+    assert.deepEqual(config.watchers.gate, {
+      enabled: false,
+      ignoreAbilities: ['admin'],
+    })
+    assert.deepEqual(config.watchers.dump, { enabled: false })
+    assert.deepEqual(config.watchers.http_client, { enabled: false })
   })
 
   test('normalise a trailing slash from the dashboard path but preserve the root', ({ assert }) => {
@@ -435,7 +499,7 @@ test.group('defineConfig | validation', () => {
   })
 
   test('reject an unknown watcher key', ({ assert }) => {
-    assert.include(rejectionOf({ watchers: { mail: {} } }).paths, 'watchers.mail')
+    assert.include(rejectionOf({ watchers: { schedule: {} } }).paths, 'watchers.schedule')
   })
 
   test('reject an unknown request watcher key', ({ assert }) => {
@@ -477,6 +541,25 @@ test.group('defineConfig | validation', () => {
     assert.include(
       rejectionOf({ watchers: { event: { ignore: 'order.*' } } }).paths,
       'watchers.event.ignore'
+    )
+  })
+
+  test('reject invalid Phase 6 watcher-specific options', ({ assert }) => {
+    assert.include(
+      rejectionOf({ watchers: { command: { ignore: 'periscope:clear' } } }).paths,
+      'watchers.command.ignore'
+    )
+    assert.include(
+      rejectionOf({ watchers: { cache: { captureValues: 'yes' } } }).paths,
+      'watchers.cache.captureValues'
+    )
+    assert.include(
+      rejectionOf({ watchers: { model: { captureDirty: 'yes' } } }).paths,
+      'watchers.model.captureDirty'
+    )
+    assert.include(
+      rejectionOf({ watchers: { gate: { ignoreAbilities: 'admin' } } }).paths,
+      'watchers.gate.ignoreAbilities'
     )
   })
 

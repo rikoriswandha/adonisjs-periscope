@@ -461,6 +461,23 @@ export class MemoryStore implements PeriscopeStore {
     return flag.value
   }
 
+  async hasFlagWithPrefix(prefix: string): Promise<boolean> {
+    const now = Date.now()
+
+    for (const [name, flag] of this.#flags) {
+      if (flag.expiresAt !== null && flag.expiresAt <= now) {
+        this.#flags.delete(name)
+        continue
+      }
+
+      if (name.startsWith(prefix)) {
+        return true
+      }
+    }
+
+    return false
+  }
+
   async setFlag(name: string, value: string, options: FlagOptions = {}): Promise<void> {
     // A whole new record, so setting a flag without an expiry clears whatever expiry it had.
     this.#flags.set(name, { value, expiresAt: options.expiresAt?.getTime() ?? null })

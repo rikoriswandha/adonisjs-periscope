@@ -281,6 +281,15 @@ export class Recorder {
   }
 
   /**
+   * Capture the context an asynchronous watcher should keep targeting after its originating
+   * callback returns. Request work retains the active scope; work started outside one retains
+   * the current ambient generation rather than whichever generation is current when it ends.
+   */
+  captureContext(): BatchContext {
+    return BatchScope.current() ?? this.#ambient.current()
+  }
+
+  /**
    * Push an entry through the pipeline and, if it survives, into the active batch's buffer.
    *
    * The order is architecture §6.1 and is not negotiable, because each step depends on the one

@@ -154,6 +154,47 @@ export default defineConfig({
        */
       ignore: [],
     },
+
+    command: {
+      /**
+       * Periscope commands are always ignored; add application commands here when they are noisy.
+       */
+      enabled: true,
+      ignore: [],
+    },
+
+    mail: {
+      enabled: true,
+    },
+
+    cache: {
+      /**
+       * Capture fixture values so the functional test proves recursive redaction on cache entries.
+       */
+      enabled: true,
+      captureValues: true,
+    },
+
+    model: {
+      /**
+       * Capture the fixture update diff so Lucid's pre-hydration dirty state is exercised.
+       */
+      enabled: true,
+      captureDirty: true,
+    },
+
+    gate: {
+      enabled: true,
+      ignoreAbilities: [],
+    },
+
+    dump: {
+      enabled: true,
+    },
+
+    http_client: {
+      enabled: true,
+    },
   },
 
   dashboard: {

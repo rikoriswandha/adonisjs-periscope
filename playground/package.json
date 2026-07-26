@@ -16,6 +16,7 @@
   },
   "imports": {
     "#controllers/*": "./app/controllers/*.js",
+    "#abilities/*": "./app/abilities/*.js",
     "#exceptions/*": "./app/exceptions/*.js",
     "#models/*": "./app/models/*.js",
     "#mails/*": "./app/mails/*.js",
@@ -29,6 +30,8 @@
     "#config/*": "./config/*.js"
   },
   "dependencies": {
+    "@adonisjs/bouncer": "^4.0.0",
+    "@adonisjs/cache": "^2.1.0",
     "@adonisjs/core": "^7.3.5",
     "@adonisjs/lucid": "^22.4.2",
     "@adonisjs/mail": "^10.4.0",
