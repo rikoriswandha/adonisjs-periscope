@@ -383,6 +383,150 @@ export interface Watcher {
 }
 
 /**
+ * The watchers shipped in wave 1 (P3). Wave 2 (P6) extends the union; the key is also the
+ * watcher's config key and its `Watcher.name`, so a watcher is turned off by the same string it
+ * is registered under.
+ */
+export const WatcherName = {
+  REQUEST: 'request',
+  QUERY: 'query',
+  EXCEPTION: 'exception',
+  LOG: 'log',
+  EVENT: 'event',
+} as const
+
+export type WatcherName = (typeof WatcherName)[keyof typeof WatcherName]
+
+export const WATCHER_NAMES = Object.values(WatcherName) as readonly WatcherName[]
+
+/**
+ * When an expensive, developer-facing capture runs.
+ *
+ * `dev` means "anywhere but production" — the same rule AdonisJS's own exception handler uses
+ * for its `debug` flag, and therefore the rule that keeps `NODE_ENV=test` behaving like a
+ * developer's machine rather than like a deployment.
+ */
+export type CaptureMode = 'dev' | 'always' | 'never'
+
+/**
+ * Pino's level names, which is what the log watcher filters on.
+ */
+export type LogLevelName = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal'
+
+/**
+ * Per-watcher options as an application writes them. Every watcher accepts `enabled`; the rest
+ * is watcher-specific.
+ */
+export type WatchersConfig = {
+  request?: {
+    enabled?: boolean
+
+    /**
+     * Requests at or above this many milliseconds are tagged `slow`. Defaults to 1 000.
+     */
+    slowMs?: number
+
+    /**
+     * Capture a preview of the response body. Only text-ish bodies are ever stored; streams and
+     * file downloads are recorded as a marker. Defaults to `true`.
+     */
+    captureResponse?: boolean
+
+    /**
+     * Ceiling on the stored response preview, in kilobytes. Defaults to 64.
+     */
+    responseSizeLimitKb?: number
+
+    /**
+     * Store the session contents of the request, when `@adonisjs/session` is installed and the
+     * session middleware ran. Values pass through the redactor. Defaults to `true`.
+     */
+    captureSession?: boolean
+  }
+
+  query?: {
+    enabled?: boolean
+
+    /**
+     * Queries at or above this many milliseconds are tagged `slow`. Defaults to 100.
+     */
+    slowMs?: number
+
+    /**
+     * Drop binding values, keeping only their count. Defaults to `false`.
+     */
+    hideBindings?: boolean
+  }
+
+  exception?: {
+    enabled?: boolean
+
+    /**
+     * When to read the ±5 source lines around the throwing frame off disk. Defaults to `dev`.
+     */
+    captureCodeFrame?: CaptureMode
+
+    /**
+     * Observe `uncaughtException` and `unhandledRejection`. Purely observational — the process
+     * keeps whatever crash semantics it had. Defaults to `true`.
+     */
+    captureProcessErrors?: boolean
+  }
+
+  log?: {
+    enabled?: boolean
+
+    /**
+     * Lowest level Periscope records from logs that reach its destination. Pino filters first, so
+     * the effective floor is `max(application logger level, this setting)`: `debug` cannot recover
+     * debug records from an application logger set to `info`. Defaults to `warn`.
+     */
+    level?: LogLevelName
+  }
+
+  event?: {
+    enabled?: boolean
+
+    /**
+     * Event names to ignore, on top of the framework prefixes the watcher always drops. A `*`
+     * matches any run of characters, so `order:*` drops the whole namespace.
+     */
+    ignore?: string[]
+  }
+}
+
+/**
+ * The same shape with nothing optional. Watchers read this and never fall back.
+ */
+export type ResolvedWatchersConfig = {
+  request: {
+    enabled: boolean
+    slowMs: number
+    captureResponse: boolean
+    responseSizeLimitKb: number
+    captureSession: boolean
+  }
+  query: {
+    enabled: boolean
+    slowMs: number
+    hideBindings: boolean
+  }
+  exception: {
+    enabled: boolean
+    captureCodeFrame: CaptureMode
+    captureProcessErrors: boolean
+  }
+  log: {
+    enabled: boolean
+    level: LogLevelName
+  }
+  event: {
+    enabled: boolean
+    ignore: string[]
+  }
+}
+
+/**
  * Per-entry-type caps applied within a single batch, plus the fallback used by any type without
  * its own entry.
  */
@@ -481,6 +625,22 @@ export type PeriscopeConfig = {
      */
     tag?: TagHook[]
   }
+
+  /**
+   * Per-watcher switches and options. Every watcher is on by default; a watcher turned off here
+   * subscribes to nothing at all, which is the difference between "records nothing" and "costs
+   * nothing".
+   */
+  watchers?: WatchersConfig
+
+  dashboard?: {
+    /**
+     * URL prefix the dashboard is served from. Periscope refuses to record its own dashboard
+     * traffic, so this is load-bearing from P3 onwards even though the dashboard itself lands
+     * in P4. Defaults to `/periscope`.
+     */
+    path?: string
+  }
 }
 
 /**
@@ -513,5 +673,9 @@ export type ResolvedPeriscopeConfig = {
   hooks: {
     filter: FilterHook[]
     tag: TagHook[]
+  }
+  watchers: ResolvedWatchersConfig
+  dashboard: {
+    path: string
   }
 }

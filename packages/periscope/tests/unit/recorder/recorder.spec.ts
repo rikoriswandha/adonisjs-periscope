@@ -190,6 +190,26 @@ function makeConfig(overrides: ConfigOverrides = {}): ResolvedPeriscopeConfig {
       replacement: '[REDACTED]',
     },
     hooks: { filter: overrides.filter ?? [], tag: overrides.tag ?? [] },
+
+    /**
+     * The recorder reads neither block — watchers own their own settings and the dashboard is a
+     * phase-4 concern — but the resolved config is dense by contract, so they are written out at
+     * their defaults rather than cast away.
+     */
+    watchers: {
+      request: {
+        enabled: true,
+        slowMs: 1_000,
+        captureResponse: true,
+        responseSizeLimitKb: 64,
+        captureSession: true,
+      },
+      query: { enabled: true, slowMs: 100, hideBindings: false },
+      exception: { enabled: true, captureCodeFrame: 'dev', captureProcessErrors: true },
+      log: { enabled: true, level: 'warn' },
+      event: { enabled: true, ignore: [] },
+    },
+    dashboard: { path: '/periscope' },
   }
 }
 

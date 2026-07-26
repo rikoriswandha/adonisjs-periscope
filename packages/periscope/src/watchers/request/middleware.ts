@@ -8,17 +8,31 @@
 import type { NextFn } from '@adonisjs/core/types/http'
 import type { HttpContext } from '@adonisjs/core/http'
 
+import { getActiveWatcher } from '../active.ts'
+
 /**
- * Implemented in Phase 3 (P3.2 — RequestWatcher). Phase 0 ships the module so the package
- * `exports` map resolves and `npm run build` produces every declared entry point.
+ * The middleware must be registered first in `server.use([...])`.
  *
- * The middleware must be registered first in the server middleware stack: P3.2 opens a
- * `BatchScope` around `next()` here, so anything the rest of the stack records is correlated
- * to the request batch. Until then it is a transparent pass-through, which is exactly what a
- * host application registering it in Phase 0 should observe.
+ * The request watcher opens its `BatchScope` around `next()` here, so every query, log and event
+ * produced by the rest of the server and router middleware stacks joins the same request batch.
+ * Registering it later would leave earlier middleware activity outside the only scope that can
+ * honestly correlate it.
+ *
+ * This host-wired class deliberately owns no state and resolves nothing from the container.
+ * Applications import it long before Periscope has necessarily booted, so an empty active slot
+ * must remain a transparent pass-through when recording is disabled, the request watcher is off,
+ * or the registry has already shut down.
  */
-export default class RequestWatcherMiddleware {
-  handle(_ctx: HttpContext, next: NextFn) {
-    return next()
+export class RequestWatcherMiddleware {
+  handle(ctx: HttpContext, next: NextFn) {
+    const watcher = getActiveWatcher('request')
+
+    if (watcher === null) {
+      return next()
+    }
+
+    return watcher.handle(ctx, next)
   }
 }
+
+export default RequestWatcherMiddleware

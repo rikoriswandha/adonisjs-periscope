@@ -1,0 +1,314 @@
+import { setTimeout as sleep } from 'node:timers/promises'
+import testUtils from '@adonisjs/core/services/test_utils'
+import type { Assert } from '@japa/assert'
+import { test } from '@japa/runner'
+import { EntryType } from 'periscope'
+import type { StoredEntry } from 'periscope'
+import recorder from 'periscope/services/recorder'
+
+import periscopeConfig from '#config/periscope'
+
+const POLL_INTERVAL_MS = 10
+const POLL_TIMEOUT_MS = 2_000
+
+/**
+ * One page of everything recorded so far. Small enough to be the whole store, since every test
+ * clears it first.
+ */
+async function listEntries(): Promise<StoredEntry[]> {
+  const page = await recorder.store.list({ limit: 100 })
+  return page.data
+}
+
+/**
+ * Request completion is emitted from Node's `on-finished` callback, after the API client has its
+ * response. Polling the store for the observable entry closes that scheduling gap without making
+ * the suite depend on an arbitrary sleep that is either wasteful locally or flaky under CI load.
+ */
+async function waitForEntries(
+  predicate: (entries: StoredEntry[]) => boolean
+): Promise<StoredEntry[]> {
+  const deadline = Date.now() + POLL_TIMEOUT_MS
+
+  while (Date.now() <= deadline) {
+    const entries = await listEntries()
+
+    if (predicate(entries)) {
+      return entries
+    }
+
+    await sleep(POLL_INTERVAL_MS)
+  }
+
+  throw new Error(`Periscope did not flush the expected entries within ${POLL_TIMEOUT_MS}ms`)
+}
+
+/**
+ * A negative assertion has no entry to poll for, so it must keep looking for the whole bounded
+ * window. Flushing on each pass makes an exception or log that fell into the ambient batch
+ * observable immediately instead of letting the ten-second ambient rotation hide it from this
+ * two-second test.
+ */
+async function entriesAfterSettlingWindow(): Promise<StoredEntry[]> {
+  const deadline = Date.now() + POLL_TIMEOUT_MS
+
+  while (Date.now() <= deadline) {
+    await recorder.flush()
+
+    const entries = await listEntries()
+
+    if (entries.length > 0) {
+      return entries
+    }
+
+    await sleep(POLL_INTERVAL_MS)
+  }
+
+  await recorder.flush()
+  return listEntries()
+}
+
+function isRequestFor(entry: StoredEntry, url: string, status: number): boolean {
+  return (
+    entry.type === EntryType.REQUEST && entry.content.url === url && entry.content.status === status
+  )
+}
+
+async function waitForRequestBatches(
+  url: string,
+  status: number,
+  count = 1
+): Promise<{ entries: StoredEntry[]; batches: StoredEntry[][] }> {
+  const entries = await waitForEntries(
+    (current) => current.filter((entry) => isRequestFor(entry, url, status)).length >= count
+  )
+  const requests = entries.filter((entry) => isRequestFor(entry, url, status))
+  const batches = await Promise.all(
+    requests.map((request) => recorder.store.batch(request.batchId))
+  )
+
+  return { entries, batches }
+}
+
+/**
+ * The request entry is the batch's correlation proof. Checking both tags here keeps every route
+ * assertion honest: a batch whose children agree on an id but whose primary entry cannot be
+ * filtered by response status or matched route is still broken from the dashboard's perspective.
+ */
+function assertRequestBatch(
+  assert: Assert,
+  entries: StoredEntry[],
+  url: string,
+  status: number
+): StoredEntry {
+  const requests = entries.filter((entry) => entry.type === EntryType.REQUEST)
+
+  assert.lengthOf(requests, 1)
+
+  const request = requests[0]!
+  assert.equal(request.content.url, url)
+  assert.equal(request.content.status, status)
+  assert.include(request.tags, `status:${status}`)
+  assert.include(request.tags, `route:${url}`)
+  assert.isTrue(entries.every((entry) => entry.batchId === request.batchId))
+
+  return request
+}
+
+/**
+ * The internal-log predicate is the recursion gate this sqlite-local fixture can exercise.
+ * Storage writes stay on sqlite-local's private connection and never emit Lucid `db:query`
+ * events, so the storage predicate below is retained as a forward guard for a future fixture
+ * driver change, not as proof of today's storage exclusion. The database-driver proof lives in
+ * `packages/periscope/tests/unit/watchers/query_recursion.spec.ts`, where writes run through a real
+ * Lucid connection.
+ */
+function assertNoPeriscopeTraffic(assert: Assert, entries: StoredEntry[]): void {
+  const storageQueries = entries.filter((entry) => {
+    const sql = entry.content.sql
+
+    return (
+      entry.type === EntryType.QUERY &&
+      typeof sql === 'string' &&
+      /\bperiscope_(?:entries|entry_tags|monitored_tags|flags)\b/i.test(sql)
+    )
+  })
+  const internalLogs = entries.filter((entry) => {
+    const message = entry.content.message
+
+    return (
+      entry.type === EntryType.LOG &&
+      (JSON.stringify(entry.content).includes('periscope.internal') ||
+        (typeof message === 'string' && message.startsWith('periscope.')))
+    )
+  })
+
+  assert.lengthOf(storageQueries, 0)
+  assert.lengthOf(internalLogs, 0)
+}
+
+test.group('periscope watchers (playground wiring)', (group) => {
+  group.setup(async () => {
+    const resetDatabase = await testUtils.db().migrate()
+
+    /**
+     * Migration queries are legitimate ambient traffic, but they are setup rather than evidence
+     * for an HTTP watcher. Drain them before the per-test clear so a later ambient rotation cannot
+     * leak setup work into a request assertion.
+     */
+    await recorder.flush()
+    await recorder.store.clear()
+
+    return async () => {
+      await resetDatabase()
+      await recorder.flush()
+      await recorder.store.clear()
+    }
+  })
+
+  group.each.setup(() => recorder.store.clear())
+
+  test('GET /ok records one request and its SELECT in one batch', async ({ client, assert }) => {
+    const response = await client.get('/ok')
+
+    response.assertStatus(200)
+
+    const recorded = await waitForRequestBatches('/ok', 200)
+    const batch = recorded.batches[0]!
+    const request = assertRequestBatch(assert, batch, '/ok', 200)
+    const queries = batch.filter((entry) => entry.type === EntryType.QUERY)
+    const select = queries.find((entry) => {
+      const sql = entry.content.sql
+      return typeof sql === 'string' && /\bselect\b[\s\S]*\busers\b/i.test(sql)
+    })
+
+    assert.lengthOf(
+      batch.filter((entry) => entry.type === EntryType.REQUEST),
+      1
+    )
+    assert.exists(select)
+    assert.equal(select!.batchId, request.batchId)
+    assert.isTrue(typeof select!.content.durationMs === 'number' && select!.content.durationMs > 0)
+    assert.isFalse(
+      batch.some((entry) => entry.type === EntryType.EVENT && entry.content.name === 'db:query')
+    )
+    assertNoPeriscopeTraffic(assert, recorded.entries)
+  })
+
+  test('GET /slow tags the expensive query as slow', async ({ client, assert }) => {
+    const response = await client.get('/slow')
+
+    response.assertStatus(200)
+
+    const recorded = await waitForRequestBatches('/slow', 200)
+    const batch = recorded.batches[0]!
+    assertRequestBatch(assert, batch, '/slow', 200)
+
+    const query = batch.find((entry) => {
+      const sql = entry.content.sql
+      return (
+        entry.type === EntryType.QUERY && typeof sql === 'string' && /with recursive/i.test(sql)
+      )
+    })
+
+    assert.exists(query)
+    assert.include(query!.tags, 'slow')
+    assert.isTrue(typeof query!.content.durationMs === 'number' && query!.content.durationMs > 0)
+    assertNoPeriscopeTraffic(assert, recorded.entries)
+  })
+
+  test('GET /boom correlates reported exceptions and groups identical failures', async ({
+    client,
+    assert,
+  }) => {
+    const first = await client.get('/boom')
+    const second = await client.get('/boom')
+
+    first.assertStatus(500)
+    second.assertStatus(500)
+
+    const recorded = await waitForRequestBatches('/boom', 500, 2)
+    assert.lengthOf(recorded.batches, 2)
+
+    const exceptions = recorded.batches.map((batch) => {
+      const request = assertRequestBatch(assert, batch, '/boom', 500)
+      const matching = batch.filter((entry) => entry.type === EntryType.EXCEPTION)
+
+      assert.lengthOf(matching, 1)
+      assert.equal(matching[0]!.batchId, request.batchId)
+
+      return matching[0]!
+    })
+
+    assert.isNotNull(exceptions[0]!.familyHash)
+    assert.equal(exceptions[0]!.familyHash, exceptions[1]!.familyHash)
+    assertNoPeriscopeTraffic(assert, recorded.entries)
+  })
+
+  test('POST /echo redacts storage without changing the application response', async ({
+    client,
+    assert,
+  }) => {
+    const payload = { email: 'echo@periscope.test', password: 'super-secret' }
+    const response = await client.post('/echo').json(payload)
+
+    response.assertStatus(200)
+    assert.deepEqual(response.body().echoed, payload)
+
+    const recorded = await waitForRequestBatches('/echo', 200)
+    const batch = recorded.batches[0]!
+    const request = assertRequestBatch(assert, batch, '/echo', 200)
+
+    assert.deepEqual(request.content.payload, {
+      email: payload.email,
+      password: '[REDACTED]',
+    })
+    assertNoPeriscopeTraffic(assert, recorded.entries)
+  })
+
+  test('the dashboard path is excluded even when it resolves to a 404', async ({
+    client,
+    assert,
+  }) => {
+    const response = await client.get(periscopeConfig.dashboard.path)
+
+    response.assertStatus(404)
+
+    const entries = await entriesAfterSettlingWindow()
+    assert.isFalse(entries.some((entry) => entry.type === EntryType.EXCEPTION))
+    assert.isFalse(entries.some((entry) => entry.type === EntryType.LOG))
+    assert.lengthOf(entries, 0)
+    assertNoPeriscopeTraffic(assert, entries)
+  })
+
+  test('GET /fanout records the warn log and custom class event only once', async ({
+    client,
+    assert,
+  }) => {
+    const response = await client.get('/fanout')
+
+    response.assertStatus(200)
+
+    const recorded = await waitForRequestBatches('/fanout', 200)
+    const batch = recorded.batches[0]!
+    assertRequestBatch(assert, batch, '/fanout', 200)
+
+    const logs = batch.filter((entry) => entry.type === EntryType.LOG)
+    const events = batch.filter((entry) => entry.type === EntryType.EVENT)
+    const fanout = events.find((entry) => entry.content.name === 'FanoutRequested')
+
+    assert.include(
+      logs.map((entry) => entry.content.message),
+      'fanout route reached'
+    )
+    assert.notInclude(
+      logs.map((entry) => entry.content.message),
+      'fanout event handled'
+    )
+    assert.exists(fanout)
+    assert.deepInclude(fanout!.content.payload, { source: 'playground', itemsCount: 3 })
+    assert.equal(fanout!.content.className, 'FanoutRequested')
+    assert.isFalse(events.some((entry) => entry.content.name === 'db:query'))
+    assertNoPeriscopeTraffic(assert, recorded.entries)
+  })
+})

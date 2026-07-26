@@ -33,6 +33,7 @@ import { EmitterFactory } from '@adonisjs/core/factories/events'
 import { LoggerFactory } from '@adonisjs/core/factories/logger'
 import { Database } from '@adonisjs/lucid/database'
 import type { QueryClientContract } from '@adonisjs/lucid/types/database'
+import type { EmitterService } from '@adonisjs/core/types'
 
 import { createPeriscopeTables, dropPeriscopeTables } from '../../src/storage/database_schema.ts'
 
@@ -67,6 +68,13 @@ export type TestDatabase = {
    * The query client for the single connection this database was built with.
    */
   client: QueryClientContract
+
+  /**
+   * The emitter this `Database` was constructed with, and therefore the one Lucid reports
+   * `db:query` on. The query watcher's recursion suite has to subscribe to *this* emitter rather
+   * than to a throwaway application's, since a `Database` never looks its emitter up again.
+   */
+  emitter: EmitterService
 
   /**
    * Drop and recreate all four Periscope tables. Cheaper than it sounds on both dialects, and it
@@ -167,6 +175,7 @@ async function openDatabase(connection: TestConnection): Promise<TestDatabase> {
   return {
     db,
     client,
+    emitter: emitter as unknown as EmitterService,
     reset: async () => {
       await dropPeriscopeTables(client.schema)
       await createPeriscopeTables(client.schema)

@@ -369,7 +369,14 @@ test.group('Types | configuration', () => {
     expectTypeOf<Partial<PeriscopeConfig>>().toEqualTypeOf<PeriscopeConfig>()
     expectTypeOf({}).toExtend<PeriscopeConfig>()
     expectTypeOf<keyof PeriscopeConfig>().toEqualTypeOf<
-      'enabled' | 'enabledIn' | 'storage' | 'recording' | 'redact' | 'hooks'
+      | 'enabled'
+      | 'enabledIn'
+      | 'storage'
+      | 'recording'
+      | 'redact'
+      | 'hooks'
+      | 'watchers'
+      | 'dashboard'
     >()
   })
 
@@ -403,15 +410,31 @@ test.group('Types | configuration', () => {
       },
       redact: { keys: [], headers: [], replacement: '[REDACTED]' },
       hooks: { filter: [], tag: [] },
+      watchers: {
+        request: {
+          enabled: true,
+          slowMs: 1_000,
+          captureResponse: true,
+          responseSizeLimitKb: 64,
+          captureSession: true,
+        },
+        query: { enabled: true, slowMs: 100, hideBindings: false },
+        exception: { enabled: true, captureCodeFrame: 'dev', captureProcessErrors: true },
+        log: { enabled: true, level: 'warn' },
+        event: { enabled: true, ignore: [] },
+      },
+      dashboard: { path: '/periscope' },
     }
 
     assert.deepEqual(Object.keys(resolved).sort(), [
+      'dashboard',
       'enabled',
       'enabledIn',
       'hooks',
       'recording',
       'redact',
       'storage',
+      'watchers',
     ])
 
     /**
@@ -421,7 +444,14 @@ test.group('Types | configuration', () => {
     expectTypeOf<Required<ResolvedPeriscopeConfig>>().toEqualTypeOf<ResolvedPeriscopeConfig>()
     expectTypeOf<Partial<ResolvedPeriscopeConfig>>().not.toEqualTypeOf<ResolvedPeriscopeConfig>()
     expectTypeOf<keyof ResolvedPeriscopeConfig>().toEqualTypeOf<
-      'enabled' | 'enabledIn' | 'storage' | 'recording' | 'redact' | 'hooks'
+      | 'enabled'
+      | 'enabledIn'
+      | 'storage'
+      | 'recording'
+      | 'redact'
+      | 'hooks'
+      | 'watchers'
+      | 'dashboard'
     >()
   })
 

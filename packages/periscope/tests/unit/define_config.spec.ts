@@ -57,6 +57,36 @@ const DEFAULTS: ResolvedPeriscopeConfig = {
     filter: [],
     tag: [],
   },
+  watchers: {
+    request: {
+      enabled: true,
+      slowMs: 1_000,
+      captureResponse: true,
+      responseSizeLimitKb: 64,
+      captureSession: true,
+    },
+    query: {
+      enabled: true,
+      slowMs: 100,
+      hideBindings: false,
+    },
+    exception: {
+      enabled: true,
+      captureCodeFrame: 'dev',
+      captureProcessErrors: true,
+    },
+    log: {
+      enabled: true,
+      level: 'warn',
+    },
+    event: {
+      enabled: true,
+      ignore: [],
+    },
+  },
+  dashboard: {
+    path: '/periscope',
+  },
 }
 
 /**
@@ -133,6 +163,24 @@ test.group('defineConfig | merging', () => {
 
     assert.equal(config.storage.driver, 'memory')
     assert.equal(config.storage.maxEntries, 10_000)
+  })
+
+  test('merge a sparse watcher override without disturbing watcher defaults', ({ assert }) => {
+    const config = defineConfig({ watchers: { query: { slowMs: 5 } } })
+
+    assert.deepEqual(config.watchers.query, {
+      ...DEFAULTS.watchers.query,
+      slowMs: 5,
+    })
+    assert.deepEqual(config.watchers.request, DEFAULTS.watchers.request)
+    assert.deepEqual(config.watchers.exception, DEFAULTS.watchers.exception)
+    assert.deepEqual(config.watchers.log, DEFAULTS.watchers.log)
+    assert.deepEqual(config.watchers.event, DEFAULTS.watchers.event)
+  })
+
+  test('normalise a trailing slash from the dashboard path but preserve the root', ({ assert }) => {
+    assert.equal(defineConfig({ dashboard: { path: '/periscope/' } }).dashboard.path, '/periscope')
+    assert.equal(defineConfig({ dashboard: { path: '/' } }).dashboard.path, '/')
   })
 
   test('leave untouched blocks at their defaults', ({ assert }) => {
@@ -367,6 +415,64 @@ test.group('defineConfig | validation', () => {
 
   test('reject an unknown key inside a known block', ({ assert }) => {
     assert.include(rejectionOf({ storage: { drivers: 'memory' } }).paths, 'storage.drivers')
+  })
+
+  test('reject an unknown watcher key', ({ assert }) => {
+    assert.include(rejectionOf({ watchers: { mail: {} } }).paths, 'watchers.mail')
+  })
+
+  test('reject an unknown request watcher key', ({ assert }) => {
+    assert.include(
+      rejectionOf({ watchers: { request: { timeout: 50 } } }).paths,
+      'watchers.request.timeout'
+    )
+  })
+
+  test('reject a non-boolean watcher enabled flag', ({ assert }) => {
+    assert.include(
+      rejectionOf({ watchers: { request: { enabled: 'yes' } } }).paths,
+      'watchers.request.enabled'
+    )
+  })
+
+  test('reject a negative query slow threshold', ({ assert }) => {
+    assert.include(
+      rejectionOf({ watchers: { query: { slowMs: -1 } } }).paths,
+      'watchers.query.slowMs'
+    )
+  })
+
+  test('reject an unknown query location capture mode', ({ assert }) => {
+    assert.include(
+      rejectionOf({ watchers: { exception: { captureCodeFrame: 'sometimes' } } }).paths,
+      'watchers.exception.captureCodeFrame'
+    )
+  })
+
+  test('reject an unknown log level', ({ assert }) => {
+    assert.include(
+      rejectionOf({ watchers: { log: { level: 'warning' } } }).paths,
+      'watchers.log.level'
+    )
+  })
+
+  test('reject an event ignore value that is not an array', ({ assert }) => {
+    assert.include(
+      rejectionOf({ watchers: { event: { ignore: 'order.*' } } }).paths,
+      'watchers.event.ignore'
+    )
+  })
+
+  test('reject a dashboard path that is not a string', ({ assert }) => {
+    assert.include(rejectionOf({ dashboard: { path: 42 } }).paths, 'dashboard.path')
+  })
+
+  test('reject an empty dashboard path', ({ assert }) => {
+    assert.include(rejectionOf({ dashboard: { path: '' } }).paths, 'dashboard.path')
+  })
+
+  test('reject a dashboard path without a leading slash', ({ assert }) => {
+    assert.include(rejectionOf({ dashboard: { path: 'periscope' } }).paths, 'dashboard.path')
   })
 
   test('reject a config that is not an object at all', ({ assert }) => {

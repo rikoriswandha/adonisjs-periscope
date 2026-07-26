@@ -33,9 +33,12 @@ import { PeriscopeConfigError } from './errors.ts'
 import { DEFAULT_REDACT_HEADERS, DEFAULT_REDACT_KEYS } from './recorder/redactor.ts'
 import { ENTRY_TYPES, EntryType } from './types.ts'
 import type {
+  CaptureMode,
   FilterHook,
+  LogLevelName,
   PeriscopeConfig,
   ResolvedPeriscopeConfig,
+  ResolvedWatchersConfig,
   StorageDriverName,
   TagHook,
 } from './types.ts'
@@ -56,12 +59,20 @@ export { DEFAULT_REDACT_HEADERS, DEFAULT_REDACT_KEYS } from './recorder/redactor
  * application when it misspells one.
  *
  * `serialization` is deliberately absent: nothing reads it yet, so `safeSerialize`'s own
- * `SERIALIZER_DEFAULTS` are the only serialisation limits in phase 1 and a config block would
- * be a knob wired to nothing. Writing one is therefore an unknown-key error rather than a
- * silently ignored setting. Phase 3 adds it back when a watcher needs to override those
- * defaults.
+ * `SERIALIZER_DEFAULTS` are the only serialisation limits and a config block would be a knob
+ * wired to nothing. Writing one is therefore an unknown-key error rather than a silently
+ * ignored setting; the block arrives the day a watcher needs to override those defaults.
  */
-const TOP_LEVEL_KEYS = ['enabled', 'enabledIn', 'storage', 'recording', 'redact', 'hooks'] as const
+const TOP_LEVEL_KEYS = [
+  'enabled',
+  'enabledIn',
+  'storage',
+  'recording',
+  'redact',
+  'hooks',
+  'watchers',
+  'dashboard',
+] as const
 
 /**
  * Drivers `storage.driver` accepts. Kept as an array rather than derived from a registry: the
@@ -93,6 +104,34 @@ const DEFAULT_CAP = 100
 const DEFAULT_QUERY_CAP = 200
 
 const DEFAULT_REPLACEMENT = '[REDACTED]'
+
+/**
+ * Watcher defaults (P3).
+ *
+ * The two thresholds are the interesting numbers. A second is the point at which a human
+ * notices a page is slow, and 100 ms is the point at which a single query stops being noise in
+ * a request that took 300 ms — both are the values Telescope settled on after years of
+ * dashboards, and there is no reason to be original about them.
+ */
+const DEFAULT_REQUEST_SLOW_MS = 1_000
+const DEFAULT_RESPONSE_SIZE_LIMIT_KB = 64
+const DEFAULT_QUERY_SLOW_MS = 100
+
+/**
+ * Recorded log levels start at `warn`. The destination runs after pino's own filter, so the
+ * effective floor is `max(application logger level, this setting)`. Periscope never raises the
+ * host logger's level to recover records that pino has already dropped.
+ */
+const DEFAULT_LOG_LEVEL: LogLevelName = 'warn'
+
+const LOG_LEVELS: readonly LogLevelName[] = ['trace', 'debug', 'info', 'warn', 'error', 'fatal']
+const CAPTURE_MODES: readonly CaptureMode[] = ['dev', 'always', 'never']
+
+/**
+ * Where the dashboard lives, and therefore the one URL prefix Periscope refuses to record
+ * (§0, invariant 2 — browsing recordings must not create recordings).
+ */
+const DEFAULT_DASHBOARD_PATH = '/periscope'
 
 /**
  * Recognised values of `PERISCOPE_ENABLED`, compared trimmed and lower-cased. Anything else is
@@ -163,12 +202,19 @@ function rejectUnknownKeys(
 /**
  * Reads one nested block, returning `{}` when it is absent or unusable so the caller can carry
  * on collecting issues from the remaining blocks instead of bailing out at the first mistake.
+ *
+ * `path` is the dotted route to the block for diagnostics, and defaults to `key` because most
+ * blocks sit at the top level where the two are the same. Nested blocks — `watchers.request` and
+ * its siblings — must pass it: an issue reading `request.timeout: unknown option` sends the
+ * reader looking for a top-level `request` block that does not exist, and the whole point of the
+ * dotted paths is that they can be pasted straight back into the config file.
  */
 function readBlock(
   input: Record<string, unknown>,
   key: string,
   allowed: readonly string[],
-  issues: string[]
+  issues: string[],
+  path: string = key
 ): Record<string, unknown> {
   const value = input[key]
 
@@ -177,11 +223,11 @@ function readBlock(
   }
 
   if (!isPlainObject(value)) {
-    issues.push(`${key}: must be an object; got ${describe(value)}`)
+    issues.push(`${path}: must be an object; got ${describe(value)}`)
     return {}
   }
 
-  rejectUnknownKeys(`${key}.`, value, allowed, issues)
+  rejectUnknownKeys(`${path}.`, value, allowed, issues)
 
   return value
 }
@@ -354,6 +400,131 @@ function resolveCaps(value: unknown, issues: string[]): Record<EntryType, number
 }
 
 /**
+ * Reads a value constrained to a fixed set of strings, such as a capture mode or a log level.
+ */
+function readEnum<T extends string>(
+  path: string,
+  value: unknown,
+  allowed: readonly T[],
+  issues: string[]
+): T | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+
+  if (typeof value !== 'string' || !(allowed as readonly string[]).includes(value)) {
+    issues.push(`${path}: must be one of ${allowed.join(', ')}; got ${describe(value)}`)
+    return undefined
+  }
+
+  return value as T
+}
+
+/**
+ * Resolves the `watchers` block.
+ *
+ * Every watcher is enabled by default. That is the whole promise of the package — install it
+ * and see what your application is doing — and a watcher an application does not want costs it
+ * one `enabled: false`, after which the watcher subscribes to nothing at all.
+ */
+function resolveWatchers(input: Record<string, unknown>, issues: string[]): ResolvedWatchersConfig {
+  const watchers = readBlock(
+    input,
+    'watchers',
+    ['request', 'query', 'exception', 'log', 'event'],
+    issues
+  )
+
+  const request = readBlock(
+    watchers,
+    'request',
+    ['enabled', 'slowMs', 'captureResponse', 'responseSizeLimitKb', 'captureSession'],
+    issues,
+    'watchers.request'
+  )
+  const query = readBlock(
+    watchers,
+    'query',
+    ['enabled', 'slowMs', 'hideBindings'],
+    issues,
+    'watchers.query'
+  )
+  const exception = readBlock(
+    watchers,
+    'exception',
+    ['enabled', 'captureCodeFrame', 'captureProcessErrors'],
+    issues,
+    'watchers.exception'
+  )
+  const log = readBlock(watchers, 'log', ['enabled', 'level'], issues, 'watchers.log')
+  const event = readBlock(watchers, 'event', ['enabled', 'ignore'], issues, 'watchers.event')
+
+  return {
+    request: {
+      enabled: readBoolean('watchers.request.enabled', request.enabled, issues) ?? true,
+      slowMs:
+        readInteger('watchers.request.slowMs', request.slowMs, 0, issues) ??
+        DEFAULT_REQUEST_SLOW_MS,
+      captureResponse:
+        readBoolean('watchers.request.captureResponse', request.captureResponse, issues) ?? true,
+      responseSizeLimitKb:
+        readInteger(
+          'watchers.request.responseSizeLimitKb',
+          request.responseSizeLimitKb,
+          0,
+          issues
+        ) ?? DEFAULT_RESPONSE_SIZE_LIMIT_KB,
+      captureSession:
+        readBoolean('watchers.request.captureSession', request.captureSession, issues) ?? true,
+    },
+    query: {
+      enabled: readBoolean('watchers.query.enabled', query.enabled, issues) ?? true,
+      slowMs:
+        readInteger('watchers.query.slowMs', query.slowMs, 0, issues) ?? DEFAULT_QUERY_SLOW_MS,
+      hideBindings: readBoolean('watchers.query.hideBindings', query.hideBindings, issues) ?? false,
+    },
+    exception: {
+      enabled: readBoolean('watchers.exception.enabled', exception.enabled, issues) ?? true,
+      captureCodeFrame:
+        readEnum<CaptureMode>(
+          'watchers.exception.captureCodeFrame',
+          exception.captureCodeFrame,
+          CAPTURE_MODES,
+          issues
+        ) ?? 'dev',
+      captureProcessErrors:
+        readBoolean(
+          'watchers.exception.captureProcessErrors',
+          exception.captureProcessErrors,
+          issues
+        ) ?? true,
+    },
+    log: {
+      enabled: readBoolean('watchers.log.enabled', log.enabled, issues) ?? true,
+      level:
+        readEnum<LogLevelName>('watchers.log.level', log.level, LOG_LEVELS, issues) ??
+        DEFAULT_LOG_LEVEL,
+    },
+    event: {
+      enabled: readBoolean('watchers.event.enabled', event.enabled, issues) ?? true,
+      ignore: readStringArray('watchers.event.ignore', event.ignore, issues) ?? [],
+    },
+  }
+}
+
+/**
+ * Strips trailing slashes from a URL prefix so that prefix matching can be a plain
+ * "equals, or starts with `path + '/'`" test.
+ *
+ * `'/'` survives as `'/'`: an application that mounts the dashboard at the root is mounting it
+ * everywhere, and the request watcher's prefix test then correctly ignores everything.
+ */
+function normalisePath(path: string): string {
+  const trimmed = path.replace(/\/+$/, '')
+  return trimmed === '' ? '/' : trimmed
+}
+
+/**
  * Validates `config/periscope.ts` and fills in every default.
  *
  * Merging rules, which are the part applications actually trip over:
@@ -440,6 +611,15 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
   const filter = readFunctionArray<FilterHook>('hooks.filter', hooks.filter, issues)
   const tag = readFunctionArray<TagHook>('hooks.tag', hooks.tag, issues)
 
+  const watchers = resolveWatchers(input, issues)
+
+  const dashboard = readBlock(input, 'dashboard', ['path'], issues)
+  const dashboardPath = readNonEmptyString('dashboard.path', dashboard.path, issues)
+
+  if (dashboardPath !== undefined && !dashboardPath.startsWith('/')) {
+    issues.push(`dashboard.path: must start with a slash; got ${describe(dashboardPath)}`)
+  }
+
   if (issues.length > 0) {
     throw new PeriscopeConfigError(issues)
   }
@@ -475,6 +655,10 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
     hooks: {
       filter: filter ?? [],
       tag: tag ?? [],
+    },
+    watchers,
+    dashboard: {
+      path: normalisePath(dashboardPath ?? DEFAULT_DASHBOARD_PATH),
     },
   }
 }

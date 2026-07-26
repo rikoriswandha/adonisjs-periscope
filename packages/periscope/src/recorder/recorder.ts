@@ -170,9 +170,18 @@ export class Recorder {
    */
   readonly store: PeriscopeStore
 
+  /**
+   * The redactor the record pipeline scrubs content with.
+   *
+   * Public because watchers need it for the values that never reach `record()` as content:
+   * HTTP headers, which have their own deny list and their own `redactHeaders` walk. Handing
+   * the same instance out is what keeps a watcher from constructing a second one — two
+   * redactors mean two chances for a configuration change to reach only one of them.
+   */
+  readonly redactor: Redactor
+
   readonly #config: ResolvedPeriscopeConfig
   readonly #enabled: boolean
-  readonly #redactor: Redactor
   readonly #ambient: AmbientBatch
 
   /**
@@ -216,7 +225,7 @@ export class Recorder {
     this.store = options.store
     this.#config = options.config
     this.#enabled = options.enabled ?? options.config.enabled
-    this.#redactor = new Redactor(options.config.redact)
+    this.redactor = new Redactor(options.config.redact)
     this.#ambient = new AmbientBatch({
       rotationMs: options.config.recording.ambientRotationMs,
       flush: (context) => this.flush(context),
@@ -310,7 +319,7 @@ export class Recorder {
         return
       }
 
-      entry.content = this.#redactor.redact(entry.content)
+      entry.content = this.redactor.redact(entry.content)
 
       applyTagHooks(this.#config.hooks.tag, entry)
       applyTagHooks(this.#tagHooks, entry)

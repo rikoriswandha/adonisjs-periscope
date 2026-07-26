@@ -14,6 +14,7 @@ import { PeriscopeConfigError } from '../src/errors.ts'
 import { MemoryStore } from '../src/storage/memory_store.ts'
 import { isRecordingEnabled } from '../src/define_config.ts'
 import { safeguardAsync, setInternalLogger } from '../src/safeguard.ts'
+import { WatcherRegistry } from '../src/watchers/registry.ts'
 import type { PeriscopeStore, ResolvedPeriscopeConfig } from '../src/types.ts'
 
 /**
@@ -21,7 +22,14 @@ import type { PeriscopeStore, ResolvedPeriscopeConfig } from '../src/types.ts'
  * a `defineConfig()` result from a hand-written object literal that skipped validation and
  * default resolution.
  */
-const REQUIRED_CONFIG_BLOCKS = ['storage', 'recording', 'redact', 'hooks'] as const
+const REQUIRED_CONFIG_BLOCKS = [
+  'storage',
+  'recording',
+  'redact',
+  'hooks',
+  'watchers',
+  'dashboard',
+] as const
 
 /**
  * The Periscope service provider, registered by an application under `adonisrc.ts#providers`.
@@ -44,6 +52,13 @@ export default class PeriscopeProvider {
    * dashboard read through the same instance and outlive a recorder flush.
    */
   #store: PeriscopeStore | null = null
+
+  /**
+   * The watcher registry, created in `ready()` once the recorder exists. Kept so shutdown can
+   * unsubscribe exactly what was subscribed — a watcher that stays attached to the emitter after
+   * the application terminates is a leak in production and cross-talk between suites in tests.
+   */
+  #watchers: WatcherRegistry | null = null
 
   constructor(protected app: ApplicationService) {}
 
@@ -108,32 +123,85 @@ export default class PeriscopeProvider {
   }
 
   /**
-   * Resolve the recorder and start the ambient batch rotation — the timer that drains everything
-   * recorded outside a request, command or job.
+   * Resolve the recorder, start the ambient batch rotation — the timer that drains everything
+   * recorded outside a request, command or job — and register the watchers.
    *
    * Resolving here rather than lazily is deliberate: it is what makes an invalid
    * `config/periscope.ts` fail at boot with a clear error (P1.5) instead of on whichever request
    * first happens to record something.
+   *
+   * Watchers come last, and only once the recorder is running. They subscribe to live sources —
+   * the emitter, the logger's pino stream, the process — so the thing they feed has to exist and
+   * be draining before the first event can arrive.
    */
   async ready() {
     await this.#wireInternalLogger()
 
     const recorder = await this.app.container.make(Recorder)
     recorder.start()
+
+    await this.#registerWatchers(recorder)
   }
 
   /**
-   * Flush what is still buffered, then release the store.
+   * Build the watcher registry and let it subscribe (P3.1).
    *
-   * Ordering is the whole point: `Recorder.shutdown()` stops the ambient rotation and performs a
-   * final flush, which writes through the store, so the store can only be closed afterwards. The
-   * internal logger is unhooked last, for the same reason: a flush that fails on the way out is
-   * exactly the failure worth reporting.
+   * A disabled recorder registers nothing at all — the registry short-circuits — so there is no
+   * emitter listener, no logger tee and no process handler to account for. That is what makes
+   * "Periscope off" free rather than merely quiet, and P5.1 asserts it by counting listeners.
+   *
+   * `dev` is resolved once, here, as "not production". Watchers use it to gate the expensive
+   * developer-facing captures (query call sites, exception code frames), and resolving it in one
+   * place keeps `NODE_ENV=test` behaving like a developer's machine everywhere at once.
+   */
+  async #registerWatchers(recorder: Recorder) {
+    if (!recorder.enabled) {
+      return
+    }
+
+    if (this.#watchers !== null) {
+      /**
+       * `ready()` may be called more than once by application tooling and tests. The recorder's
+       * ambient rotation is already idempotent, but every watcher subscription is independent:
+       * replacing this registry would leave its listeners alive with no object left to clean
+       * them up. Keeping the first registry makes repeated readiness a no-op for listeners and
+       * preserves the one registry shutdown still owns.
+       */
+      return
+    }
+
+    await safeguardAsync('periscope.provider.watchers', async () => {
+      const emitter = await this.app.container.make('emitter')
+
+      this.#watchers = new WatcherRegistry({
+        app: this.app,
+        emitter,
+        recorder,
+        config: this.#resolveConfig(),
+        dev: !this.app.inProduction,
+      })
+
+      await this.#watchers.register()
+    })
+  }
+
+  /**
+   * Unsubscribe the watchers, flush what is still buffered, then release the store.
+   *
+   * Ordering is the whole point, and it runs strictly backwards from `ready()`. The watchers go
+   * first so nothing new is recorded while the recorder is winding down — a log line emitted by
+   * a shutting-down provider must not land in a batch that is already being flushed. Then
+   * `Recorder.shutdown()` stops the ambient rotation and performs its final flush, which writes
+   * through the store, so the store can only be closed afterwards. The internal logger is
+   * unhooked last, for the same reason: a flush that fails on the way out is exactly the failure
+   * worth reporting.
    */
   async shutdown() {
+    await this.#watchers?.cleanup()
     await this.#recorder?.shutdown()
     await this.#store?.close()
 
+    this.#watchers = null
     this.#recorder = null
     this.#store = null
 

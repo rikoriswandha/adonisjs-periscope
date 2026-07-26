@@ -18,6 +18,7 @@
     "./services/recorder": "./build/src/recorder/service.js",
     "./middleware/request_watcher": "./build/src/watchers/request/middleware.js",
     "./exception_reporter": "./build/src/watchers/exception/mixin.js",
+    "./log_stream": "./build/src/watchers/log/stream.js",
     "./dump": "./build/src/dump.js",
     "./hooks": "./build/src/hooks/doctor.js",
     "./commands": "./build/commands/main.js",

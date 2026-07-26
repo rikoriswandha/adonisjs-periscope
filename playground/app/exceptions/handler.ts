@@ -1,7 +1,8 @@
 import app from '@adonisjs/core/services/app'
 import { type HttpContext, ExceptionHandler } from '@adonisjs/core/http'
+import { withPeriscope } from 'periscope/exception_reporter'
 
-export default class HttpExceptionHandler extends ExceptionHandler {
+class HttpExceptionHandler extends ExceptionHandler {
   /**
    * In debug mode, the exception handler will display verbose errors
    * with pretty printed stack traces.
@@ -26,3 +27,10 @@ export default class HttpExceptionHandler extends ExceptionHandler {
     return super.report(error, ctx)
   }
 }
+
+/**
+ * The mixin reports an exception to the active watcher before delegating to this handler's
+ * existing `report()` implementation. Its active-watcher lookup is inert when Periscope is
+ * disabled, so the application's error path and response handling remain unchanged when off.
+ */
+export default withPeriscope(HttpExceptionHandler)

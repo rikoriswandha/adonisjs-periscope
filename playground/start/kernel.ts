@@ -21,11 +21,15 @@ import FanoutRequested from '#events/fanout_requested'
 server.errorHandler(() => import('#exceptions/handler'))
 
 /**
- * The server middleware stack runs middleware on all the HTTP
- * requests, even if there is no route registered for
- * the request URL.
+ * The server middleware stack runs on every HTTP request, including missing routes. Periscope
+ * must open the request batch before anything downstream runs. First place is load-bearing:
+ * moving it behind container bindings would leave that work outside the scope that correlates
+ * the request, its queries, logs, events, and exceptions.
  */
-server.use([() => import('#middleware/container_bindings_middleware')])
+server.use([
+  () => import('periscope/middleware/request_watcher'),
+  () => import('#middleware/container_bindings_middleware'),
+])
 
 /**
  * The router middleware stack runs middleware on all the HTTP

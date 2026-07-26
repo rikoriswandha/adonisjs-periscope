@@ -106,4 +106,113 @@ export default defineConfig({
      */
     replacement: '[REDACTED]',
   },
+
+  watchers: {
+    request: {
+      /**
+       * Disable this when HTTP traffic is already observed elsewhere and request entries would
+       * only duplicate that signal.
+       */
+      enabled: true,
+
+      /**
+       * Lower this to surface latency earlier, or raise it when long-running requests are normal
+       * for the application and should not all receive a `slow` tag.
+       */
+      slowMs: 1_000,
+
+      /**
+       * Disable this when response bodies are too sensitive to retain even after redaction, or
+       * when serialising previews would add unacceptable work to request completion.
+       */
+      captureResponse: true,
+
+      /**
+       * Lower this when response previews consume too much storage, or raise it when the useful
+       * part of a large JSON or text response would otherwise be truncated.
+       */
+      responseSizeLimitKb: 64,
+
+      /**
+       * Disable this when session state is too sensitive or noisy to attach to request entries.
+       */
+      captureSession: true,
+    },
+
+    query: {
+      /**
+       * Disable this when database activity is intentionally observed by another tool or query
+       * volume is not useful to the investigation.
+       */
+      enabled: true,
+
+      /**
+       * Lower this to flag tighter latency regressions, or raise it when expensive queries are
+       * expected and should not dominate the `slow` filter.
+       */
+      slowMs: 100,
+
+      /**
+       * Enable this when bound values must never be retained, even after Periscope's recursive
+       * redaction has removed recognised secrets.
+       */
+      hideBindings: false,
+    },
+
+    exception: {
+      /**
+       * Disable this when the application's exception pipeline already records the same failures
+       * and duplicate entries would obscure the request batch.
+       */
+      enabled: true,
+
+      /**
+       * Use `always` when deployed source is available and production code frames are worth the
+       * file reads, or `never` when source context must not be retained.
+       */
+      captureCodeFrame: 'dev',
+
+      /**
+       * Disable this when a process supervisor owns unhandled failures and recording them here
+       * would duplicate an existing crash report.
+       */
+      captureProcessErrors: true,
+    },
+
+    log: {
+      /**
+       * Disable this when logs already reach an observability system and copying them into request
+       * batches would add noise rather than context.
+       */
+      enabled: true,
+
+      /**
+       * Lower this while investigating verbose application behaviour, or raise it when only the
+       * most severe records deserve storage alongside a batch.
+       */
+      level: 'warn',
+    },
+
+    event: {
+      /**
+       * Disable this when application events carry no useful diagnostic context or are already
+       * captured by another subscriber.
+       */
+      enabled: true,
+
+      /**
+       * Add globs for application event namespaces that are too noisy or sensitive to retain;
+       * Periscope already excludes its own and the framework's infrastructure events.
+       */
+      ignore: [],
+    },
+  },
+
+  dashboard: {
+    /**
+     * Change this when `/periscope` conflicts with an application route or the dashboard needs to
+     * live beneath a different URL prefix.
+     */
+    path: '/periscope',
+  },
 })
