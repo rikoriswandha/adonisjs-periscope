@@ -9,7 +9,7 @@ import { test } from '@japa/runner'
 
 import { IncomingEntry } from '../../../src/entry.ts'
 import { BatchScope } from '../../../src/recorder/context.ts'
-import { Recorder } from '../../../src/recorder/recorder.ts'
+import { Recorder, TRIM_EVERY_FLUSHES } from '../../../src/recorder/recorder.ts'
 import { DEFAULT_REDACT_HEADERS, DEFAULT_REDACT_KEYS } from '../../../src/recorder/redactor.ts'
 import { setInternalLogger } from '../../../src/safeguard.ts'
 import { ENTRY_TYPES, EntryType, Flag } from '../../../src/types.ts'
@@ -37,10 +37,18 @@ class FakeStore implements PeriscopeStore {
    */
   readonly saves: StoredEntry[][] = []
 
+  /**
+   * The `maxEntries` argument of every `trim()` call, in order. An array rather than a counter
+   * because the interval tests care about *when* the recorder trims and the cap tests about
+   * *what* it asked for, and both questions have the same answer only if nothing else trims.
+   */
+  readonly trims: number[] = []
+
   readonly #flags = new Map<string, string>()
 
   getFlagCalls = 0
   saveFailure: Error | null = null
+  trimFailure: Error | null = null
   getFlagFailure: Error | null = null
 
   /**
@@ -55,6 +63,12 @@ class FakeStore implements PeriscopeStore {
    * happens under.
    */
   onGetFlag: (() => void) | null = null
+
+  /**
+   * Runs at the top of `trim()`, so a test can inspect the batch context the maintenance delete
+   * happens under — the trim is store traffic like the save, and is muted for the same reason.
+   */
+  onTrim: (() => void) | null = null
 
   async save(entries: StoredEntry[]): Promise<void> {
     this.onSave?.()
@@ -86,7 +100,15 @@ class FakeStore implements PeriscopeStore {
     return 0
   }
 
-  async trim(): Promise<number> {
+  async trim(maxEntries: number): Promise<number> {
+    this.onTrim?.()
+
+    if (this.trimFailure !== null) {
+      throw this.trimFailure
+    }
+
+    this.trims.push(maxEntries)
+
     return 0
   }
 
@@ -199,6 +221,26 @@ async function waitUntil(condition: () => boolean, timeoutMs = 1_000): Promise<v
 
   while (!condition() && Date.now() < deadline) {
     await sleep(2)
+  }
+}
+
+/**
+ * Run `count` complete flushes, each with one entry buffered in a fresh request batch.
+ *
+ * The entry matters: only a flush that reaches the store counts towards the trim interval, so a
+ * helper that flushed empty batches would never advance it. A fresh context per flush is what a
+ * real application does — one batch per request — and proves the interval is the recorder's
+ * state rather than any single batch's.
+ */
+async function flushBatches(recorder: Recorder, count: number): Promise<void> {
+  for (let index = 0; index < count; index++) {
+    const context = BatchScope.createContext('request')
+
+    BatchScope.runWith(context, () => {
+      recorder.record(IncomingEntry.make(EntryType.LOG, { message: `flush ${index}` }))
+    })
+
+    await recorder.flush(context)
   }
 }
 
@@ -833,6 +875,133 @@ test.group('Recorder | flush', (group) => {
       url: '/checkout',
       truncated: { query: 1 },
     })
+  })
+})
+
+test.group('Recorder | opportunistic trim', (group) => {
+  group.each.teardown(() => {
+    setInternalLogger(null)
+  })
+
+  test('leave the store alone until the flush interval is reached', async ({ assert }) => {
+    const store = new FakeStore()
+    const recorder = new Recorder({ config: makeConfig(), store })
+
+    await flushBatches(recorder, TRIM_EVERY_FLUSHES - 1)
+
+    assert.lengthOf(store.saves, TRIM_EVERY_FLUSHES - 1)
+    assert.lengthOf(store.trims, 0, 'trimming on every flush is exactly what the interval avoids')
+  })
+
+  test('trim once at the interval, with the configured cap', async ({ assert }) => {
+    const store = new FakeStore()
+    const recorder = new Recorder({ config: makeConfig(), store })
+
+    await flushBatches(recorder, TRIM_EVERY_FLUSHES)
+
+    assert.deepEqual(store.trims, [10_000], 'the cap comes from storage.maxEntries, unmodified')
+  })
+
+  test('restart the interval after a trim instead of trimming on every later flush', async ({
+    assert,
+  }) => {
+    const store = new FakeStore()
+    const recorder = new Recorder({ config: makeConfig(), store })
+
+    await flushBatches(recorder, TRIM_EVERY_FLUSHES * 2)
+
+    assert.lengthOf(store.trims, 2)
+  })
+
+  test('not advance the interval on a flush that wrote nothing', async ({ assert }) => {
+    const store = new FakeStore()
+    const recorder = new Recorder({ config: makeConfig(), store })
+
+    /**
+     * An idle application still flushes: the ambient batch rotates on a timer whether or not
+     * anything was recorded, and the request middleware flushes every request. Letting those
+     * empty flushes count would turn "every 25 writes" into "every 25 ticks", trimming a store
+     * nothing has been added to since the last trim.
+     */
+    for (let index = 0; index < TRIM_EVERY_FLUSHES; index++) {
+      await recorder.flush(BatchScope.createContext('request'))
+    }
+
+    assert.lengthOf(store.saves, 0)
+    assert.lengthOf(store.trims, 0)
+
+    await flushBatches(recorder, TRIM_EVERY_FLUSHES)
+
+    assert.lengthOf(store.trims, 1, 'the interval counts writes, not calls')
+  })
+
+  test('mute recording while the store trims so the delete cannot record itself', async ({
+    assert,
+  }) => {
+    const store = new FakeStore()
+    const recorder = new Recorder({ config: makeConfig(), store })
+
+    let mutedDuringTrim: boolean | undefined
+    let bufferedDuringTrim: number | undefined
+
+    store.onTrim = () => {
+      const inner = BatchScope.current()
+
+      /**
+       * A trim is a `delete from periscope_entries`, which the query watcher observes exactly
+       * like the insert the save just did (§0, invariant 2). Unmuted, housekeeping would write
+       * the entries that make the next housekeeping necessary.
+       */
+      recorder.record(IncomingEntry.make(EntryType.QUERY, { sql: 'delete from periscope' }))
+
+      mutedDuringTrim = inner?.muted
+      bufferedDuringTrim = inner?.buffer.length
+    }
+
+    await flushBatches(recorder, TRIM_EVERY_FLUSHES)
+
+    assert.lengthOf(store.trims, 1)
+    assert.isTrue(mutedDuringTrim, 'the trim must be called inside a muted context')
+    assert.equal(bufferedDuringTrim, 0, 'the delete issued by the store must not be buffered')
+  })
+
+  test('resolve the flush and keep its entries when the trim fails', async ({ assert }) => {
+    const store = new FakeStore()
+    store.trimFailure = new Error('cannot delete from a read-only replica')
+
+    const recorder = new Recorder({ config: makeConfig(), store })
+
+    /**
+     * A rejection here fails the test for the same reason a failing save must not reject: the
+     * request middleware awaits this flush, and housekeeping is not allowed to become a 500.
+     */
+    await flushBatches(recorder, TRIM_EVERY_FLUSHES)
+
+    assert.lengthOf(store.saves, TRIM_EVERY_FLUSHES, 'the write of the trimming flush must stand')
+    assert.lengthOf(store.trims, 0, 'the double refused the trim')
+  })
+
+  test('wait a full interval before retrying a trim that failed', async ({ assert }) => {
+    const store = new FakeStore()
+    store.trimFailure = new Error('the database is locked')
+
+    const recorder = new Recorder({ config: makeConfig(), store })
+
+    await flushBatches(recorder, TRIM_EVERY_FLUSHES)
+
+    store.trimFailure = null
+
+    /**
+     * The counter is reset before the attempt, not after a success, so a broken store is retried
+     * on the next interval rather than on every single flush until it recovers.
+     */
+    await flushBatches(recorder, TRIM_EVERY_FLUSHES - 1)
+
+    assert.lengthOf(store.trims, 0)
+
+    await flushBatches(recorder, 1)
+
+    assert.deepEqual(store.trims, [10_000])
   })
 })
 

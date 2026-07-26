@@ -6,6 +6,7 @@
  */
 
 import { EntryType } from '../types.ts'
+import { encodeCursor, parseCursor, resolvePageSize } from './pagination.ts'
 import type {
   EntryQuery,
   EntryTypeCounts,
@@ -21,26 +22,6 @@ import type {
  * so a `MemoryStore` built by hand behaves like one built by the provider.
  */
 const DEFAULT_MAX_ENTRIES = 10_000
-
-/**
- * Page size used when a query asks for none — or asks for a nonsensical one. A dashboard screen
- * shows a hundred rows; anything more is a scroll nobody reads.
- */
-const DEFAULT_PAGE_SIZE = 100
-
-/**
- * Hard ceiling on a page. A caller can put whatever it likes in a query string; the driver, not
- * the caller, decides how much of the buffer it is willing to copy out in one go.
- */
-const MAX_PAGE_SIZE = 1_000
-
-/**
- * A cursor is the previous page's last `sequence` rendered in decimal. Anything else — a
- * truncated query string, a cursor from another driver, a hand-typed URL — is ignored rather
- * than thrown at the user, because the dashboard's fallback (show the newest page) is always a
- * reasonable answer and an exception is never one.
- */
-const CURSOR_PATTERN = /^\d+$/
 
 /**
  * Shared empty candidate set, returned when an index lookup misses. Saves an allocation on what
@@ -87,31 +68,6 @@ function bySequenceDescending(left: StoredEntry, right: StoredEntry): number {
   }
 
   return left.sequence > right.sequence ? -1 : 1
-}
-
-/**
- * Turn a cursor from {@link Paginated.nextCursor} back into the sequence to page below, or
- * `null` when there is nothing usable to page below.
- */
-function parseCursor(cursor: string | undefined): bigint | null {
-  if (cursor === undefined || !CURSOR_PATTERN.test(cursor)) {
-    return null
-  }
-
-  return BigInt(cursor)
-}
-
-/**
- * Clamp a requested page size into `[1, MAX_PAGE_SIZE]`, falling back to the default for a
- * missing, non-finite or non-positive request. A `limit: 0` that was honoured literally would
- * page forever, so it is treated as "unspecified".
- */
-function resolvePageSize(limit: number | undefined): number {
-  if (limit === undefined || !Number.isFinite(limit) || limit <= 0) {
-    return DEFAULT_PAGE_SIZE
-  }
-
-  return Math.min(Math.floor(limit), MAX_PAGE_SIZE)
 }
 
 /**
@@ -361,7 +317,7 @@ export class MemoryStore implements PeriscopeStore {
      */
     return {
       data: page.map((entry) => this.#copy(entry)),
-      nextCursor: matches.length > limit ? page[page.length - 1].sequence.toString() : null,
+      nextCursor: matches.length > limit ? encodeCursor(page[page.length - 1].sequence) : null,
     }
   }
 

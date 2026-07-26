@@ -69,6 +69,30 @@ jobs:
       fail-fast: false
       matrix:
         node: ['24', '26']
+
+    # Implementation plan P2.1: the storage contract suite runs against sqlite *and* postgres.
+    # The `database` driver is dialect-neutral by design, and every difference that has ever
+    # broken it — jsonb arriving already parsed, bigint arriving as a string, `count(*)` arriving
+    # as a string, `on conflict` spelling — is invisible on sqlite. Without a real server the
+    # postgres half of `tests/storage/database_store.spec.ts` skips itself and CI reports green
+    # on half the coverage it claims.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: periscope
+          POSTGRES_PASSWORD: periscope
+          POSTGRES_DB: periscope
+        ports:
+          - 5432:5432
+        # Steps start as soon as the container does, which is well before postgres accepts
+        # connections; without the health check the first test run races the server's startup.
+        options: >-
+          --health-cmd "pg_isready -U periscope -d periscope"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v5
 
@@ -98,6 +122,8 @@ jobs:
 
       - name: Unit tests (packages/periscope)
         run: npm -w periscope run test
+        env:
+          PERISCOPE_PG_URL: postgres://periscope:periscope@127.0.0.1:5432/periscope
 
       # The playground consumes `periscope` through its published `exports` map, which points at
       # `build/`. Without this the app cannot even resolve `periscope/provider` and every

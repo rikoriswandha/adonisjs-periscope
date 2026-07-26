@@ -9,6 +9,7 @@ import type { ApplicationService } from '@adonisjs/core/types'
 
 import { Recorder } from '../src/recorder/recorder.ts'
 import { createStore } from '../src/storage/resolve.ts'
+import type { StoreContext } from '../src/storage/resolve.ts'
 import { PeriscopeConfigError } from '../src/errors.ts'
 import { MemoryStore } from '../src/storage/memory_store.ts'
 import { isRecordingEnabled } from '../src/define_config.ts'
@@ -50,7 +51,7 @@ export default class PeriscopeProvider {
    * Bind the recorder as a singleton, resolved from `config/periscope.ts`.
    */
   register() {
-    this.app.container.singleton(Recorder, () => {
+    this.app.container.singleton(Recorder, async () => {
       const config = this.#resolveConfig()
 
       /**
@@ -72,19 +73,38 @@ export default class PeriscopeProvider {
        * ambient timer; nothing it owns can reach the store. The other reader of the store, the
        * dashboard, is gated off by this very same switch (P4.1). Building the real driver would
        * therefore open a sqlite file, load a native module or hold a database connection purely
-       * so that nothing could be written to it — and today it is worse than wasteful: with the
-       * `sqlite-local` default, `createStore` throws until Phase 2 lands, which would take the
-       * *host application* down at boot because Periscope is switched off. A `MemoryStore` is
-       * three empty `Map`s and cannot fail.
+       * so that nothing could be written to it. Worse, it would let a switched-off Periscope
+       * fail a boot it has no business being part of: the `database` driver throws when Lucid is
+       * absent, and `sqlite-local` writes a file into `tmp/` on a host that asked for nothing.
+       * A `MemoryStore` is three empty `Map`s and cannot fail.
        */
       this.#store = enabled
-        ? createStore(config)
+        ? await createStore(config, this.#storeContext())
         : new MemoryStore({ maxEntries: config.storage.maxEntries })
 
       this.#recorder = new Recorder({ config, store: this.#store, enabled })
 
       return this.#recorder
     })
+  }
+
+  /**
+   * The slice of the application the storage drivers are allowed to see.
+   *
+   * `database` is populated only when the host has actually bound Lucid, so the container lookup
+   * lives here and the explanation of what to do about a missing one lives in `createStore` —
+   * the driver knows why it needs a database, the provider knows where one would come from.
+   */
+  #storeContext(): StoreContext {
+    const context: StoreContext = {
+      tmpPath: (...paths: string[]) => this.app.tmpPath(...paths),
+    }
+
+    if (this.app.container.hasBinding('lucid.db')) {
+      context.database = () => this.app.container.make('lucid.db')
+    }
+
+    return context
   }
 
   /**

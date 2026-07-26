@@ -7,8 +7,9 @@
 | (`packages/periscope/stubs/config/periscope.stub`) so that drift between what an application
 | gets from `node ace add periscope` and what the playground exercises shows up here first.
 |
-| Phase 1 ships the `memory` driver only; `sqlite-local` becomes the zero-config default in
-| Phase 2 and this file changes with it.
+| Phase 2 makes `sqlite-local` the zero-config default, so that is what the fixture runs on: the
+| demo command and the functional tests both prove entries survive in `tmp/periscope.sqlite`
+| rather than in a ring buffer that dies with the process.
 |
 */
 
@@ -24,7 +25,12 @@ export default defineConfig({
   enabledIn: ['development', 'test'],
 
   storage: {
-    driver: 'memory',
+    /**
+     * The shipped default. Everything Periscope records here lands in `tmp/periscope.sqlite`,
+     * which is git-ignored and safe to delete — `node ace periscope:demo` prints the resolved
+     * path so the file can be queried with `sqlite3` directly.
+     */
+    driver: 'sqlite-local',
     maxEntries: 10_000,
   },
 

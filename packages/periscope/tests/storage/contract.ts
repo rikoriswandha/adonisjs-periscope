@@ -28,6 +28,7 @@ import { randomUUID } from 'node:crypto'
 
 import { test } from '@japa/runner'
 
+import { DEFAULT_PAGE_SIZE } from '../../src/storage/pagination.ts'
 import { EntryType, Flag } from '../../src/types.ts'
 import type { PeriscopeStore, StoredEntry } from '../../src/types.ts'
 
@@ -88,6 +89,116 @@ async function findOrFail(store: PeriscopeStore, uuid: string): Promise<StoredEn
   }
 
   return entry
+}
+
+/**
+ * Size of the scale fixture used by the pruning tests. A thousand entries is the number the
+ * implementation plan names, and it is the point of those tests: a driver that deletes row by
+ * row, or that builds one `in (...)` list out of every doomed uuid, starts to hurt here in a way
+ * it never does against the five-entry fixtures above.
+ */
+const SCALE_ENTRY_COUNT = 1_000
+
+/**
+ * How many entries go into one `save()` while seeding. The suite runs against postgres in CI, so
+ * seeding with a thousand awaited round trips would dominate the whole run; a handful of calls
+ * also matches what a driver actually sees, since every save is one transaction.
+ */
+const SCALE_SAVE_CHUNK = 250
+
+const HOUR_MS = 3_600_000
+
+/**
+ * Epoch of the scale fixture. A fixed instant, not `Date.now()`: a cutoff expressed as "anchor
+ * plus N hours" is then exactly reproducible, and a failure is debuggable from the message alone.
+ */
+const SCALE_ANCHOR = Date.parse('2026-03-01T00:00:00.000Z')
+
+/**
+ * The types the scale fixture cycles through. `exception` is in here because the whole point of
+ * `keepExceptions` is that one type survives a prune the rest of the history does not, and a
+ * fixture of a single type could not tell a driver that spares everything from one that spares
+ * the right rows.
+ */
+const SCALE_TYPES = [
+  EntryType.REQUEST,
+  EntryType.QUERY,
+  EntryType.EXCEPTION,
+  EntryType.LOG,
+] as const
+
+/**
+ * Build {@link SCALE_ENTRY_COUNT} entries, one per hour from {@link SCALE_ANCHOR} onwards and
+ * rotating through {@link SCALE_TYPES}.
+ *
+ * Returned in ascending order of both `createdAt` and `sequence` — the fixture factory advances
+ * its sequence clock once per call — so a test can name the expected survivors of any cutoff as
+ * a slice of this array, and the expected page as that slice reversed.
+ */
+function makeScaleEntries(): StoredEntry[] {
+  return Array.from({ length: SCALE_ENTRY_COUNT }, (_, index) =>
+    makeStoredEntry({
+      type: SCALE_TYPES[index % SCALE_TYPES.length],
+      createdAt: new Date(SCALE_ANCHOR + index * HOUR_MS),
+    })
+  )
+}
+
+/**
+ * Seed `entries` in chunks of {@link SCALE_SAVE_CHUNK}. Sequential rather than concurrent: a
+ * driver is free to hold a single connection, and firing four overlapping transactions at one
+ * would test the test rather than the contract.
+ */
+async function seed(store: PeriscopeStore, entries: StoredEntry[]): Promise<void> {
+  for (let offset = 0; offset < entries.length; offset += SCALE_SAVE_CHUNK) {
+    await store.save(entries.slice(offset, offset + SCALE_SAVE_CHUNK))
+  }
+}
+
+/**
+ * Hard ceiling on how many pages {@link listEverything} will walk before declaring the driver's
+ * cursor broken. The largest fixture is {@link SCALE_ENTRY_COUNT} entries at
+ * {@link DEFAULT_PAGE_SIZE} per page, plus one for a driver that emits a final empty page.
+ */
+const MAX_LIST_PAGES = Math.ceil(SCALE_ENTRY_COUNT / DEFAULT_PAGE_SIZE) + 1
+
+/**
+ * Walk every page of `list()` and return the entries newest first.
+ *
+ * The scale tests assert on the *exact* surviving set, which is larger than a page, so they have
+ * to paginate. No `limit` is passed, deliberately: `resolvePageSize` clamps any request at or
+ * above `MAX_PAGE_SIZE` down to exactly that, and a driver only emits a cursor when a further
+ * row exists — so asking for a thousand at a time made the loop run once against a thousand-row
+ * fixture and the cursor walk this helper appears to perform never happened. At
+ * {@link DEFAULT_PAGE_SIZE} it iterates for real, over the same cursors the dashboard uses.
+ */
+async function listEverything(store: PeriscopeStore): Promise<StoredEntry[]> {
+  const entries: StoredEntry[] = []
+  let cursor: string | undefined
+  let pages = 0
+
+  do {
+    const page = await store.list({ cursor })
+
+    entries.push(...page.data)
+    cursor = page.nextCursor ?? undefined
+    pages += 1
+
+    /**
+     * A driver whose cursor never advances — one that echoes the request, or encodes the newest
+     * sequence instead of the page's last — would loop here until the runner killed the process,
+     * which reads as an infrastructure hang rather than the driver bug it is. Bounding the walk
+     * turns it into a named failure on the eleventh page.
+     */
+    if (pages > MAX_LIST_PAGES) {
+      throw new Error(
+        `list() produced more than ${MAX_LIST_PAGES} pages for at most ${SCALE_ENTRY_COUNT} ` +
+          `entries: the cursor is not advancing (last cursor ${JSON.stringify(cursor)})`
+      )
+    }
+  } while (cursor !== undefined)
+
+  return entries
 }
 
 /**
@@ -630,6 +741,122 @@ export function runStoreContractTests(driverName: string, createStore: StoreFact
       const page = await store.list()
 
       assert.lengthOf(page.data, 2)
+    })
+
+    /*
+     * pruning at scale
+     *
+     * The three tests below share one fixture — a thousand entries, one per hour, cycling
+     * through four types — and are the only place the contract says anything about volume. They
+     * exist because the small fixtures above cannot distinguish a correct driver from one that
+     * is merely correct on three rows: an off-by-one in a chunked delete, a cap applied to a
+     * page instead of to the table, or a `keepExceptions` predicate that a query planner drops
+     * once the row count crosses an index threshold all pass everything before this point.
+     */
+
+    test('prune a thousand entries by an hours-style cutoff', async ({ assert }) => {
+      const entries = makeScaleEntries()
+
+      await seed(store, entries)
+
+      /**
+       * `prune` deletes strictly before the cutoff, and entry `n` was created exactly `n` hours
+       * after the anchor, so a cutoff of 600 hours must take entries 0..599 and spare entry 600
+       * itself. That boundary is the whole reason the cutoff is expressed in fixture terms
+       * rather than as a literal date.
+       */
+      const cutoffHours = 600
+      const cutoff = new Date(SCALE_ANCHOR + cutoffHours * HOUR_MS)
+
+      assert.equal(await store.prune({ before: cutoff }), cutoffHours)
+
+      const survivors = await listEverything(store)
+
+      assert.lengthOf(survivors, SCALE_ENTRY_COUNT - cutoffHours)
+      assert.deepEqual(
+        survivors.map((entry) => entry.uuid),
+        entries
+          .slice(cutoffHours)
+          .map((entry) => entry.uuid)
+          .reverse()
+      )
+    })
+
+    test('spare every exception when pruning a thousand entries', async ({ assert }) => {
+      const entries = makeScaleEntries()
+
+      await seed(store, entries)
+
+      const cutoffHours = 750
+      const cutoff = new Date(SCALE_ANCHOR + cutoffHours * HOUR_MS)
+
+      const window = entries.slice(0, cutoffHours)
+      const sparedExceptions = window.filter((entry) => entry.type === EntryType.EXCEPTION)
+      const doomed = window.filter((entry) => entry.type !== EntryType.EXCEPTION)
+
+      assert.isAbove(
+        sparedExceptions.length,
+        0,
+        'the fixture must put exceptions inside the pruned window or this test proves nothing'
+      )
+
+      assert.equal(await store.prune({ before: cutoff, keepExceptions: true }), doomed.length)
+
+      const survivors = await listEverything(store)
+      const survivingUuids = new Set(survivors.map((entry) => entry.uuid))
+
+      /**
+       * Counted rather than looped over, so a driver that spares the wrong rows fails with a
+       * number instead of with the first of two hundred identical assertion failures.
+       */
+      assert.lengthOf(
+        sparedExceptions.filter((entry) => !survivingUuids.has(entry.uuid)),
+        0,
+        'keepExceptions must spare every exception in the window, not merely some of them'
+      )
+      assert.lengthOf(
+        doomed.filter((entry) => survivingUuids.has(entry.uuid)),
+        0,
+        'everything in the window that is not an exception must be gone'
+      )
+
+      assert.deepEqual(
+        survivors.map((entry) => entry.uuid),
+        entries
+          .filter((entry, index) => index >= cutoffHours || entry.type === EntryType.EXCEPTION)
+          .map((entry) => entry.uuid)
+          .reverse()
+      )
+    })
+
+    test('trim a thousand entries down to the newest cap', async ({ assert }) => {
+      const entries = makeScaleEntries()
+
+      await seed(store, entries)
+
+      const cap = 120
+
+      assert.equal(await store.trim(cap), SCALE_ENTRY_COUNT - cap)
+
+      const survivors = await listEverything(store)
+
+      assert.lengthOf(survivors, cap, 'the cap is exact, not approximate')
+      assert.deepEqual(
+        survivors.map((entry) => entry.uuid),
+        entries
+          .slice(-cap)
+          .map((entry) => entry.uuid)
+          .reverse(),
+        'the survivors are the newest entries by sequence'
+      )
+
+      /**
+       * The entry immediately below the cap is the one an off-by-one keeps or takes one too many
+       * of, and `find` reaches it without going through the ordering the assertion above already
+       * used.
+       */
+      assert.isNull(await store.find(entries[SCALE_ENTRY_COUNT - cap - 1].uuid))
+      assert.isNotNull(await store.find(entries[SCALE_ENTRY_COUNT - cap].uuid))
     })
 
     /*

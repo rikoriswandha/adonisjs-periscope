@@ -26,16 +26,21 @@ export default defineConfig({
     /**
      * Where entries are persisted.
      *
-     * - `memory`: nothing survives a restart. Fine for tests, useless for debugging a crash.
-     * - `sqlite-local`: a local SQLite file, no application database involved.
-     * - `database`: a Lucid connection, sharing your application's database.
+     * - `sqlite-local`: a SQLite file of Periscope's own under `tmp/`. No setup, nothing in your
+     *   application's database, and `rm tmp/periscope.sqlite` starts over.
+     * - `database`: your application's own Lucid connection, so entries live beside your data
+     *   and are reachable from every process that shares it. Requires `@adonisjs/lucid`, and the
+     *   Periscope tables have to exist — run the shipped migration before switching.
+     * - `memory`: a ring buffer that dies with the process. Fine for tests, useless for
+     *   debugging the crash that restarted the server.
      *
-     * Default: 'memory'
+     * Default: 'sqlite-local'
      */
-    driver: 'memory',
+    driver: 'sqlite-local',
 
     /**
-     * Lucid connection name, used by the `database` driver only. Omit it for the other drivers.
+     * Lucid connection name, used by the `database` driver only. Omit it to use your default
+     * connection; name a dedicated one to keep debug traffic off your primary.
      */
     // connection: 'primary',
 

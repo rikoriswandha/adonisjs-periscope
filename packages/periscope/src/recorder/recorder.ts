@@ -57,6 +57,25 @@ const TRUNCATED_TAG = 'truncated'
  */
 const TRUNCATION_MESSAGE = 'Periscope dropped entries in this batch after a per-type cap was hit.'
 
+/**
+ * How many *successful* flushes pass between two opportunistic `store.trim()` calls.
+ *
+ * `storage.maxEntries` is a ceiling on retained history, not a per-write invariant, so trimming
+ * on every flush would be indefensible: a flush costs one insert on a request's way out, while a
+ * trim is a whole-table maintenance delete. Twenty-five is chosen to be invisible from both
+ * sides of that trade. One extra statement per twenty-five flushes disappears into the writes
+ * those same flushes already do, and an application recording a handful of entries per request
+ * can only carry a few hundred rows past the cap before the next trim pulls it back — an
+ * overshoot of a few percent on a ten-thousand-entry default, which is exactly the accuracy a
+ * "keep roughly the last N entries" knob deserves.
+ *
+ * There is deliberately no config key for it. The interval schedules an intent the user already
+ * expressed through `storage.maxEntries`; a second knob would only let someone mis-tune the
+ * first. Config surface arrives the day something needs to override it. It is exported only so
+ * the suite that proves the interval can assert against the number instead of duplicating it.
+ */
+export const TRIM_EVERY_FLUSHES = 25
+
 export type RecorderOptions = {
   config: ResolvedPeriscopeConfig
   store: PeriscopeStore
@@ -177,6 +196,15 @@ export class Recorder {
    */
   #paused = false
   #pausedReadAt = Number.NEGATIVE_INFINITY
+
+  /**
+   * Successful flushes since the last opportunistic trim — see {@link TRIM_EVERY_FLUSHES}.
+   *
+   * It lives on the recorder rather than on a batch context because contexts are short-lived:
+   * a request batch flushes exactly once, so a per-context counter would never reach any
+   * interval worth having and every request would trim.
+   */
+  #flushesSinceTrim = 0
 
   /**
    * Memoised shutdown, which is what makes {@link Recorder.shutdown} idempotent: a second caller
@@ -303,7 +331,9 @@ export class Recorder {
   }
 
   /**
-   * Persist everything buffered in `target`, defaulting to the active batch.
+   * Persist everything buffered in `target`, defaulting to the active batch, and every
+   * {@link TRIM_EVERY_FLUSHES} successful writes also bring the store back under
+   * `storage.maxEntries`.
    *
    * Never rejects: the request middleware awaits this on the way out of every request, and a
    * broken store must not turn into a 500.
@@ -339,6 +369,37 @@ export class Recorder {
        * write is what stops a flush from generating the entries for the next flush.
        */
       await BatchScope.mute(() => this.store.save(stored))
+
+      this.#flushesSinceTrim++
+
+      if (this.#flushesSinceTrim < TRIM_EVERY_FLUSHES) {
+        return
+      }
+
+      /**
+       * Reset *before* the trim rather than after it resolves, so the interval counts attempts
+       * and not successes. A store whose deletes fail — a locked SQLite file, a read-only
+       * replica, a permissions problem — would otherwise sit pinned at the threshold and turn
+       * every single subsequent flush into another failed maintenance query against a database
+       * that is already unhealthy. Skipping one interval's worth of trimming costs nothing in
+       * exchange: the cap bounds history, not correctness, and whenever the store recovers a
+       * single trim collapses the whole accumulated backlog in one statement.
+       */
+      this.#flushesSinceTrim = 0
+
+      /**
+       * Muted for exactly the reason the save above is (§0, invariant 2): a trim is a delete,
+       * which is database traffic the query watcher would hand straight back to this recorder.
+       * It also shares the enclosing `safeguardAsync`, so a driver that cannot trim degrades
+       * into "history grows past the cap" instead of into a rejected flush — pruning is
+       * housekeeping, and housekeeping must never be able to fail a request.
+       *
+       * Against the `memory` driver this is close to free. That store already evicts the oldest
+       * entries on every save, so it is under the cap by construction and its `trim` returns 0
+       * after a single size comparison; the call stays unconditional because the recorder does
+       * not know, and must not care, which driver it was handed.
+       */
+      await BatchScope.mute(() => this.store.trim(this.#config.storage.maxEntries))
     })
   }
 

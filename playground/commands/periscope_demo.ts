@@ -11,10 +11,15 @@ import { BatchScope, EntryType, IncomingEntry } from 'periscope'
  * > "a script in playground records 3 fake entries in a scope, flushes to memory store, prints
  * >  the batch."
  *
- * It is the smallest end-to-end proof that the whole Phase 1 pipeline is wired: the provider
- * resolved `config/periscope.ts`, built the memory store and bound the recorder; `BatchScope`
+ * It is the smallest end-to-end proof that the whole pipeline is wired: the provider resolved
+ * `config/periscope.ts`, built the configured store and bound the recorder; `BatchScope`
  * correlates entries recorded across async boundaries into one batch; the recorder redacts,
  * tags, caps and stamps them; and the store reads them back in timeline order.
+ *
+ * Phase 2 adds the other half of the plan's demo — "writes batches through the recorder into
+ * sqlite-local" — by printing the per-type counts read back out of the store and the file they
+ * came from. Run the command twice: the counts grow, which is the whole difference between the
+ * `sqlite-local` driver and the ring buffer it replaced as the default.
  *
  * Run it with `node ace periscope:demo`.
  */
@@ -95,5 +100,44 @@ export default class PeriscopeDemo extends BaseCommand {
     const payload = request?.content.payload as { password?: string } | undefined
 
     this.logger.info(`password recorded as: ${payload?.password}`)
+
+    await this.#printStoredTotals()
+  }
+
+  /**
+   * Everything the store holds, not just the batch this run recorded.
+   *
+   * `counts()` is read straight back out of the driver after the flush, so a run that prints a
+   * total higher than the batch above is proof that the previous run's entries are still on
+   * disk — the durability claim the `sqlite-local` default is making. The file path is printed
+   * with it so the same numbers can be checked from outside the process entirely:
+   *
+   *   sqlite3 tmp/periscope.sqlite 'select type, count(*) from periscope_entries group by type'
+   */
+  async #printStoredTotals() {
+    const counts = await recorder.store.counts()
+    const totals = Object.entries(counts).sort(([left], [right]) => left.localeCompare(right))
+
+    const table = this.ui.table()
+    table.head(['type', 'stored'])
+
+    totals.forEach(([type, count]) => {
+      table.row([type, String(count)])
+    })
+
+    table.render()
+
+    /*
+     * Only the `sqlite-local` driver owns that file. Printing it unconditionally would send a
+     * reader running `sqlite3` at an empty — or absent — database while their entries sat in the
+     * application's own connection, or in a ring buffer that never touched the disk.
+     */
+    const driver = this.app.config.get<{ storage: { driver: string } }>('periscope').storage.driver
+
+    this.logger.info(
+      driver === 'sqlite-local'
+        ? `database: ${this.app.tmpPath('periscope.sqlite')}`
+        : `storage driver: ${driver} — entries live wherever that driver put them`
+    )
   }
 }

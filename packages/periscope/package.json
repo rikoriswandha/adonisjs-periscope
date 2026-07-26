@@ -22,7 +22,8 @@
     "./hooks": "./build/src/hooks/doctor.js",
     "./commands": "./build/commands/main.js",
     "./types": "./build/src/types.js",
-    "./periscope_config": "./build/src/define_config.js"
+    "./periscope_config": "./build/src/define_config.js",
+    "./storage_schema": "./build/src/storage/database_schema.js"
   },
   "files": [
     "build",
@@ -67,9 +68,11 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/luxon": "^3.7.1",
     "@types/node": "~25.9.1",
+    "@types/pg": "^8.20.0",
     "copyfiles": "^2.4.1",
     "eslint": "^10.4.0",
     "luxon": "^3.7.2",
+    "pg": "^8.22.0",
     "typescript": "~6.0.3"
   },
   "prettier": "@adonisjs/prettier-config"

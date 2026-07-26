@@ -69,6 +69,16 @@ const TOP_LEVEL_KEYS = ['enabled', 'enabledIn', 'storage', 'recording', 'redact'
  */
 const STORAGE_DRIVERS: readonly StorageDriverName[] = ['memory', 'sqlite-local', 'database']
 
+/**
+ * The driver an application gets when `config/periscope.ts` names none.
+ *
+ * `sqlite-local` rather than `memory` because the default has to be useful for the thing
+ * Periscope is for: entries that survive the restart caused by the crash you are investigating.
+ * It costs a file under `tmp/` and no setup at all — no connection to configure, no migration to
+ * run, nothing in the application's own database.
+ */
+const DEFAULT_DRIVER: StorageDriverName = 'sqlite-local'
+
 const DEFAULT_ENABLED_IN: readonly string[] = ['development', 'test']
 const DEFAULT_MAX_ENTRIES = 10_000
 const DEFAULT_AMBIENT_ROTATION_MS = 10_000
@@ -435,7 +445,7 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
   }
 
   const resolvedStorage: ResolvedPeriscopeConfig['storage'] = {
-    driver: driver ?? 'memory',
+    driver: driver ?? DEFAULT_DRIVER,
     maxEntries: maxEntries ?? DEFAULT_MAX_ENTRIES,
   }
 

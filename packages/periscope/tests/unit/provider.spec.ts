@@ -5,6 +5,8 @@
  * file that was distributed with this source code.
  */
 
+import { existsSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { test } from '@japa/runner'
 import { LoggerFactory } from '@adonisjs/core/factories/logger'
 import type { ApplicationService, LoggerService } from '@adonisjs/core/types'
@@ -18,13 +20,15 @@ import { safeguard, setInternalLogger } from '../../src/safeguard.ts'
 import { MemoryStore } from '../../src/storage/memory_store.ts'
 import { PeriscopeConfigError, PeriscopeStorageError } from '../../src/errors.ts'
 import { createApp } from '../helpers/app_factory.ts'
+import type { ResolvedPeriscopeConfig } from '../../src/types.ts'
 
 /**
- * A driver `createStore` refuses to build until Phase 2. It is the sharpest available probe for
- * "did the provider construct the configured store?": naming it makes store construction throw,
- * so a code path that reaches `createStore` cannot pretend it did not.
+ * A driver `createStore` refuses to build in a bare unit-test application: nothing binds
+ * `lucid.db`, so the `database` driver has no database service to borrow. It is the sharpest
+ * available probe for "did the provider construct the configured store?" — naming it makes store
+ * construction throw, so a code path that reaches `createStore` cannot pretend it did not.
  */
-const UNBUILDABLE_DRIVER = 'sqlite-local' as const
+const UNBUILDABLE_DRIVER = 'database' as const
 
 /**
  * One shape of `config/periscope.ts` that never went through `defineConfig()` — the mistake the
@@ -36,6 +40,18 @@ const UNRESOLVED_CONFIG = {
   enabledIn: ['development'],
   storage: { driver: 'memory', maxEntries: 10 },
   recording: { caps: {}, ambientRotationMs: 10_000, pausedFlagTtlMs: 5_000 },
+}
+
+/**
+ * The config for the tests whose subject is not the storage driver.
+ *
+ * `memory` is spelled out rather than left to `defineConfig({})`: the shipped default is
+ * `sqlite-local`, so an empty config would have every one of these tests open a real database
+ * file under the throwaway application's `tmp/` — slower, and one leaked handle away from a
+ * suite that hangs instead of failing.
+ */
+function inertConfig(): ResolvedPeriscopeConfig {
+  return defineConfig({ storage: { driver: 'memory' } })
 }
 
 /**
@@ -88,7 +104,7 @@ test.group('PeriscopeProvider', (group) => {
   })
 
   test('bind the recorder as a container singleton', async ({ assert }) => {
-    const { app } = await createProvider({ periscope: defineConfig({}) })
+    const { app } = await createProvider({ periscope: inertConfig() })
 
     const first = await app.container.make(Recorder)
     const second = await app.container.make(Recorder)
@@ -129,7 +145,7 @@ test.group('PeriscopeProvider', (group) => {
      * `createStore`, so the driver that cannot be built has to take boot down — otherwise the
      * skip-the-store optimisation would have quietly disabled durable storage for everyone.
      */
-    await assert.rejects(() => provider.ready(), PeriscopeStorageError, /sqlite-local/)
+    await assert.rejects(() => provider.ready(), PeriscopeStorageError, /@adonisjs\/lucid/)
   })
 
   test('record through the configured store when the environment allows it', async ({ assert }) => {
@@ -166,10 +182,10 @@ test.group('PeriscopeProvider', (group) => {
     })
 
     /**
-     * The whole point: `sqlite-local` cannot be built, so a provider that calls `createStore`
-     * before consulting the environment gate takes the *host application* down at boot — in
-     * production, because Periscope is switched off. Booting cleanly here is the proof that a
-     * disabled Periscope opens no file, loads no native module and holds no connection.
+     * The whole point: the `database` driver cannot be built here, so a provider that calls
+     * `createStore` before consulting the environment gate takes the *host application* down at
+     * boot — in production, because Periscope is switched off. Booting cleanly here is the proof
+     * that a disabled Periscope opens no file, loads no native module and holds no connection.
      */
     await provider.ready()
 
@@ -192,8 +208,38 @@ test.group('PeriscopeProvider', (group) => {
     await provider.shutdown()
   })
 
+  test('write no sqlite file when a sqlite-local Periscope is disabled', async ({ assert }) => {
+    const { app, provider } = await createProvider({
+      nodeEnv: 'production',
+      periscope: defineConfig({
+        enabledIn: ['development', 'test'],
+        storage: { driver: 'sqlite-local' },
+      }),
+    })
+
+    /**
+     * `sqlite-local` is the shipped default, so this is the case most applications that switch
+     * Periscope off in production are actually in. Unlike `database` it cannot fail loudly — it
+     * would succeed, quietly loading a native module and leaving a database file in the
+     * production `tmp/` directory that nothing will ever write to. The absent file is the only
+     * observable proof that the driver was never built.
+     */
+    const file = app.tmpPath('periscope.sqlite')
+    await rm(file, { force: true })
+
+    await provider.ready()
+
+    const recorder = await app.container.make(Recorder)
+
+    assert.isFalse(recorder.enabled)
+    assert.instanceOf(recorder.store, MemoryStore)
+    assert.isFalse(existsSync(file))
+
+    await provider.shutdown()
+  })
+
   test('close the store on shutdown', async ({ assert }) => {
-    const { app, provider } = await createProvider({ periscope: defineConfig({}) })
+    const { app, provider } = await createProvider({ periscope: inertConfig() })
 
     await provider.ready()
 
@@ -233,7 +279,7 @@ test.group('PeriscopeProvider', (group) => {
     assert,
   }) => {
     const logs: string[] = []
-    const { app, provider } = await createProvider({ periscope: defineConfig({}) })
+    const { app, provider } = await createProvider({ periscope: inertConfig() })
 
     /**
      * The factory logger is generically typed and is not a `LoggerManager`; the provider only
@@ -277,7 +323,7 @@ test.group('PeriscopeProvider', (group) => {
   })
 
   test('boot without a logger binding at all', async ({ assert }) => {
-    const { app, provider } = await createProvider({ periscope: defineConfig({}) })
+    const { app, provider } = await createProvider({ periscope: inertConfig() })
 
     /**
      * The throwaway app registers no providers, so nothing binds `logger`. Diagnostics wiring is

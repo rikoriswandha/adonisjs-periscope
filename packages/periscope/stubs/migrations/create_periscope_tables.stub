@@ -1,0 +1,37 @@
+{{{
+  exports({
+    to: app.migrationsPath(new Date().getTime() + '_create_periscope_tables.ts')
+  })
+}}}
+import { BaseSchema } from '@adonisjs/lucid/schema'
+import { createPeriscopeTables, dropPeriscopeTables } from 'periscope/storage_schema'
+
+/**
+ * Periscope's four tables, for the `database` storage driver.
+ *
+ * The column list deliberately does not live in this file. It lives in Periscope's
+ * `src/storage/database_schema.ts`, next to the `src/storage/sql.ts` codecs that read and write
+ * those columns, and this migration is a thin call into it. Copying the DDL here would leave the
+ * driver free to be upgraded while your tables stayed on the old shape — with a shared function
+ * the two cannot drift, and `npm update periscope` plus a fresh migration is enough to move.
+ *
+ * `content` and `tags` are plain TEXT on every dialect, holding the JSON Periscope wrote. That is
+ * on purpose, and it is not an oversight to "fix" by switching postgres to `jsonb`: `jsonb`
+ * parses the value and rejects `\u0000` — a NUL anywhere in a captured body, header or query
+ * string — and lone surrogates such as `"\ud83d"`, which redaction and truncation produce every
+ * time they cut an emoji in half. Postgres answers both with `unsupported Unicode escape
+ * sequence` and fails the whole INSERT, taking every other entry in that batch with it. TEXT
+ * round-trips the exact bytes; the driver parses them itself either way.
+ *
+ * You are free to edit this file — it is yours once generated. If you rename a table, note that
+ * the driver reads the names from `src/storage/sql.ts` and will not follow you.
+ */
+export default class extends BaseSchema {
+  async up() {
+    createPeriscopeTables(this.schema)
+  }
+
+  async down() {
+    dropPeriscopeTables(this.schema)
+  }
+}

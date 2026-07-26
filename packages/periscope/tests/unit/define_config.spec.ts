@@ -22,7 +22,7 @@ const DEFAULTS: ResolvedPeriscopeConfig = {
   enabled: true,
   enabledIn: ['development', 'test'],
   storage: {
-    driver: 'memory',
+    driver: 'sqlite-local',
     maxEntries: 10_000,
   },
   recording: {
@@ -92,6 +92,15 @@ test.group('defineConfig | defaults', () => {
     assert.deepEqual(defineConfig({}), DEFAULTS)
   })
 
+  test('default to the durable sqlite-local driver, not the ring buffer', ({ assert }) => {
+    /**
+     * Asserted on its own as well as inside the defaults literal above, because it is the one
+     * default a user never sees and always feels: an application that configures nothing must
+     * still have its entries survive the restart caused by the crash it is investigating.
+     */
+    assert.equal(defineConfig({}).storage.driver, 'sqlite-local')
+  })
+
   test('leave storage.connection absent when it was not configured', ({ assert }) => {
     assert.notProperty(defineConfig({}).storage, 'connection')
   })
@@ -120,9 +129,9 @@ test.group('defineConfig | defaults', () => {
 
 test.group('defineConfig | merging', () => {
   test('merge a nested block key by key without clobbering its siblings', ({ assert }) => {
-    const config = defineConfig({ storage: { driver: 'sqlite-local' } })
+    const config = defineConfig({ storage: { driver: 'memory' } })
 
-    assert.equal(config.storage.driver, 'sqlite-local')
+    assert.equal(config.storage.driver, 'memory')
     assert.equal(config.storage.maxEntries, 10_000)
   })
 

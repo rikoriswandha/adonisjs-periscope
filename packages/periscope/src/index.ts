@@ -37,9 +37,14 @@ export { nextSequence } from './recorder/sequence.ts'
 export { SERIALIZER_DEFAULTS, safeSerialize } from './recorder/serializer.ts'
 export type { SerializeOptions } from './recorder/serializer.ts'
 
+export { DatabaseStore } from './storage/database_store.ts'
+export type { DatabaseStoreOptions } from './storage/database_store.ts'
 export { MemoryStore } from './storage/memory_store.ts'
 export type { MemoryStoreOptions } from './storage/memory_store.ts'
+export { SqliteLocalStore } from './storage/sqlite_local_store.ts'
+export type { SqliteLocalStoreOptions } from './storage/sqlite_local_store.ts'
 export { createStore } from './storage/resolve.ts'
+export type { StoreContext } from './storage/resolve.ts'
 
 export { ENTRY_TYPES, EntryType, Flag } from './types.ts'
 export type {

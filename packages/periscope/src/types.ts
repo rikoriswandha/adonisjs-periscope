@@ -227,6 +227,12 @@ export interface PeriscopeStore {
   /**
    * Persist a flushed batch. Called with every entry of one batch at once so drivers can use a
    * single transaction and batched inserts.
+   *
+   * Entries are write-once: the recorder mints a fresh uuid per entry and never revises one, so
+   * what a driver does with a uuid it has already stored is deliberately left undefined — the
+   * memory driver replaces it, the SQL drivers ignore the conflict. Both are conforming, and no
+   * caller may depend on either. What every driver *must* do is survive the collision without
+   * rejecting: a duplicate must never cost the rest of the batch its entries.
    */
   save(entries: StoredEntry[]): Promise<void>
 
@@ -308,9 +314,10 @@ export interface PeriscopeStore {
  * Names of the shipped storage drivers.
  *
  * - `memory` — ring buffer, lost on restart. The zero-dependency driver and the test double.
- * - `sqlite-local` — a dedicated better-sqlite3 file under `tmp/`. The zero-config default once
- *   it lands in P2.2.
- * - `database` — the application's own Lucid connection. Requires `@adonisjs/lucid` (P2.1).
+ * - `sqlite-local` — a dedicated better-sqlite3 file under `tmp/`. The zero-config default:
+ *   durable across restarts without touching the application's own database.
+ * - `database` — the application's own Lucid connection. Requires `@adonisjs/lucid`, its
+ *   provider registered, and the Periscope tables created by the shipped migration.
  */
 export type StorageDriverName = 'memory' | 'sqlite-local' | 'database'
 
@@ -406,7 +413,8 @@ export type PeriscopeConfig = {
 
   storage?: {
     /**
-     * Which driver persists entries. Defaults to `memory`.
+     * Which driver persists entries. Defaults to `sqlite-local`, a file of Periscope's own
+     * under `tmp/`.
      */
     driver?: StorageDriverName
 
