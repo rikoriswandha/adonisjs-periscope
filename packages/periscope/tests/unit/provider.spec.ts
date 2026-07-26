@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { test } from '@japa/runner'
 import { LoggerFactory } from '@adonisjs/core/factories/logger'
+import { RouterFactory } from '@adonisjs/core/factories/http'
 import type { ApplicationService, LoggerService } from '@adonisjs/core/types'
 
 import PeriscopeProvider from '../../providers/periscope_provider.ts'
@@ -70,12 +71,17 @@ function inertConfig(): ResolvedPeriscopeConfig {
  * consults. The group hook below puts it back.
  */
 async function createProvider(
-  options: { periscope?: unknown; nodeEnv?: string } = {}
+  options: {
+    periscope?: unknown
+    nodeEnv?: string
+    environment?: 'web' | 'console' | 'test' | 'repl' | 'unknown'
+  } = {}
 ): Promise<{ app: ApplicationService; provider: PeriscopeProvider }> {
   process.env.NODE_ENV = options.nodeEnv ?? 'development'
 
   const { app } = await createApp({
     config: options.periscope === undefined ? {} : { periscope: options.periscope },
+    environment: options.environment,
   })
 
   const provider = new PeriscopeProvider(app)
@@ -118,6 +124,39 @@ test.group('PeriscopeProvider', (group) => {
 
     assert.instanceOf(first, Recorder)
     assert.strictEqual(first, second)
+  })
+
+  test('register dashboard routes from start in web processes', async ({ assert }) => {
+    const { app, provider } = await createProvider({
+      periscope: inertConfig(),
+      environment: 'web',
+    })
+    const router = new RouterFactory().merge({ app }).create()
+    app.container.singleton('router', () => router)
+
+    await provider.start()
+    router.commit()
+
+    assert.equal(
+      router.match('/periscope/api/status', 'GET', true)?.route.pattern,
+      '/periscope/api/status'
+    )
+  })
+
+  test('do not resolve or register the router outside web processes', async ({ assert }) => {
+    const { app, provider } = await createProvider({
+      periscope: inertConfig(),
+      environment: 'console',
+    })
+    let routerResolutions = 0
+    app.container.singleton('router', () => {
+      routerResolutions += 1
+      return new RouterFactory().merge({ app }).create()
+    })
+
+    await provider.start()
+
+    assert.equal(routerResolutions, 0)
   })
 
   test('fail at boot when config/periscope.ts is missing', async ({ assert }) => {

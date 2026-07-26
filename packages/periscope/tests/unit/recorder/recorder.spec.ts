@@ -14,6 +14,7 @@ import { DEFAULT_REDACT_HEADERS, DEFAULT_REDACT_KEYS } from '../../../src/record
 import { setInternalLogger } from '../../../src/safeguard.ts'
 import { ENTRY_TYPES, EntryType, Flag } from '../../../src/types.ts'
 import type {
+  ExceptionGroup,
   EntryContent,
   EntryTypeCounts,
   FilterHook,
@@ -94,6 +95,10 @@ class FakeStore implements PeriscopeStore {
 
   async counts(): Promise<EntryTypeCounts> {
     return {}
+  }
+
+  async exceptionGroups(): Promise<Paginated<ExceptionGroup>> {
+    return { data: [], nextCursor: null }
   }
 
   async prune(): Promise<number> {
@@ -209,7 +214,7 @@ function makeConfig(overrides: ConfigOverrides = {}): ResolvedPeriscopeConfig {
       log: { enabled: true, level: 'warn' },
       event: { enabled: true, ignore: [] },
     },
-    dashboard: { path: '/periscope' },
+    dashboard: { path: '/periscope', authorize: () => true, nPlusOneThreshold: 5 },
   }
 }
 

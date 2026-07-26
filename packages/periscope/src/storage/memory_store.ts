@@ -7,8 +7,11 @@
 
 import { EntryType } from '../types.ts'
 import { encodeCursor, parseCursor, resolvePageSize } from './pagination.ts'
+import { aggregateExceptionGroups } from './exception_groups.ts'
 import type {
   EntryQuery,
+  ExceptionGroup,
+  ExceptionGroupQuery,
   EntryTypeCounts,
   FlagOptions,
   Paginated,
@@ -263,6 +266,16 @@ export class MemoryStore implements PeriscopeStore {
     return this.#entries.keys()
   }
 
+  *#candidateEntries(query: EntryQuery): IterableIterator<StoredEntry> {
+    for (const uuid of this.#candidates(query)) {
+      const entry = this.#entries.get(uuid)
+
+      if (entry !== undefined) {
+        yield entry
+      }
+    }
+  }
+
   async save(entries: StoredEntry[]): Promise<void> {
     if (entries.length === 0) {
       return
@@ -298,10 +311,8 @@ export class MemoryStore implements PeriscopeStore {
     const cursor = parseCursor(query.cursor)
     const matches: StoredEntry[] = []
 
-    for (const uuid of this.#candidates(query)) {
-      const entry = this.#entries.get(uuid)
-
-      if (entry !== undefined && matchesQuery(entry, query, cursor)) {
+    for (const entry of this.#candidateEntries(query)) {
+      if (matchesQuery(entry, query, cursor)) {
         matches.push(entry)
       }
     }
@@ -352,6 +363,20 @@ export class MemoryStore implements PeriscopeStore {
     }
 
     return counts
+  }
+
+  async exceptionGroups(query: ExceptionGroupQuery = {}): Promise<Paginated<ExceptionGroup>> {
+    const page = aggregateExceptionGroups(this.#candidateEntries(query), query)
+
+    return {
+      data: page.data.map((group) => ({
+        familyHash: group.familyHash,
+        latest: this.#copy(group.latest),
+        count: group.count,
+        lastSeen: new Date(group.lastSeen.getTime()),
+      })),
+      nextCursor: page.nextCursor,
+    }
   }
 
   async prune(options: PruneOptions): Promise<number> {

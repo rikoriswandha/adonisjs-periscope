@@ -1,0 +1,183 @@
+import { ArrowDown, CircleAlert, Inbox, RefreshCw } from 'lucide-react'
+import type { ReactNode } from 'react'
+
+import { Button } from '@/components/ui/button'
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
+import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import type { StoredEntry } from '@/types'
+
+export type EntryColumn = {
+  key: string
+  header: string
+  className?: string
+  primary?: boolean
+  cell: (entry: StoredEntry) => ReactNode
+}
+
+export function EntryIndexTable({
+  caption,
+  columns,
+  rows,
+  loading,
+  loadingMore,
+  error,
+  hasMore,
+  onLoadMore,
+  onRetry,
+  onRowOpen,
+  rowLabel,
+  emptyTitle,
+  emptyDescription,
+  newCount = 0,
+  onAcceptNew,
+}: {
+  caption: string
+  columns: EntryColumn[]
+  rows: StoredEntry[]
+  loading: boolean
+  loadingMore: boolean
+  error: Error | null
+  hasMore: boolean
+  onLoadMore: () => void
+  onRetry: () => void
+  onRowOpen: (entry: StoredEntry) => void
+  rowLabel: (entry: StoredEntry) => string
+  emptyTitle: string
+  emptyDescription: string
+  newCount?: number
+  onAcceptNew?: () => void
+}) {
+  const primaryColumnKey = columns.find((column) => column.primary)?.key ?? columns[0]?.key
+
+  return (
+    <div className="space-y-3">
+      {newCount > 0 && onAcceptNew && (
+        <div className="flex justify-center">
+          <Button onClick={onAcceptNew} size="sm" variant="secondary">
+            <RefreshCw aria-hidden="true" />
+            {newCount} new {newCount === 1 ? 'entry' : 'entries'} — load now
+          </Button>
+        </div>
+      )}
+
+      <div className="overflow-hidden rounded-lg border bg-background">
+        <div className="overflow-x-auto">
+          <Table className="min-w-data-table">
+            <TableCaption className="sr-only">{caption}</TableCaption>
+            <TableHeader>
+              <TableRow>
+                {columns.map((column) => (
+                  <TableHead className={column.className} key={column.key}>
+                    {column.header || <span className="sr-only">Open details</span>}
+                  </TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {loading &&
+                Array.from({ length: 7 }, (_, index) => (
+                  <TableRow key={index}>
+                    {columns.map((column) => (
+                      <TableCell key={column.key}>
+                        <Skeleton className="h-4 w-full max-w-40" />
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+
+              {!loading &&
+                rows.map((entry) => (
+                  <TableRow
+                    className="cursor-pointer hover:bg-accent/45"
+                    key={entry.uuid}
+                    onClick={() => onRowOpen(entry)}
+                  >
+                    {columns.map((column) => (
+                      <TableCell className={column.className} key={column.key}>
+                        {column.key === primaryColumnKey ? (
+                          <button
+                            className="block w-full rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                            type="button"
+                          >
+                            <span className="sr-only">{rowLabel(entry)}: </span>
+                            {column.cell(entry)}
+                          </button>
+                        ) : (
+                          column.cell(entry)
+                        )}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+            </TableBody>
+          </Table>
+        </div>
+
+        {!loading && error && rows.length === 0 && (
+          <Empty className="border-0 py-16">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <CircleAlert aria-hidden="true" />
+              </EmptyMedia>
+              <EmptyTitle>Entries could not be loaded</EmptyTitle>
+              <EmptyDescription>{error.message}</EmptyDescription>
+            </EmptyHeader>
+            <Button onClick={onRetry} variant="outline">
+              Try again
+            </Button>
+          </Empty>
+        )}
+
+        {!loading && !error && rows.length === 0 && (
+          <Empty className="border-0 py-16">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <Inbox aria-hidden="true" />
+              </EmptyMedia>
+              <EmptyTitle>{emptyTitle}</EmptyTitle>
+              <EmptyDescription>{emptyDescription}</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        )}
+
+        {rows.length > 0 && (
+          <div className="flex items-center justify-between border-t px-3 py-2">
+            <span className="text-xs text-muted-foreground">
+              {rows.length.toLocaleString()} loaded
+            </span>
+            {hasMore && (
+              <Button loading={loadingMore} onClick={onLoadMore} size="sm" variant="ghost">
+                <ArrowDown aria-hidden="true" />
+                Load older
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {error && rows.length > 0 && (
+        <div className="flex items-center justify-between rounded-lg border bg-destructive/5 px-3 py-2 text-sm text-destructive-foreground">
+          <span>{error.message}</span>
+          <Button onClick={onRetry} size="sm" variant="ghost">
+            Retry
+          </Button>
+        </div>
+      )}
+    </div>
+  )
+}

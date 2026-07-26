@@ -1,17 +1,47 @@
-/**
- * Placeholder shell. The real dashboard — router, API client, entry index and detail
- * screens — is built in Phase 4 (P4.2, P4.3). Phase 0 ships this so the Vite + Tailwind
- * pipeline is exercised end to end and `packages/periscope/build/dashboard` exists.
- */
+import { lazy, Suspense } from 'react'
+import { HashRouter, Navigate, Route, Routes } from 'react-router-dom'
+
+import { AppShell } from '@/components/app-shell'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { Skeleton } from '@/components/ui/skeleton'
+
+const ExceptionsPage = lazy(() =>
+  import('@/pages/exceptions-page').then((module) => ({ default: module.ExceptionsPage }))
+)
+const QueriesPage = lazy(() =>
+  import('@/pages/queries-page').then((module) => ({ default: module.QueriesPage }))
+)
+const RequestBatchPage = lazy(() =>
+  import('@/pages/request-batch-page').then((module) => ({ default: module.RequestBatchPage }))
+)
+const RequestsPage = lazy(() =>
+  import('@/pages/requests-page').then((module) => ({ default: module.RequestsPage }))
+)
+
 export function App() {
   return (
-    <main className="min-h-screen bg-zinc-950 text-zinc-100">
-      <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-3 px-6">
-        <h1 className="font-mono text-3xl font-semibold tracking-tight">periscope</h1>
-        <p className="text-sm text-zinc-400">
-          Build pipeline is live. The dashboard interface ships in Phase 4.
-        </p>
-      </div>
-    </main>
+    <HashRouter>
+      <TooltipProvider>
+        <Suspense
+          fallback={
+            <div className="grid gap-3" role="status" aria-label="Loading dashboard">
+              <Skeleton className="h-8 w-48" />
+              <Skeleton className="h-72 w-full" />
+            </div>
+          }
+        >
+        <Routes>
+          <Route element={<AppShell />}>
+            <Route element={<Navigate replace to="/requests" />} index />
+            <Route element={<RequestsPage />} path="requests" />
+            <Route element={<RequestBatchPage />} path="requests/:batchId" />
+            <Route element={<QueriesPage />} path="queries" />
+            <Route element={<ExceptionsPage />} path="exceptions" />
+            <Route element={<Navigate replace to="/requests" />} path="*" />
+          </Route>
+        </Routes>
+        </Suspense>
+      </TooltipProvider>
+    </HashRouter>
   )
 }

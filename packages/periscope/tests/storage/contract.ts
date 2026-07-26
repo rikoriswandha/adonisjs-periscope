@@ -631,6 +631,88 @@ export function runStoreContractTests(driverName: string, createStore: StoreFact
     })
 
     /*
+     * exception groups
+     */
+
+    test('group exception families by their latest occurrence with cursor pagination', async ({
+      assert,
+    }) => {
+      const firstAlpha = makeStoredEntry({
+        type: EntryType.EXCEPTION,
+        familyHash: 'alpha',
+      })
+      const beta = makeStoredEntry({
+        type: EntryType.EXCEPTION,
+        familyHash: 'beta',
+      })
+      const latestAlpha = makeStoredEntry({
+        type: EntryType.EXCEPTION,
+        familyHash: 'alpha',
+      })
+
+      await store.save([
+        firstAlpha,
+        makeStoredEntry({ type: EntryType.QUERY, familyHash: 'alpha' }),
+        beta,
+        makeStoredEntry({ type: EntryType.EXCEPTION, familyHash: null }),
+        latestAlpha,
+      ])
+
+      const firstPage = await store.exceptionGroups({ limit: 1 })
+
+      assert.lengthOf(firstPage.data, 1)
+      assert.equal(firstPage.data[0].familyHash, 'alpha')
+      assert.equal(firstPage.data[0].latest.uuid, latestAlpha.uuid)
+      assert.equal(firstPage.data[0].count, 2)
+      assert.deepEqual(firstPage.data[0].lastSeen, latestAlpha.createdAt)
+      assert.isNotNull(firstPage.nextCursor)
+
+      const secondPage = await store.exceptionGroups({
+        limit: 1,
+        cursor: firstPage.nextCursor ?? undefined,
+      })
+
+      assert.lengthOf(secondPage.data, 1)
+      assert.equal(secondPage.data[0].familyHash, 'beta')
+      assert.equal(secondPage.data[0].latest.uuid, beta.uuid)
+      assert.equal(secondPage.data[0].count, 1)
+      assert.isNull(secondPage.nextCursor)
+    })
+
+    test('filter exception groups by exact tag before aggregating', async ({ assert }) => {
+      const taggedAlpha = makeStoredEntry({
+        type: EntryType.EXCEPTION,
+        familyHash: 'alpha',
+        tags: ['tenant:42'],
+      })
+      const untaggedLatestAlpha = makeStoredEntry({
+        type: EntryType.EXCEPTION,
+        familyHash: 'alpha',
+        tags: ['tenant:7'],
+      })
+      const taggedBeta = makeStoredEntry({
+        type: EntryType.EXCEPTION,
+        familyHash: 'beta',
+        tags: ['tenant:42'],
+      })
+
+      await store.save([taggedAlpha, untaggedLatestAlpha, taggedBeta])
+
+      const page = await store.exceptionGroups({ tag: 'tenant:42' })
+
+      assert.deepEqual(
+        page.data.map((exceptionGroup) => exceptionGroup.familyHash),
+        ['beta', 'alpha']
+      )
+      assert.equal(page.data[1].latest.uuid, taggedAlpha.uuid)
+      assert.equal(page.data[1].count, 1)
+      assert.deepEqual(await store.exceptionGroups({ tag: 'tenant' }), {
+        data: [],
+        nextCursor: null,
+      })
+    })
+
+    /*
      * prune
      */
 

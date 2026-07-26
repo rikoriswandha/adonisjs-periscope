@@ -13,6 +13,7 @@ import type { StoreContext } from '../src/storage/resolve.ts'
 import { PeriscopeConfigError } from '../src/errors.ts'
 import { MemoryStore } from '../src/storage/memory_store.ts'
 import { isRecordingEnabled } from '../src/define_config.ts'
+import { registerDashboardRoutes } from '../src/http/routes.ts'
 import { safeguardAsync, setInternalLogger } from '../src/safeguard.ts'
 import { WatcherRegistry } from '../src/watchers/registry.ts'
 import type { PeriscopeStore, ResolvedPeriscopeConfig } from '../src/types.ts'
@@ -59,6 +60,8 @@ export default class PeriscopeProvider {
    * the application terminates is a leak in production and cross-talk between suites in tests.
    */
   #watchers: WatcherRegistry | null = null
+
+  #routesRegistered = false
 
   constructor(protected app: ApplicationService) {}
 
@@ -120,6 +123,32 @@ export default class PeriscopeProvider {
     }
 
     return context
+  }
+
+  /**
+   * Register dashboard routes only in the HTTP process. Console, test-runner and REPL processes
+   * must not resolve the router or expose an HTTP surface.
+   */
+  async start() {
+    if (this.app.getEnvironment() !== 'web' || this.#routesRegistered) {
+      return
+    }
+
+    const config = this.#resolveConfig()
+    const recorder = await this.app.container.make(Recorder)
+    const router = await this.app.container.make('router')
+
+    registerDashboardRoutes({
+      router,
+      recorder,
+      config,
+      environment: {
+        nodeEnv: this.app.nodeEnvironment,
+        periscopeEnabled: () => process.env.PERISCOPE_ENABLED,
+      },
+    })
+
+    this.#routesRegistered = true
   }
 
   /**

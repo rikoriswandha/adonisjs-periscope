@@ -33,6 +33,7 @@ import { PeriscopeConfigError } from './errors.ts'
 import { DEFAULT_REDACT_HEADERS, DEFAULT_REDACT_KEYS } from './recorder/redactor.ts'
 import { ENTRY_TYPES, EntryType } from './types.ts'
 import type {
+  DashboardAuthorize,
   CaptureMode,
   FilterHook,
   LogLevelName,
@@ -132,6 +133,8 @@ const CAPTURE_MODES: readonly CaptureMode[] = ['dev', 'always', 'never']
  * (§0, invariant 2 — browsing recordings must not create recordings).
  */
 const DEFAULT_DASHBOARD_PATH = '/periscope'
+const DEFAULT_N_PLUS_ONE_THRESHOLD = 5
+export const DEFAULT_DASHBOARD_AUTHORIZE: DashboardAuthorize = () => true
 
 /**
  * Recognised values of `PERISCOPE_ENABLED`, compared trimmed and lower-cased. Anything else is
@@ -350,6 +353,19 @@ function readFunctionArray<T>(path: string, value: unknown, issues: string[]): T
   }
 
   return valid ? (items as readonly T[]).slice() : undefined
+}
+
+function readFunction<T>(path: string, value: unknown, issues: string[]): T | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+
+  if (typeof value !== 'function') {
+    issues.push(`${path}: must be a function; got ${describe(value)}`)
+    return undefined
+  }
+
+  return value as T
 }
 
 /**
@@ -613,8 +629,24 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
 
   const watchers = resolveWatchers(input, issues)
 
-  const dashboard = readBlock(input, 'dashboard', ['path'], issues)
+  const dashboard = readBlock(
+    input,
+    'dashboard',
+    ['path', 'authorize', 'nPlusOneThreshold'],
+    issues
+  )
   const dashboardPath = readNonEmptyString('dashboard.path', dashboard.path, issues)
+  const dashboardAuthorize = readFunction<DashboardAuthorize>(
+    'dashboard.authorize',
+    dashboard.authorize,
+    issues
+  )
+  const nPlusOneThreshold = readInteger(
+    'dashboard.nPlusOneThreshold',
+    dashboard.nPlusOneThreshold,
+    1,
+    issues
+  )
 
   if (dashboardPath !== undefined && !dashboardPath.startsWith('/')) {
     issues.push(`dashboard.path: must start with a slash; got ${describe(dashboardPath)}`)
@@ -659,6 +691,8 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
     watchers,
     dashboard: {
       path: normalisePath(dashboardPath ?? DEFAULT_DASHBOARD_PATH),
+      authorize: dashboardAuthorize ?? DEFAULT_DASHBOARD_AUTHORIZE,
+      nPlusOneThreshold: nPlusOneThreshold ?? DEFAULT_N_PLUS_ONE_THRESHOLD,
     },
   }
 }

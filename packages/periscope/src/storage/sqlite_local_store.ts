@@ -16,6 +16,8 @@ import { EntryType } from '../types.ts'
 import type {
   EntryQuery,
   EntryTypeCounts,
+  ExceptionGroup,
+  ExceptionGroupQuery,
   FlagOptions,
   Paginated,
   PeriscopeStore,
@@ -23,6 +25,7 @@ import type {
   StoredEntry,
 } from '../types.ts'
 import { encodeCursor, parseCursor, resolvePageSize } from './pagination.ts'
+import { aggregateExceptionGroups } from './exception_groups.ts'
 import {
   ENTRIES_TABLE,
   FLAGS_TABLE,
@@ -547,6 +550,24 @@ export class SqliteLocalStore implements PeriscopeStore {
     }
 
     return counts
+  }
+
+  async exceptionGroups(query: ExceptionGroupQuery = {}): Promise<Paginated<ExceptionGroup>> {
+    const conditions = ['type = ?', 'family_hash is not null']
+    const values: Binding[] = [EntryType.EXCEPTION]
+
+    if (query.tag !== undefined) {
+      conditions.push(
+        `exists (select 1 from ${TAGS_TABLE} where ${TAGS_TABLE}.entry_uuid = ${ENTRIES_TABLE}.uuid and ${TAGS_TABLE}.tag = ?)`
+      )
+      values.push(query.tag)
+    }
+
+    const rows = this.#prepare<EntryRow>(
+      `select ${ENTRY_COLUMNS} from ${ENTRIES_TABLE} where ${conditions.join(' and ')}`
+    ).all(...values)
+
+    return aggregateExceptionGroups(rows.map(toStoredEntry), query)
   }
 
   async prune(options: PruneOptions): Promise<number> {

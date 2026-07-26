@@ -14,6 +14,8 @@ import type {
   BatchKind,
   EntryContent,
   EntryQuery,
+  ExceptionGroup,
+  ExceptionGroupQuery,
   EntryTypeCounts,
   FilterHook,
   FlagOptions,
@@ -49,6 +51,7 @@ const storeDouble: PeriscopeStore = {
   list: async () => ({ data: [], nextCursor: null }),
   batch: async () => [],
   counts: async () => ({}),
+  exceptionGroups: async () => ({ data: [], nextCursor: null }),
   prune: async () => 0,
   trim: async () => 0,
   clear: async () => {},
@@ -204,6 +207,7 @@ test.group('Types | PeriscopeStore', () => {
       'close',
       'counts',
       'deleteFlag',
+      'exceptionGroups',
       'find',
       'getFlag',
       'list',
@@ -222,6 +226,7 @@ test.group('Types | PeriscopeStore', () => {
       | 'list'
       | 'batch'
       | 'counts'
+      | 'exceptionGroups'
       | 'prune'
       | 'trim'
       | 'clear'
@@ -240,6 +245,7 @@ test.group('Types | PeriscopeStore', () => {
     assert.deepEqual(await storeDouble.list(), { data: [], nextCursor: null })
     assert.deepEqual(await storeDouble.batch('batch-1'), [])
     assert.deepEqual(await storeDouble.counts(), {})
+    assert.deepEqual(await storeDouble.exceptionGroups(), { data: [], nextCursor: null })
 
     expectTypeOf<PeriscopeStore['save']>().toEqualTypeOf<
       (entries: StoredEntry[]) => Promise<void>
@@ -254,6 +260,9 @@ test.group('Types | PeriscopeStore', () => {
       (batchId: string) => Promise<StoredEntry[]>
     >()
     expectTypeOf<PeriscopeStore['counts']>().toEqualTypeOf<() => Promise<EntryTypeCounts>>()
+    expectTypeOf<PeriscopeStore['exceptionGroups']>().toEqualTypeOf<
+      (query?: ExceptionGroupQuery) => Promise<Paginated<ExceptionGroup>>
+    >()
   })
 
   test('pin the retention signatures', async ({ assert, expectTypeOf }) => {
@@ -423,7 +432,7 @@ test.group('Types | configuration', () => {
         log: { enabled: true, level: 'warn' },
         event: { enabled: true, ignore: [] },
       },
-      dashboard: { path: '/periscope' },
+      dashboard: { path: '/periscope', authorize: () => true, nPlusOneThreshold: 5 },
     }
 
     assert.deepEqual(Object.keys(resolved).sort(), [

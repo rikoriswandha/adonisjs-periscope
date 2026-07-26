@@ -26,6 +26,11 @@ export type CreateAppOptions = {
   appRoot?: URL
 
   /**
+   * Adonis process environment. Defaults to the factory's `test` environment.
+   */
+  environment?: 'web' | 'console' | 'test' | 'repl' | 'unknown'
+
+  /**
    * Config values seeded into `app.config`, merged over the defaults. Watcher tests use this
    * to seed a `periscope` config key.
    */
@@ -52,7 +57,13 @@ export type TestApp = {
  * When called from inside a test, the application is terminated during test cleanup.
  */
 export async function createApp(options: CreateAppOptions = {}): Promise<TestApp> {
-  const application = new AppFactory().create(options.appRoot ?? BASE_URL, () => {})
+  const factory = new AppFactory()
+
+  if (options.environment !== undefined) {
+    factory.merge({ environment: options.environment })
+  }
+
+  const application = factory.create(options.appRoot ?? BASE_URL, () => {})
   const app = application as ApplicationService
 
   app.rcContents({ providers: [], ...options.rcContents })

@@ -22,6 +22,8 @@
  *    watchers land later.
  */
 
+import type { HttpContext } from '@adonisjs/core/http'
+
 import type { IncomingEntry } from './entry.ts'
 
 /**
@@ -190,6 +192,30 @@ export type Paginated<T> = {
 }
 
 /**
+ * One exception family as rendered by the dashboard. `latest` is the newest occurrence and
+ * `lastSeen` mirrors its creation time for inexpensive list rendering.
+ */
+export type ExceptionGroup = {
+  familyHash: string
+  latest: StoredEntry
+  count: number
+  lastSeen: Date
+}
+
+/**
+ * Cursor pagination accepted by the exception-family aggregation.
+ */
+export type ExceptionGroupQuery = {
+  /**
+   * Exact tag match. Only matching exception occurrences contribute to a family.
+   */
+  tag?: string
+
+  cursor?: string
+  limit?: number
+}
+
+/**
  * Options accepted by {@link PeriscopeStore.prune}.
  */
 export type PruneOptions = {
@@ -257,6 +283,11 @@ export interface PeriscopeStore {
    * entries may be omitted.
    */
   counts(): Promise<EntryTypeCounts>
+
+  /**
+   * Exception entries grouped by family hash, ordered by their newest occurrence.
+   */
+  exceptionGroups(query?: ExceptionGroupQuery): Promise<Paginated<ExceptionGroup>>
 
   /**
    * Delete entries older than `before`. Resolves the number of entries deleted.
@@ -533,6 +564,35 @@ export type ResolvedWatchersConfig = {
 export type EntryCapsConfig = Partial<Record<EntryType | 'default', number>>
 
 /**
+ * Application authorization hook for the dashboard. Returning `false` produces a 403.
+ */
+export type DashboardAuthorize = (ctx: HttpContext) => boolean | Promise<boolean>
+
+export type DashboardConfig = {
+  /**
+   * URL prefix from which the dashboard is served. Defaults to `/periscope`.
+   */
+  path?: string
+
+  /**
+   * Application-defined access policy. Defaults to allowing access.
+   */
+  authorize?: DashboardAuthorize
+
+  /**
+   * Number of equal query shapes in a batch at which the dashboard marks an N+1 candidate.
+   * Defaults to 5.
+   */
+  nPlusOneThreshold?: number
+}
+
+export type ResolvedDashboardConfig = {
+  path: string
+  authorize: DashboardAuthorize
+  nPlusOneThreshold: number
+}
+
+/**
  * `config/periscope.ts` as an application writes it: every key optional, deep-merged over the
  * defaults by {@link defineConfig}.
  *
@@ -633,14 +693,7 @@ export type PeriscopeConfig = {
    */
   watchers?: WatchersConfig
 
-  dashboard?: {
-    /**
-     * URL prefix the dashboard is served from. Periscope refuses to record its own dashboard
-     * traffic, so this is load-bearing from P3 onwards even though the dashboard itself lands
-     * in P4. Defaults to `/periscope`.
-     */
-    path?: string
-  }
+  dashboard?: DashboardConfig
 }
 
 /**
@@ -675,7 +728,5 @@ export type ResolvedPeriscopeConfig = {
     tag: TagHook[]
   }
   watchers: ResolvedWatchersConfig
-  dashboard: {
-    path: string
-  }
+  dashboard: ResolvedDashboardConfig
 }

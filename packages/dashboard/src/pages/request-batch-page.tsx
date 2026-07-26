@@ -1,0 +1,421 @@
+import {
+  ArrowLeft,
+  Bug,
+  CircleAlert,
+  Clock3,
+  Database,
+  FileJson,
+  Globe2,
+  Inbox,
+  Network,
+  UserRound,
+} from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
+
+import { DurationBadge } from '@/components/duration-badge'
+import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
+import { JsonTree } from '@/components/json-tree'
+import { StatusBadge } from '@/components/status-badge'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsList, TabsPanel, TabsTab } from '@/components/ui/tabs'
+import { api } from '@/lib/api'
+import {
+  asNumber,
+  asString,
+  formatBytes,
+  formatDateTime,
+  sequenceCompareAscending,
+  truncate,
+} from '@/lib/format'
+import type { RequestContent, StoredEntry } from '@/types'
+
+function entrySummary(entry: StoredEntry): string {
+  if (entry.type === 'request') {
+    const content = entry.content as RequestContent
+    return `${content.method} ${content.url}`
+  }
+  if (entry.type === 'query') return truncate(asString(entry.content.sql, 'Database query'), 120)
+  if (entry.type === 'exception') return asString(entry.content.message, 'Exception')
+  return asString(entry.content.message, `${entry.type.replace('_', ' ')} entry`)
+}
+
+function TimelineIcon({ type }: { type: StoredEntry['type'] }) {
+  if (type === 'query') return <Database aria-hidden="true" />
+  if (type === 'exception') return <Bug aria-hidden="true" />
+  if (type === 'request') return <Network aria-hidden="true" />
+  return <FileJson aria-hidden="true" />
+}
+
+function BatchTimeline({
+  timeline,
+  onSelect,
+}: {
+  timeline: StoredEntry[]
+  onSelect: (entry: StoredEntry) => void
+}) {
+  return (
+    <section aria-label="Batch timeline" className="overflow-hidden rounded-lg border bg-background">
+      <ol className="divide-y">
+        {timeline.map((entry, index) => {
+          const duration = asNumber(entry.content.durationMs)
+          return (
+            <li key={entry.uuid}>
+              <button
+                className="grid w-full grid-cols-[2.25rem_minmax(0,1fr)] gap-3 px-4 py-3 text-left outline-none transition-colors hover:bg-accent/45 focus-visible:bg-accent/55 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:grid-cols-[2.25rem_7rem_minmax(0,1fr)_auto] sm:items-center"
+                onClick={() => onSelect(entry)}
+                type="button"
+              >
+                <span className="grid size-8 place-items-center rounded-md border bg-muted text-muted-foreground [&_svg]:size-4">
+                  <TimelineIcon type={entry.type} />
+                </span>
+                <span className="hidden font-mono text-xs text-muted-foreground sm:block">
+                  +{index.toString().padStart(2, '0')} · {entry.type.replace('_', ' ')}
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium">{entrySummary(entry)}</span>
+                  <span className="mt-0.5 block font-mono text-2xs text-muted-foreground sm:hidden">
+                    {entry.type.replace('_', ' ')}
+                  </span>
+                </span>
+                <span className="col-start-2 flex items-center gap-2 sm:col-auto">
+                  {duration !== undefined && <DurationBadge value={duration} />}
+                  {entry.type === 'exception' && (
+                    <Badge variant="destructive">exception</Badge>
+                  )}
+                </span>
+              </button>
+            </li>
+          )
+        })}
+      </ol>
+    </section>
+  )
+}
+
+export function RequestBatchPage() {
+  const { batchId = '' } = useParams()
+  const [searchParams] = useSearchParams()
+  const tag = searchParams.get('tag')
+  const [entries, setEntries] = useState<StoredEntry[]>([])
+  const [selected, setSelected] = useState<StoredEntry | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<Error | null>(null)
+
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      setLoading(true)
+      setError(null)
+      try {
+        setEntries(await api.getBatch(batchId, signal))
+      } catch (cause) {
+        if (!signal?.aborted) {
+          setError(cause instanceof Error ? cause : new Error('Unable to load batch'))
+        }
+      } finally {
+        if (!signal?.aborted) setLoading(false)
+      }
+    },
+    [batchId]
+  )
+
+  useEffect(() => {
+    const controller = new AbortController()
+    void load(controller.signal)
+    return () => controller.abort()
+  }, [load])
+
+  const timeline = useMemo(
+    () => [...entries].sort((left, right) => sequenceCompareAscending(left.sequence, right.sequence)),
+    [entries]
+  )
+  const requestEntry = entries.find((entry) => entry.type === 'request')
+  const request = requestEntry?.content as RequestContent | undefined
+  const backTarget = `/requests${tag ? `?tag=${encodeURIComponent(tag)}` : ''}`
+
+  if (loading) {
+    return (
+      <div className="space-y-5" aria-label="Loading batch">
+        <Skeleton className="h-8 w-52" />
+        <Skeleton className="h-44 w-full" />
+        <Skeleton className="h-80 w-full" />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <Empty className="min-h-96">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <CircleAlert aria-hidden="true" />
+          </EmptyMedia>
+          <EmptyTitle>Batch could not be loaded</EmptyTitle>
+          <EmptyDescription>{error.message}</EmptyDescription>
+        </EmptyHeader>
+        <div className="flex gap-2">
+          <Button render={<Link to={backTarget} />} variant="ghost">
+            Back to requests
+          </Button>
+          <Button onClick={() => void load()} variant="outline">
+            Try again
+          </Button>
+        </div>
+      </Empty>
+    )
+  }
+
+  if (entries.length === 0) {
+    return (
+      <Empty className="min-h-96">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <Inbox aria-hidden="true" />
+          </EmptyMedia>
+          <EmptyTitle>Batch is empty</EmptyTitle>
+          <EmptyDescription>
+            Its recorded entries may have expired under the retention policy.
+          </EmptyDescription>
+        </EmptyHeader>
+        <Button render={<Link to={backTarget} />} variant="outline">
+          Back to requests
+        </Button>
+      </Empty>
+    )
+  }
+
+  if (!requestEntry || !request) {
+    const firstEntry = timeline[0]!
+    const indexPath =
+      firstEntry.type === 'exception'
+        ? '/exceptions'
+        : firstEntry.type === 'query'
+          ? '/queries'
+          : '/requests'
+    const indexLabel =
+      firstEntry.type === 'exception'
+        ? 'exceptions'
+        : firstEntry.type === 'query'
+          ? 'queries'
+          : 'requests'
+    const genericBackTarget = `${indexPath}${tag ? `?tag=${encodeURIComponent(tag)}` : ''}`
+    const entryTypes = [...new Set(entries.map((entry) => entry.type.replace('_', ' ')))]
+
+    return (
+      <div className="space-y-5">
+        <Button render={<Link to={genericBackTarget} />} size="sm" variant="ghost">
+          <ArrowLeft aria-hidden="true" />
+          Back to {indexLabel}
+        </Button>
+
+        <section className="overflow-hidden rounded-lg border bg-background">
+          <div className="flex flex-col gap-4 border-b p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
+            <div className="min-w-0">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <Badge variant="secondary">ambient/process batch</Badge>
+                {entryTypes.map((type) => (
+                  <Badge className="font-mono" key={type} variant="outline">
+                    {type}
+                  </Badge>
+                ))}
+              </div>
+              <h2 className="break-all font-mono text-base font-semibold leading-6 sm:text-lg">
+                {entrySummary(firstEntry)}
+              </h2>
+              <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+                This batch was recorded outside an HTTP request lifecycle. Its entries remain
+                available in sequence order.
+              </p>
+            </div>
+            <div className="shrink-0 text-left sm:text-right">
+              <div className="text-xs text-muted-foreground">Recorded</div>
+              <time className="text-sm font-medium" dateTime={firstEntry.createdAt}>
+                {formatDateTime(firstEntry.createdAt)}
+              </time>
+            </div>
+          </div>
+          <dl className="grid divide-y bg-muted/25 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+            <div className="p-4">
+              <dt className="text-xs text-muted-foreground">Batch ID</dt>
+              <dd className="mt-1 truncate font-mono text-xs font-medium" title={firstEntry.batchId}>
+                {firstEntry.batchId}
+              </dd>
+            </div>
+            <div className="p-4">
+              <dt className="text-xs text-muted-foreground">Entries</dt>
+              <dd className="mt-1 font-mono text-sm font-medium">{entries.length.toLocaleString()}</dd>
+            </div>
+            <div className="p-4">
+              <dt className="text-xs text-muted-foreground">Entry types</dt>
+              <dd className="mt-1 text-sm font-medium">{entryTypes.join(', ')}</dd>
+            </div>
+          </dl>
+        </section>
+
+        <BatchTimeline onSelect={setSelected} timeline={timeline} />
+
+        <EntryDetailDrawer
+          description={selected ? formatDateTime(selected.createdAt) : 'Timeline entry'}
+          meta={
+            selected && (
+              <>
+                <Badge variant="secondary">{selected.type.replace('_', ' ')}</Badge>
+                {asNumber(selected.content.durationMs) !== undefined && (
+                  <DurationBadge value={asNumber(selected.content.durationMs)} />
+                )}
+              </>
+            )
+          }
+          onOpenChange={(open) => !open && setSelected(null)}
+          open={selected !== null}
+          title={selected ? entrySummary(selected) : 'Timeline entry'}
+        >
+          {selected && <JsonTree label="Entry content" value={selected.content} />}
+        </EntryDetailDrawer>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-5">
+      <Button render={<Link to={backTarget} />} size="sm" variant="ghost">
+        <ArrowLeft aria-hidden="true" />
+        All requests
+      </Button>
+
+      <section className="overflow-hidden rounded-lg border bg-background">
+        <div className="flex flex-col gap-4 border-b p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
+          <div className="min-w-0">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <Badge className="font-mono" variant="outline">
+                {request.method}
+              </Badge>
+              <StatusBadge status={request.status} />
+              <DurationBadge value={request.durationMs} />
+              {request.clientDisconnected && <Badge variant="warning">client disconnected</Badge>}
+            </div>
+            <h2 className="break-all font-mono text-base font-semibold leading-6 sm:text-lg">
+              {request.url}
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {request.routePattern ?? 'Unmatched route'}
+              {request.routeName ? ` · ${request.routeName}` : ''}
+            </p>
+          </div>
+          <div className="shrink-0 text-left sm:text-right">
+            <div className="text-xs text-muted-foreground">Recorded</div>
+            <time className="text-sm font-medium" dateTime={requestEntry.createdAt}>
+              {formatDateTime(requestEntry.createdAt)}
+            </time>
+          </div>
+        </div>
+        <dl className="grid divide-y bg-muted/25 sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-4">
+          <div className="p-4">
+            <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Globe2 aria-hidden="true" className="size-3.5" /> Client
+            </dt>
+            <dd className="mt-1 break-all text-sm font-medium">{request.ip}</dd>
+          </div>
+          <div className="p-4">
+            <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <UserRound aria-hidden="true" className="size-3.5" /> User
+            </dt>
+            <dd className="mt-1 truncate text-sm font-medium">
+              {request.user?.email ?? request.user?.id ?? 'Guest'}
+            </dd>
+          </div>
+          <div className="p-4">
+            <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Clock3 aria-hidden="true" className="size-3.5" /> Memory delta
+            </dt>
+            <dd className="mt-1 font-mono text-sm font-medium">
+              {formatBytes(request.memoryDeltaBytes)}
+            </dd>
+          </div>
+          <div className="p-4">
+            <dt className="text-xs text-muted-foreground">Batch ID</dt>
+            <dd className="mt-1 truncate font-mono text-xs font-medium" title={requestEntry.batchId}>
+              {requestEntry.batchId}
+            </dd>
+          </div>
+        </dl>
+      </section>
+
+      <Tabs defaultValue="timeline">
+        <div className="overflow-x-auto border-b">
+          <TabsList className="min-w-max" variant="underline">
+            <TabsTab value="timeline">Timeline ({timeline.length})</TabsTab>
+            <TabsTab value="headers">Headers</TabsTab>
+            <TabsTab value="payload">Payload</TabsTab>
+            <TabsTab value="response">Response</TabsTab>
+            <TabsTab value="session">Session</TabsTab>
+          </TabsList>
+        </div>
+
+        <TabsPanel className="pt-3" value="timeline">
+          <BatchTimeline onSelect={setSelected} timeline={timeline} />
+        </TabsPanel>
+
+        <TabsPanel className="pt-3" value="headers">
+          <JsonTree label="Request headers" value={request.headers} />
+        </TabsPanel>
+        <TabsPanel className="space-y-4 pt-3" value="payload">
+          <JsonTree label="Query parameters" value={request.query} />
+          <JsonTree label="Request payload" value={request.payload} />
+        </TabsPanel>
+        <TabsPanel className="space-y-4 pt-3" value="response">
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground">HTTP status</span>
+            <StatusBadge status={request.status} />
+          </div>
+          <JsonTree label="Response body" value={request.response ?? null} />
+        </TabsPanel>
+        <TabsPanel className="pt-3" value="session">
+          {request.session === undefined ? (
+            <Empty className="min-h-64 rounded-lg border">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <UserRound aria-hidden="true" />
+                </EmptyMedia>
+                <EmptyTitle>No session snapshot</EmptyTitle>
+                <EmptyDescription>
+                  This request did not expose session data, or session capture is disabled.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            <JsonTree label="Session snapshot" value={request.session} />
+          )}
+        </TabsPanel>
+      </Tabs>
+
+      <EntryDetailDrawer
+        description={selected ? formatDateTime(selected.createdAt) : 'Timeline entry'}
+        meta={
+          selected && (
+            <>
+              <Badge variant="secondary">{selected.type.replace('_', ' ')}</Badge>
+              {asNumber(selected.content.durationMs) !== undefined && (
+                <DurationBadge value={asNumber(selected.content.durationMs)} />
+              )}
+            </>
+          )
+        }
+        onOpenChange={(open) => !open && setSelected(null)}
+        open={selected !== null}
+        title={selected ? entrySummary(selected) : 'Timeline entry'}
+      >
+        {selected && <JsonTree label="Entry content" value={selected.content} />}
+      </EntryDetailDrawer>
+    </div>
+  )
+}

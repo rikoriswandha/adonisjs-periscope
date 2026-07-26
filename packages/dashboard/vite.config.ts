@@ -13,6 +13,11 @@ const OUT_DIR = fileURLToPath(new URL('../periscope/build/dashboard', import.met
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
 
   /**
    * `config.dashboard.path` is user-configurable, so the SPA cannot bake in a mount point.

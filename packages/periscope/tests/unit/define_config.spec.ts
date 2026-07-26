@@ -7,7 +7,11 @@
 
 import { test } from '@japa/runner'
 
-import { defineConfig, isRecordingEnabled } from '../../src/define_config.ts'
+import {
+  DEFAULT_DASHBOARD_AUTHORIZE,
+  defineConfig,
+  isRecordingEnabled,
+} from '../../src/define_config.ts'
 import { PeriscopeConfigError } from '../../src/errors.ts'
 import { DEFAULT_REDACT_HEADERS, DEFAULT_REDACT_KEYS } from '../../src/recorder/redactor.ts'
 import { ENTRY_TYPES, EntryType } from '../../src/types.ts'
@@ -86,6 +90,8 @@ const DEFAULTS: ResolvedPeriscopeConfig = {
   },
   dashboard: {
     path: '/periscope',
+    authorize: DEFAULT_DASHBOARD_AUTHORIZE,
+    nPlusOneThreshold: 5,
   },
 }
 
@@ -181,6 +187,17 @@ test.group('defineConfig | merging', () => {
   test('normalise a trailing slash from the dashboard path but preserve the root', ({ assert }) => {
     assert.equal(defineConfig({ dashboard: { path: '/periscope/' } }).dashboard.path, '/periscope')
     assert.equal(defineConfig({ dashboard: { path: '/' } }).dashboard.path, '/')
+  })
+
+  test('merge dashboard authorization and N+1 threshold over defaults', async ({ assert }) => {
+    const authorize = async () => false
+    const config = defineConfig({
+      dashboard: { authorize, nPlusOneThreshold: 9 },
+    })
+
+    assert.strictEqual(config.dashboard.authorize, authorize)
+    assert.equal(config.dashboard.nPlusOneThreshold, 9)
+    assert.isFalse(await config.dashboard.authorize({} as never))
   })
 
   test('leave untouched blocks at their defaults', ({ assert }) => {
@@ -473,6 +490,17 @@ test.group('defineConfig | validation', () => {
 
   test('reject a dashboard path without a leading slash', ({ assert }) => {
     assert.include(rejectionOf({ dashboard: { path: 'periscope' } }).paths, 'dashboard.path')
+  })
+
+  test('reject a dashboard authorization hook that is not a function', ({ assert }) => {
+    assert.include(rejectionOf({ dashboard: { authorize: true } }).paths, 'dashboard.authorize')
+  })
+
+  test('reject a non-positive dashboard N+1 threshold', ({ assert }) => {
+    assert.include(
+      rejectionOf({ dashboard: { nPlusOneThreshold: 0 } }).paths,
+      'dashboard.nPlusOneThreshold'
+    )
   })
 
   test('reject a config that is not an object at all', ({ assert }) => {

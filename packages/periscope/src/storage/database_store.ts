@@ -35,6 +35,7 @@
 
 import { EntryType } from '../types.ts'
 import { encodeCursor, parseCursor, resolvePageSize } from './pagination.ts'
+import { aggregateExceptionGroups } from './exception_groups.ts'
 import {
   ENTRIES_TABLE,
   FLAGS_TABLE,
@@ -49,6 +50,8 @@ import {
 import type { EntryRow } from './sql.ts'
 import type {
   EntryQuery,
+  ExceptionGroup,
+  ExceptionGroupQuery,
   EntryTypeCounts,
   FlagOptions,
   Paginated,
@@ -313,6 +316,19 @@ export class DatabaseStore implements PeriscopeStore {
     }
 
     return counts
+  }
+
+  async exceptionGroups(query: ExceptionGroupQuery = {}): Promise<Paginated<ExceptionGroup>> {
+    const builder = this.#client()
+      .query<EntryRow>()
+      .from(ENTRIES_TABLE)
+      .where('type', EntryType.EXCEPTION)
+      .whereNotNull('family_hash')
+
+    this.#applyFilters(builder, query, null)
+
+    const rows = await builder
+    return aggregateExceptionGroups(rows.map(toStoredEntry), query)
   }
 
   async prune(options: PruneOptions): Promise<number> {
