@@ -219,14 +219,13 @@ function makeConfig(overrides: ConfigOverrides = {}): ResolvedPeriscopeConfig {
 }
 
 /**
- * Yield to the macrotask queue, so the fire-and-forget flag refresh started by `recorder.paused`
- * has landed by the time the next assertion runs.
+ * Yield to the macrotask queue so a fire-and-forget lifecycle refresh can settle.
  */
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
 /**
  * Sleep for `ms` as a macrotask. The timer-driven tests have to let real wall time pass: the
- * ambient rotation binds `setInterval` at module load, so there is no fake-timer seam to install
+ * lifecycle timers bind `setInterval` at module load, so there is no fake-timer seam to install
  * afterwards.
  */
 function sleep(ms: number): Promise<void> {
@@ -237,9 +236,9 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Poll until `condition` holds or `timeoutMs` elapses, returning either way — the assertion that
- * follows is what decides the test. The ambient rotation is driven by a real timer, so sleeping a
- * fixed multiple of the rotation window would be flaky on a loaded machine and slow everywhere
- * else; polling also gives the "and then nothing else happens" assertions a bounded cost.
+ * follows is what decides the test. Lifecycle polling is driven by real timers, so sleeping a
+ * fixed multiple of a window would be flaky on a loaded machine and slow everywhere else;
+ * polling also gives the "and then nothing else happens" assertions a bounded cost.
  */
 async function waitUntil(condition: () => boolean, timeoutMs = 1_000): Promise<void> {
   const deadline = Date.now() + timeoutMs
@@ -1035,127 +1034,159 @@ test.group('Recorder | pause flag', (group) => {
     setInternalLogger(null)
   })
 
-  test('drop entries once the cached pause flag has been refreshed', async ({ assert }) => {
+  test('refresh while idle so the first later entry observes the pause', async ({ assert }) => {
     const store = new FakeStore()
-    await store.setFlag(Flag.PAUSED, '1')
-
-    const recorder = new Recorder({ config: makeConfig(), store })
+    const recorder = new Recorder({ config: makeConfig({ pausedFlagTtlMs: 5 }), store })
     const context = BatchScope.createContext('request')
 
-    /**
-     * The first read is answered from the cold cache — the point of the design is that nothing
-     * on the hot path awaits the store — and kicks off the refresh.
-     */
-    assert.isFalse(recorder.paused)
+    recorder.start()
 
-    await tick()
+    try {
+      await waitUntil(() => store.getFlagCalls > 0)
+      assert.isFalse(recorder.paused)
 
-    assert.isTrue(recorder.paused)
+      await store.setFlag(Flag.PAUSED, '1')
 
-    BatchScope.runWith(context, () => {
-      recorder.record(IncomingEntry.make(EntryType.LOG))
-    })
+      /**
+       * Nothing reads `recorder.paused` and no entry arrives while the flag changes. The
+       * lifecycle poll must still observe it inside one cache window.
+       */
+      await waitUntil(() => recorder.paused)
 
-    assert.lengthOf(context.buffer, 0)
+      BatchScope.runWith(context, () => {
+        recorder.record(IncomingEntry.make(EntryType.LOG))
+      })
+
+      assert.isTrue(recorder.paused)
+      assert.lengthOf(context.buffer, 0, 'the first entry after the idle period must not leak')
+    } finally {
+      await recorder.shutdown()
+    }
   })
 
-  test('read the flag at most once per ttl window', async ({ assert }) => {
+  test('start the pause poll only once and never refresh from the hot path', async ({ assert }) => {
     const store = new FakeStore()
     const recorder = new Recorder({ config: makeConfig({ pausedFlagTtlMs: 5_000 }), store })
     const context = BatchScope.createContext('request')
 
-    BatchScope.runWith(context, () => {
-      for (let index = 0; index < 50; index++) {
-        recorder.record(IncomingEntry.make(EntryType.LOG))
-      }
-    })
+    recorder.start()
+    recorder.start()
 
-    await tick()
+    try {
+      await waitUntil(() => store.getFlagCalls > 0)
 
-    assert.equal(store.getFlagCalls, 1)
-    assert.lengthOf(context.buffer, 50)
+      BatchScope.runWith(context, () => {
+        for (let index = 0; index < 50; index++) {
+          recorder.record(IncomingEntry.make(EntryType.LOG))
+        }
+      })
+
+      await tick()
+
+      assert.equal(store.getFlagCalls, 1)
+      assert.lengthOf(context.buffer, 50)
+    } finally {
+      await recorder.shutdown()
+    }
   })
 
-  test('keep the last known value when the store fails to answer', async ({ assert }) => {
+  test('keep the last known value when a scheduled store read fails', async ({ assert }) => {
     const store = new FakeStore()
     await store.setFlag(Flag.PAUSED, '1')
 
-    const recorder = new Recorder({ config: makeConfig({ pausedFlagTtlMs: 0 }), store })
+    const recorder = new Recorder({ config: makeConfig({ pausedFlagTtlMs: 5 }), store })
+    recorder.start()
 
-    assert.isFalse(recorder.paused, 'the first read is answered from the cold cache')
+    try {
+      await waitUntil(() => recorder.paused)
 
-    await tick()
+      store.getFlagFailure = new Error('the flag store is unreachable')
+      const readsBeforeFailure = store.getFlagCalls
 
-    assert.isTrue(recorder.paused)
+      await waitUntil(() => store.getFlagCalls > readsBeforeFailure)
 
-    store.getFlagFailure = new Error('the flag store is unreachable')
-
-    assert.isTrue(recorder.paused, 'this read kicks off the refresh that will fail')
-
-    await tick()
-
-    assert.isTrue(recorder.paused, 'an unreachable store must not silently flip recording back on')
+      assert.isTrue(
+        recorder.paused,
+        'an unreachable store must not silently flip recording back on'
+      )
+    } finally {
+      await recorder.shutdown()
+    }
   })
 
   test('read the flag inside a muted context', async ({ assert }) => {
     const store = new FakeStore()
     const recorder = new Recorder({ config: makeConfig(), store })
-    const context = BatchScope.createContext('request')
 
     let mutedDuringRead: boolean | undefined
-    let batchDuringRead: string | undefined
 
     store.onGetFlag = () => {
       mutedDuringRead = BatchScope.current()?.muted
-      batchDuringRead = BatchScope.current()?.batchId
     }
 
-    BatchScope.runWith(context, () => {
-      recorder.record(IncomingEntry.make(EntryType.LOG))
-    })
-
-    await tick()
-
-    assert.equal(store.getFlagCalls, 1)
-
-    /**
-     * §0, invariant 2 covers every store call, not just `save()`. The refresh is kicked off from
-     * inside `record()`, so an unmuted read would hand the driver's own query and log traffic
-     * straight back to the recorder — and attribute it to whichever host batch tripped the TTL.
-     */
-    assert.isTrue(mutedDuringRead, 'the flag read must happen inside a muted context')
-    assert.equal(batchDuringRead, context.batchId, 'muting keeps the batch it was opened under')
-  })
-
-  test('refresh the flag after the wall clock steps backwards', async ({ assert }) => {
-    const store = new FakeStore()
-    const recorder = new Recorder({ config: makeConfig({ pausedFlagTtlMs: 5 }), store })
-    const realDateNow = Date.now
+    recorder.start()
 
     try {
-      assert.isFalse(recorder.paused, 'the first read is answered from the cold cache')
-
-      await tick()
+      await waitUntil(() => store.getFlagCalls > 0)
 
       assert.equal(store.getFlagCalls, 1)
+      assert.isTrue(mutedDuringRead, 'the flag read must happen inside a muted context')
+    } finally {
+      await recorder.shutdown()
+    }
+  })
 
-      /**
-       * An NTP correction, or a container resuming with a synchronised clock: the wall clock
-       * steps an hour into the past. A TTL measured against it goes negative and stays negative
-       * for that whole hour, freezing the cached flag — which is why the TTL is measured with
-       * `performance.now()` instead.
-       */
-      Date.now = () => realDateNow() - 3_600_000
+  test('serialize slow refreshes and stop polling during shutdown', async ({ assert }) => {
+    const store = new FakeStore()
+    const recorder = new Recorder({ config: makeConfig({ pausedFlagTtlMs: 5 }), store })
+    const releases: (() => void)[] = []
+    let reads = 0
+    let activeReads = 0
+    let mostActiveReads = 0
 
+    store.getFlag = async () => {
+      reads++
+      activeReads++
+      mostActiveReads = Math.max(mostActiveReads, activeReads)
+
+      const { promise, resolve } = Promise.withResolvers<void>()
+      releases.push(resolve)
+      await promise
+
+      activeReads--
+      return null
+    }
+
+    recorder.start()
+
+    try {
+      await waitUntil(() => reads === 1)
       await sleep(20)
 
-      assert.isFalse(recorder.paused)
+      assert.equal(reads, 1, 'interval ticks must reuse an in-flight refresh')
 
-      await tick()
+      releases.shift()?.()
+      await waitUntil(() => reads === 2)
 
-      assert.equal(store.getFlagCalls, 2, 'the ttl must not be measured against the wall clock')
+      const shutdown = recorder.shutdown()
+      await sleep(20)
+
+      assert.equal(reads, 2, 'shutdown must disarm the poll before awaiting its current read')
+      assert.equal(mostActiveReads, 1)
+
+      releases.shift()?.()
+      await shutdown
+
+      const readsAfterShutdown = reads
+      await sleep(20)
+
+      assert.equal(reads, readsAfterShutdown)
     } finally {
-      Date.now = realDateNow
+      for (const release of releases.splice(0)) {
+        release()
+      }
+
+      await recorder.shutdown()
     }
   })
 })
@@ -1303,7 +1334,7 @@ test.group('Recorder | lifecycle', (group) => {
   test('arm nothing when a disabled recorder is started', async ({ assert }) => {
     const store = new FakeStore()
     const recorder = new Recorder({
-      config: makeConfig({ ambientRotationMs: 5 }),
+      config: makeConfig({ ambientRotationMs: 5, pausedFlagTtlMs: 5 }),
       store,
       enabled: false,
     })
@@ -1314,6 +1345,7 @@ test.group('Recorder | lifecycle', (group) => {
     await waitUntil(() => store.saves.length > 0, 60)
 
     assert.lengthOf(store.saves, 0, 'a disabled recorder neither buffers nor rotates')
+    assert.equal(store.getFlagCalls, 0, 'a disabled recorder never polls the pause flag')
 
     await recorder.shutdown()
 

@@ -14,6 +14,9 @@
  * extension author composes — custom watchers, custom stores, hooks.
  */
 
+export { configure } from '../configure.ts'
+export { stubsRoot } from '../stubs/main.ts'
+
 export { dump } from './dump.ts'
 export { IncomingEntry } from './entry.ts'
 export { safeguard, safeguardAsync, setInternalLogger } from './safeguard.ts'

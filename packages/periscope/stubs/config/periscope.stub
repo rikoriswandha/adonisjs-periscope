@@ -1,14 +1,14 @@
 {{{
   exports({ to: app.configPath('periscope.ts') })
 }}}
-// Add `DEFAULT_REDACT_KEYS` / `DEFAULT_REDACT_HEADERS` to this import to extend, rather than
-// replace, the redaction lists Periscope ships with — see the `redact` block below.
+// Add \`DEFAULT_REDACT_KEYS\` / \`DEFAULT_REDACT_HEADERS\` to this import to extend, rather than
+// replace, the redaction lists Periscope ships with — see the \`redact\` block below.
 import { defineConfig } from 'periscope/periscope_config'
 
 export default defineConfig({
   /**
-   * Master switch. Combined with `enabledIn` and the `PERISCOPE_ENABLED` environment variable:
-   * `PERISCOPE_ENABLED=1` forces recording on and `PERISCOPE_ENABLED=0` forces it off, whatever
+   * Master switch. Combined with \`enabledIn\` and the \`PERISCOPE_ENABLED\` environment variable:
+   * \`PERISCOPE_ENABLED=1\` forces recording on and \`PERISCOPE_ENABLED=0\` forces it off, whatever
    * this file says.
    *
    * Default: true
@@ -16,7 +16,7 @@ export default defineConfig({
   enabled: true,
 
   /**
-   * The `NODE_ENV` values Periscope is allowed to record in. Production is opt-in on purpose.
+   * The \`NODE_ENV\` values Periscope is allowed to record in. Production is opt-in on purpose.
    *
    * Default: ['development', 'test']
    */
@@ -26,23 +26,27 @@ export default defineConfig({
     /**
      * Where entries are persisted.
      *
-     * - `sqlite-local`: a SQLite file of Periscope's own under `tmp/`. No setup, nothing in your
-     *   application's database, and `rm tmp/periscope.sqlite` starts over.
-     * - `database`: your application's own Lucid connection, so entries live beside your data
-     *   and are reachable from every process that shares it. Requires `@adonisjs/lucid`, and the
+     * - \`sqlite-local\`: a SQLite file of Periscope's own under \`tmp/\`. No setup, nothing in your
+     *   application's database, and \`rm tmp/periscope.sqlite\` starts over.
+     * - \`database\`: your application's own Lucid connection, so entries live beside your data
+     *   and are reachable from every process that shares it. Requires \`@adonisjs/lucid\`, and the
      *   Periscope tables have to exist — run the shipped migration before switching.
-     * - `memory`: a ring buffer that dies with the process. Fine for tests, useless for
+     * - \`memory\`: a ring buffer that dies with the process. Fine for tests, useless for
      *   debugging the crash that restarted the server.
      *
      * Default: 'sqlite-local'
      */
-    driver: 'sqlite-local',
+    driver: '{{ storageDriver }}',
 
     /**
-     * Lucid connection name, used by the `database` driver only. Omit it to use your default
+     * Lucid connection name, used by the \`database\` driver only. Omit it to use your default
      * connection; name a dedicated one to keep debug traffic off your primary.
      */
+    {{#if connectionLiteral}}
+    connection: {{{ connectionLiteral }}},
+    {{#else}}
     // connection: 'primary',
+    {{/if}}
 
     /**
      * Hard ceiling on stored entries; the oldest are trimmed away past it.
@@ -55,10 +59,10 @@ export default defineConfig({
   recording: {
     /**
      * Per-entry-type caps applied within a single batch, so one runaway loop cannot turn a
-     * single request into fifty thousand query entries. `default` covers every type you do not
-     * list; `0` records none of that type.
+     * single request into fifty thousand query entries. \`default\` covers every type you do not
+     * list; \`0\` records none of that type.
      *
-     * Default: 100 for every type, except `query` which defaults to 200.
+     * Default: 100 for every type, except \`query\` which defaults to 200.
      */
     caps: {
       default: 100,
@@ -75,7 +79,7 @@ export default defineConfig({
 
     /**
      * How long the recorder caches the "paused" flag before re-reading it, in milliseconds.
-     * Lower means `node ace periscope:pause` takes effect faster, at the cost of more reads.
+     * Lower means \`node ace periscope:pause\` takes effect faster, at the cost of more reads.
      *
      * Default: 5_000
      */
@@ -85,17 +89,17 @@ export default defineConfig({
   redact: {
     /**
      * Keys whose values are scrubbed wherever they appear, at any depth. Matching ignores case,
-     * underscores, hyphens and spaces, so `apiKey`, `api_key` and `API-KEY` all match `apikey`.
+     * underscores, hyphens and spaces, so \`apiKey\`, \`api_key\` and \`API-KEY\` all match \`apikey\`.
      *
      * This list REPLACES the shipped defaults rather than extending them. To add to them,
-     * import and spread `DEFAULT_REDACT_KEYS` from 'periscope/periscope_config':
+     * import and spread \`DEFAULT_REDACT_KEYS\` from 'periscope/periscope_config':
      *
      *   keys: [...DEFAULT_REDACT_KEYS, 'internal_reference'],
      */
     // keys: [...DEFAULT_REDACT_KEYS, 'internal_reference'],
 
     /**
-     * HTTP header names to scrub. Replaces `DEFAULT_REDACT_HEADERS`, same as above.
+     * HTTP header names to scrub. Replaces \`DEFAULT_REDACT_HEADERS\`, same as above.
      */
     // headers: [...DEFAULT_REDACT_HEADERS, 'x-internal-token'],
 
@@ -117,7 +121,7 @@ export default defineConfig({
 
       /**
        * Lower this to surface latency earlier, or raise it when long-running requests are normal
-       * for the application and should not all receive a `slow` tag.
+       * for the application and should not all receive a \`slow\` tag.
        */
       slowMs: 1_000,
 
@@ -148,7 +152,7 @@ export default defineConfig({
 
       /**
        * Lower this to flag tighter latency regressions, or raise it when expensive queries are
-       * expected and should not dominate the `slow` filter.
+       * expected and should not dominate the \`slow\` filter.
        */
       slowMs: 100,
 
@@ -167,8 +171,8 @@ export default defineConfig({
       enabled: true,
 
       /**
-       * Use `always` when deployed source is available and production code frames are worth the
-       * file reads, or `never` when source context must not be retained.
+       * Use \`always\` when deployed source is available and production code frames are worth the
+       * file reads, or \`never\` when source context must not be retained.
        */
       captureCodeFrame: 'dev',
 
@@ -210,7 +214,7 @@ export default defineConfig({
 
   dashboard: {
     /**
-     * Change this when `/periscope` conflicts with an application route or the dashboard needs to
+     * Change this when \`/periscope\` conflicts with an application route or the dashboard needs to
      * live beneath a different URL prefix.
      */
     path: '/periscope',

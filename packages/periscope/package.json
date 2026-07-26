@@ -37,8 +37,10 @@
     "typecheck": "tsc --noEmit",
     "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('build', { recursive: true, force: true })\"",
     "compile": "tsc",
+    "postcompile": "npm run copy:templates && npm run index:commands",
     "copy:templates": "copyfiles \"stubs/**/*.stub\" build",
-    "build": "npm run clean && npm run compile && npm run copy:templates",
+    "index:commands": "adonis-kit index build/commands",
+    "build": "npm run clean && npm run compile",
     "test": "node --import=@poppinss/ts-exec --enable-source-maps bin/test.ts",
     "format": "prettier --write ."
   },
@@ -55,6 +57,7 @@
     }
   },
   "devDependencies": {
+    "@adonisjs/assembler": "^8.4.0",
     "@adonisjs/core": "^7.3.5",
     "@adonisjs/eslint-config": "^3.1.0",
     "@adonisjs/lucid": "^22.4.2",

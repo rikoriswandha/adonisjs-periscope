@@ -5,7 +5,7 @@
  * file that was distributed with this source code.
  */
 
-import { performance } from 'node:perf_hooks'
+import { clearInterval, setInterval } from 'node:timers'
 
 import { IncomingEntry } from '../entry.ts'
 import { safeguard, safeguardAsync } from '../safeguard.ts'
@@ -193,18 +193,17 @@ export class Recorder {
   readonly #tagHooks: TagHook[] = []
 
   /**
-   * Cached value of the `paused` flag, plus when it was last refreshed. See
-   * {@link Recorder.paused}.
-   *
-   * The stamp is `performance.now()`, not `Date.now()`: it is a TTL, never a timestamp, and
-   * nothing persists or displays it. A wall clock can step backwards — an NTP correction, a
-   * container resuming with a synchronised clock — and `now - #pausedReadAt` would then go
-   * negative, freezing the cached flag for the whole length of the step. `NEGATIVE_INFINITY`
-   * seeds it because `performance.now()` starts near zero, so a plain `0` would make the first
-   * read of a freshly booted process look fresh and skip the initial refresh.
+   * Cached value of the `paused` flag. The lifecycle poll refreshes it independently of entries,
+   * so the first entry after an idle period observes a value no older than the configured window.
    */
   #paused = false
-  #pausedReadAt = Number.NEGATIVE_INFINITY
+
+  /**
+   * The pause refresh timer and its in-flight read. The timer is lifecycle-owned and the promise
+   * serializes slow store reads: interval ticks reuse the current read rather than piling up.
+   */
+  #pausedTimer: NodeJS.Timeout | null = null
+  #pausedRefresh: Promise<void> | null = null
 
   /**
    * Successful flushes since the last opportunistic trim — see {@link TRIM_EVERY_FLUSHES}.
@@ -245,41 +244,40 @@ export class Recorder {
    *
    * The flag lives in the store, which is asynchronous, while `record()` is synchronous and must
    * stay that way — a watcher cannot await, and making the hot path await a database round trip
-   * per entry would be absurd. So this is a cached read with the TTL from
-   * `recording.pausedFlagTtlMs` (5 s by default): the getter returns the last known value
-   * *immediately* and, when the cache has aged out, kicks off a fire-and-forget refresh whose
-   * result lands in time for the next reader.
-   *
-   * The staleness window is deliberate and harmless: pausing is a human action, and a handful of
-   * extra entries in the seconds after the command is not worth blocking every watcher on I/O.
+   * per entry would be absurd. The lifecycle poll refreshes this cached value at
+   * `recording.pausedFlagTtlMs` intervals, including while the application is idle, so this getter
+   * remains a cheap field read and a later entry cannot be the trigger for its own refresh.
    *
    * A store that throws leaves the previous value in place. Failing closed — treating an
    * unreachable store as "paused" — would silently stop recording exactly when something is
    * already wrong and the entries matter most.
    */
   get paused(): boolean {
-    const now = performance.now()
+    return this.#paused
+  }
 
-    if (now - this.#pausedReadAt >= this.#config.recording.pausedFlagTtlMs) {
-      /**
-       * Marked fresh *before* the read resolves, so a burst of entries kicks off one refresh
-       * rather than one per entry.
-       */
-      this.#pausedReadAt = now
-
-      void safeguardAsync('periscope.recorder.paused', async () => {
-        /**
-         * §0, invariant 2, exactly as in {@link Recorder.flush}: this is a store read like any
-         * other, and the driver's own query and log traffic is observable by the watchers feeding
-         * this recorder. Worse than the flush case, the refresh is kicked off from inside
-         * `record()`, so an unmuted read would attribute Periscope's own bookkeeping to whichever
-         * host request happened to trip the TTL.
-         */
-        this.#paused = (await BatchScope.mute(() => this.store.getFlag(Flag.PAUSED))) !== null
-      })
+  #refreshPaused(): Promise<void> {
+    if (this.#pausedRefresh !== null) {
+      return this.#pausedRefresh
     }
 
-    return this.#paused
+    const refresh = safeguardAsync('periscope.recorder.paused', async () => {
+      /**
+       * §0, invariant 2, exactly as in {@link Recorder.flush}: this is a store read like any
+       * other, and the driver's own query and log traffic is observable by the watchers feeding
+       * this recorder.
+       */
+      this.#paused = (await BatchScope.mute(() => this.store.getFlag(Flag.PAUSED))) !== null
+    })
+
+    this.#pausedRefresh = refresh
+    void refresh.then(() => {
+      if (this.#pausedRefresh === refresh) {
+        this.#pausedRefresh = null
+      }
+    })
+
+    return refresh
   }
 
   /**
@@ -439,37 +437,61 @@ export class Recorder {
   }
 
   /**
-   * Start the rotating ambient batch, which drains everything recorded outside a request,
-   * command, queue job or test.
+   * Start the pause-state poll and rotating ambient batch.
    *
    * A disabled recorder never buffers anything, so it arms no timer at all. That keeps the
-   * "Periscope off costs nothing" promise literal rather than approximate.
+   * "Periscope off costs nothing" promise literal rather than approximate. Both lifecycle timers
+   * are idempotent and unref'ed, so repeated readiness cannot duplicate work and neither timer
+   * keeps an otherwise-finished process alive.
    */
   start(): void {
-    if (!this.#enabled) {
+    if (!this.#enabled || this.#pausedTimer !== null) {
       return
     }
 
     /**
      * Starting again makes the previous shutdown history. Without this, the memo in
      * {@link Recorder.shutdown} would still hold the resolved promise of the *first* stop, and a
-     * second `shutdown()` would resolve instantly against it while the timer armed just below
-     * kept rotating. {@link AmbientBatch} is restartable, so the recorder around it must be too.
+     * second `shutdown()` would resolve instantly against it while the timers armed below kept
+     * running. {@link AmbientBatch} is restartable, so the recorder around it must be too.
      */
     this.#shuttingDown = null
 
+    this.#pausedTimer = setInterval(() => {
+      void this.#refreshPaused()
+    }, this.#config.recording.pausedFlagTtlMs)
+    this.#pausedTimer.unref()
+
+    /**
+     * Seed the cache at lifecycle start rather than waiting one whole window. `#refreshPaused`
+     * memoises the in-flight read, so even a very short interval cannot overlap this initial one.
+     */
+    void this.#refreshPaused()
     this.#ambient.start()
   }
 
   /**
-   * Stop the ambient batch — which performs its own final flush — and do nothing else.
+   * Stop the pause poll, wait for its current muted read, then stop the ambient batch, whose stop
+   * performs the final flush.
    *
-   * The store is intentionally left open: the provider owns it, and other subsystems (the
-   * pruning scheduler, an in-flight dashboard request) may still be reading through it while the
-   * recorder winds down. Calling this twice is safe.
+   * Waiting for the read is part of ownership: provider teardown may close the store as soon as
+   * this resolves, so no lifecycle task may still be using it. The store itself is intentionally
+   * left open because the provider owns it. Calling this twice is safe.
    */
   async shutdown(): Promise<void> {
-    this.#shuttingDown ??= safeguardAsync('periscope.recorder.shutdown', () => this.#ambient.stop())
+    if (this.#shuttingDown === null) {
+      if (this.#pausedTimer !== null) {
+        clearInterval(this.#pausedTimer)
+        this.#pausedTimer = null
+      }
+
+      const pausedRefresh = this.#pausedRefresh
+      this.#shuttingDown = safeguardAsync('periscope.recorder.shutdown', async () => {
+        await pausedRefresh
+        await this.#ambient.stop()
+      })
+    }
+
     await this.#shuttingDown
   }
 

@@ -27,6 +27,7 @@ export default defineConfig({
     () => import('@adonisjs/lucid/commands'),
     () => import('@adonisjs/session/commands'),
     () => import('@adonisjs/mail/commands'),
+    () => import('periscope/commands'),
   ],
 
   /*
@@ -46,7 +47,10 @@ export default defineConfig({
      * registration means Periscope's final flush runs *after* the providers whose work it
      * watches have stopped producing entries.
      */
-    () => import('periscope/provider'),
+    {
+      file: () => import('periscope/provider'),
+      environment: ['web', 'console', 'test'],
+    },
     {
       file: () => import('@adonisjs/core/providers/repl_provider'),
       environment: ['repl', 'test'],

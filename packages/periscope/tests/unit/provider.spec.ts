@@ -19,13 +19,26 @@ import { Recorder } from '../../src/recorder/recorder.ts'
 import { defineConfig } from '../../src/define_config.ts'
 import { safeguard, setInternalLogger } from '../../src/safeguard.ts'
 import { MemoryStore } from '../../src/storage/memory_store.ts'
+import { SqliteLocalStore } from '../../src/storage/sqlite_local_store.ts'
 import { getActiveWatcher } from '../../src/watchers/active.ts'
 import { PeriscopeConfigError, PeriscopeStorageError } from '../../src/errors.ts'
 import { createApp } from '../helpers/app_factory.ts'
 import type { ResolvedPeriscopeConfig } from '../../src/types.ts'
 
 type ListenerProbe = {
-  listenerCount(event: string): number
+  listenerCount(event?: string): number
+}
+
+function pinoDestination(pino: object): unknown {
+  const symbol = Object.getOwnPropertySymbols(pino).find(
+    (candidate) => candidate.description === 'pino.stream'
+  )
+
+  if (symbol === undefined) {
+    throw new Error('Test logger has no pino.stream destination')
+  }
+
+  return (pino as unknown as Record<symbol, unknown>)[symbol]
 }
 
 /**
@@ -144,19 +157,21 @@ test.group('PeriscopeProvider', (group) => {
   })
 
   test('do not resolve or register the router outside web processes', async ({ assert }) => {
-    const { app, provider } = await createProvider({
-      periscope: inertConfig(),
-      environment: 'console',
-    })
-    let routerResolutions = 0
-    app.container.singleton('router', () => {
-      routerResolutions += 1
-      return new RouterFactory().merge({ app }).create()
-    })
+    for (const environment of ['console', 'test', 'repl', 'unknown'] as const) {
+      const { app, provider } = await createProvider({
+        periscope: inertConfig(),
+        environment,
+      })
+      let routerResolutions = 0
+      app.container.singleton('router', () => {
+        routerResolutions += 1
+        return new RouterFactory().merge({ app }).create()
+      })
 
-    await provider.start()
+      await provider.start()
 
-    assert.equal(routerResolutions, 0)
+      assert.equal(routerResolutions, 0, environment)
+    }
   })
 
   test('fail at boot when config/periscope.ts is missing', async ({ assert }) => {
@@ -281,6 +296,7 @@ test.group('PeriscopeProvider', (group) => {
   test('write no sqlite file when a sqlite-local Periscope is disabled', async ({ assert }) => {
     const { app, provider } = await createProvider({
       nodeEnv: 'production',
+      environment: 'web',
       periscope: defineConfig({
         enabledIn: ['development', 'test'],
         storage: { driver: 'sqlite-local' },
@@ -308,6 +324,38 @@ test.group('PeriscopeProvider', (group) => {
     await provider.shutdown()
   })
 
+  test('open the configured durable store for disabled console processes', async ({ assert }) => {
+    const { app, provider } = await createProvider({
+      nodeEnv: 'production',
+      environment: 'console',
+      periscope: defineConfig({
+        enabledIn: ['development', 'test'],
+        storage: { driver: 'sqlite-local' },
+      }),
+    })
+    const file = app.tmpPath('periscope.sqlite')
+    await rm(file, { force: true })
+
+    await provider.ready()
+
+    const recorder = await app.container.make(Recorder)
+
+    assert.isFalse(recorder.enabled)
+    assert.instanceOf(recorder.store, SqliteLocalStore)
+
+    await recorder.store.setFlag('console-maintenance', 'durable')
+    await provider.shutdown()
+
+    const reopened = new SqliteLocalStore({ path: file })
+
+    try {
+      assert.equal(await reopened.getFlag('console-maintenance'), 'durable')
+    } finally {
+      await reopened.close()
+      await rm(file, { force: true })
+    }
+  })
+
   test('close the store on shutdown', async ({ assert }) => {
     const { app, provider } = await createProvider({ periscope: inertConfig() })
 
@@ -328,6 +376,116 @@ test.group('PeriscopeProvider', (group) => {
     await provider.shutdown()
 
     assert.equal(closed, 1)
+  })
+
+  test('tear down during terminating while host services are alive and reuse it in shutdown', async ({
+    assert,
+  }) => {
+    const { app, provider } = await createProvider({ periscope: inertConfig() })
+
+    await provider.ready()
+
+    const recorder = await app.container.make(Recorder)
+    const store = recorder.store
+    const save = store.save.bind(store)
+    let hostServicesAlive = true
+    let closes = 0
+    const closeGate = Promise.withResolvers<void>()
+    const closeStarted = Promise.withResolvers<void>()
+
+    store.save = async (entries) => {
+      assert.isTrue(hostServicesAlive, 'the final flush must run before host provider shutdown')
+      await save(entries)
+    }
+    store.close = async () => {
+      closes++
+      closeStarted.resolve()
+      await closeGate.promise
+      assert.isTrue(hostServicesAlive, 'the store must close before host provider shutdown')
+    }
+
+    /**
+     * Adonis runs terminating hooks in reverse registration order. This hook was registered after
+     * the provider's hook, so its entry must still be accepted and included in the final drain.
+     */
+    app.terminating(() => {
+      recorder.record(IncomingEntry.make(EntryType.EVENT, { name: 'late-terminating-hook' }))
+    })
+
+    const termination = app.terminate()
+    await closeStarted.promise
+
+    /**
+     * Provider shutdown can begin as soon as this terminating hook is still winding down. It must
+     * await that exact teardown rather than starting a second close against the same live store.
+     */
+    const shutdown = provider.shutdown()
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+    try {
+      assert.equal(closes, 1)
+    } finally {
+      closeGate.resolve()
+    }
+
+    await Promise.all([termination, shutdown])
+
+    const page = await store.list()
+
+    assert.equal(closes, 1)
+    assert.lengthOf(page.data, 1)
+    assert.equal(page.data[0].content.name, 'late-terminating-hook')
+
+    /**
+     * Provider shutdown follows the terminating phase in a real application. Simulate Lucid now
+     * being closed: reusing the teardown promise must perform no second flush or close that could
+     * make a database-backed store reopen its pool.
+     */
+    hostServicesAlive = false
+    await provider.shutdown()
+
+    assert.equal(closes, 1)
+  })
+
+  test('swallow and report store close failures while resetting provider state', async ({
+    assert,
+  }) => {
+    const logs: string[] = []
+    const { app, provider } = await createProvider({
+      nodeEnv: 'production',
+      environment: 'console',
+      periscope: inertConfig(),
+    })
+    const logger = new LoggerFactory().merge({ enabled: true }).pushLogsTo(logs).create()
+    app.container.singleton('logger', () => logger as unknown as LoggerService)
+
+    await provider.ready()
+
+    const recorder = await app.container.make(Recorder)
+    assert.isFalse(recorder.enabled)
+    let closeCalls = 0
+    recorder.store.close = async () => {
+      closeCalls += 1
+      throw new Error('close failed')
+    }
+
+    await assert.doesNotReject(() => provider.shutdown())
+
+    assert.equal(closeCalls, 1)
+    assert.lengthOf(logs, 1)
+
+    const line: { msg?: string; err?: { message?: string } } = JSON.parse(logs[0])
+    assert.equal(line.msg, 'periscope.provider.store.close')
+    assert.equal(line.err?.message, 'close failed')
+
+    safeguard('after-provider-shutdown', () => {
+      throw new Error('must use the reset reporter')
+    })
+
+    assert.lengthOf(logs, 1)
+
+    await provider.shutdown()
+    assert.equal(closeCalls, 1)
   })
 
   test('shut down cleanly when ready never ran', async ({ assert }) => {
@@ -475,9 +633,10 @@ test.group('PeriscopeProvider', (group) => {
     assert.isNull(getActiveWatcher('exception'))
   })
 
-  test('clean watchers before the recorder performs its shutdown flush', async ({ assert }) => {
+  test('clean watchers, finish the recorder flush, then close the store', async ({ assert }) => {
     const { app, provider } = await createProvider({ periscope: inertConfig() })
     const output: string[] = []
+    const order: string[] = []
     const logger = new LoggerFactory().merge({ enabled: true }).pushLogsTo(output).create()
     app.container.singleton('logger', () => logger as unknown as LoggerService)
 
@@ -490,75 +649,112 @@ test.group('PeriscopeProvider', (group) => {
     recorder.record(IncomingEntry.make(EntryType.EVENT, { name: 'before-shutdown' }))
 
     /**
-     * `AmbientBatch.stop()` invokes the recorder's public flush callback. Emitting from that
-     * boundary makes the ordering observable: if the logger tee is still installed, this warning
-     * joins the buffer being drained and survives in the store.
+     * The log emitted at the flush boundary is absent from storage only when watcher cleanup has
+     * already restored the logger destination. The explicit end marker proves close waits for the
+     * final asynchronous recorder drain rather than merely starting it first.
      */
     recorder.flush = async (context) => {
+      order.push('flush:start')
       logger.warn('after watcher cleanup')
       await flush(context)
+      order.push('flush:end')
+    }
+    store.close = async () => {
+      order.push('close')
     }
 
     await provider.shutdown()
 
     const page = await store.list()
 
+    assert.deepEqual(order, ['flush:start', 'flush:end', 'close'])
     assert.isNotEmpty(output)
     assert.lengthOf(page.data, 1)
     assert.equal(page.data[0].type, EntryType.EVENT)
     assert.equal(page.data[0].content.name, 'before-shutdown')
   })
 
-  test('register no watchers when the master switch is disabled', async ({ assert }) => {
-    const { app, provider } = await createProvider({
-      periscope: defineConfig({ enabled: false, storage: { driver: 'memory' } }),
-    })
-    const emitter = (await app.container.make('emitter')) as unknown as ListenerProbe
-    const processListeners = {
-      uncaughtExceptionMonitor: process.listenerCount('uncaughtExceptionMonitor'),
-      unhandledRejection: process.listenerCount('unhandledRejection'),
+  test('install no emitter, process, or log listeners across disabled gates', async ({
+    assert,
+  }) => {
+    const cases = [
+      {
+        name: 'master switch',
+        nodeEnv: 'development',
+        environment: 'web' as const,
+        config: defineConfig({ enabled: false, storage: { driver: 'memory' } }),
+        override: undefined,
+      },
+      {
+        name: 'NODE_ENV gate',
+        nodeEnv: 'production',
+        environment: 'web' as const,
+        config: inertConfig(),
+        override: undefined,
+      },
+      {
+        name: 'PERISCOPE_ENABLED override',
+        nodeEnv: 'development',
+        environment: 'test' as const,
+        config: inertConfig(),
+        override: 'false',
+      },
+      {
+        name: 'unsupported application environment',
+        nodeEnv: 'development',
+        environment: 'repl' as const,
+        config: inertConfig(),
+        override: undefined,
+      },
+    ]
+
+    for (const scenario of cases) {
+      if (scenario.override === undefined) {
+        delete process.env.PERISCOPE_ENABLED
+      } else {
+        process.env.PERISCOPE_ENABLED = scenario.override
+      }
+
+      const logs: string[] = []
+      const { app, provider } = await createProvider({
+        nodeEnv: scenario.nodeEnv,
+        environment: scenario.environment,
+        periscope: scenario.config,
+      })
+      const emitter = (await app.container.make('emitter')) as unknown as ListenerProbe
+      const logger = new LoggerFactory().merge({ enabled: true }).pushLogsTo(logs).create()
+      const originalDestination = pinoDestination(logger.pino)
+      app.container.singleton('logger', () => logger as unknown as LoggerService)
+
+      const listeners = {
+        emitter: emitter.listenerCount(),
+        uncaughtExceptionMonitor: process.listenerCount('uncaughtExceptionMonitor'),
+        unhandledRejection: process.listenerCount('unhandledRejection'),
+      }
+
+      await provider.ready()
+
+      const recorder = await app.container.make(Recorder)
+
+      assert.isFalse(recorder.enabled, scenario.name)
+      assert.instanceOf(recorder.store, MemoryStore, scenario.name)
+      assert.equal(emitter.listenerCount(), listeners.emitter, scenario.name)
+      assert.equal(
+        process.listenerCount('uncaughtExceptionMonitor'),
+        listeners.uncaughtExceptionMonitor,
+        scenario.name
+      )
+      assert.equal(
+        process.listenerCount('unhandledRejection'),
+        listeners.unhandledRejection,
+        scenario.name
+      )
+      assert.strictEqual(pinoDestination(logger.pino), originalDestination, scenario.name)
+      assert.isNull(getActiveWatcher('request'), scenario.name)
+      assert.isNull(getActiveWatcher('exception'), scenario.name)
+      assert.isEmpty(logs, scenario.name)
+
+      await provider.shutdown()
     }
-
-    await provider.ready()
-
-    assert.equal(emitter.listenerCount('http:request_completed'), 0)
-    assert.equal(emitter.listenerCount('db:query'), 0)
-    assert.equal(emitter.listenerCount('application:event'), 0)
-    assert.isNull(getActiveWatcher('request'))
-    assert.isNull(getActiveWatcher('exception'))
-    assert.equal(
-      process.listenerCount('uncaughtExceptionMonitor'),
-      processListeners.uncaughtExceptionMonitor
-    )
-    assert.equal(process.listenerCount('unhandledRejection'), processListeners.unhandledRejection)
-
-    await provider.shutdown()
-  })
-
-  test('register no watchers in production with the default enabledIn gate', async ({ assert }) => {
-    const { app, provider } = await createProvider({
-      nodeEnv: 'production',
-      periscope: inertConfig(),
-    })
-    const emitter = (await app.container.make('emitter')) as unknown as ListenerProbe
-    const processListeners = {
-      uncaughtExceptionMonitor: process.listenerCount('uncaughtExceptionMonitor'),
-      unhandledRejection: process.listenerCount('unhandledRejection'),
-    }
-
-    await provider.ready()
-
-    assert.equal(emitter.listenerCount('http:request_completed'), 0)
-    assert.equal(emitter.listenerCount('db:query'), 0)
-    assert.equal(emitter.listenerCount('application:event'), 0)
-    assert.isNull(getActiveWatcher('request'))
-    assert.isNull(getActiveWatcher('exception'))
-    assert.equal(
-      process.listenerCount('uncaughtExceptionMonitor'),
-      processListeners.uncaughtExceptionMonitor
-    )
-    assert.equal(process.listenerCount('unhandledRejection'), processListeners.unhandledRejection)
-
-    await provider.shutdown()
   })
 })

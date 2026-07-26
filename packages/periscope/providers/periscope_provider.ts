@@ -33,11 +33,23 @@ const REQUIRED_CONFIG_BLOCKS = [
 ] as const
 
 /**
+ * Periscope participates only in application processes that can either record host activity or
+ * manage the durable store. The `adonisrc.ts` descriptor is the primary gate; this defensive check
+ * keeps a hand-written, unconditional provider registration from attaching observers in REPL and
+ * unknown processes.
+ */
+const PROVIDER_ENVIRONMENTS: Record<string, true> = {
+  web: true,
+  console: true,
+  test: true,
+}
+
+/**
  * The Periscope service provider, registered by an application under `adonisrc.ts#providers`.
  *
- * Registration order matters in both directions. AdonisJS boots providers in declaration order and
- * shuts them down in reverse, so Periscope is meant to be registered *early*: its shutdown then
- * runs *late*, after the providers whose work it is watching have stopped producing entries.
+ * Registration order matters. Periscope is meant to be registered *early*, so its terminating
+ * hook is also registered early. Adonis runs those hooks in reverse order: later host hooks can
+ * finish producing entries before Periscope drains them, all before provider shutdown begins.
  */
 export default class PeriscopeProvider {
   /**
@@ -61,6 +73,17 @@ export default class PeriscopeProvider {
    */
   #watchers: WatcherRegistry | null = null
 
+  /**
+   * The single teardown shared by the application `terminating` hook and provider shutdown.
+   *
+   * Periscope is normally an early provider, so its provider shutdown runs after Lucid's. The
+   * terminating phase runs before every provider shutdown, while Lucid and the other watched host
+   * services are still usable. Memoising the work lets the later provider shutdown safely await
+   * the already-completed teardown instead of flushing through a closed service or closing twice.
+   */
+  #shutdownPromise: Promise<void> | null = null
+
+  #terminatingHookRegistered = false
   #routesRegistered = false
 
   constructor(protected app: ApplicationService) {}
@@ -69,34 +92,36 @@ export default class PeriscopeProvider {
    * Bind the recorder as a singleton, resolved from `config/periscope.ts`.
    */
   register() {
+    if (!this.#terminatingHookRegistered) {
+      /**
+       * Application terminating hooks run in reverse registration order. Registering from this
+       * early provider preserves entries produced by hooks registered later: those hooks run
+       * first, then Periscope unsubscribes, drains, and closes while host providers are alive.
+       */
+      this.app.terminating(() => this.#teardown())
+      this.#terminatingHookRegistered = true
+    }
+
     this.app.container.singleton(Recorder, async () => {
       const config = this.#resolveConfig()
 
       /**
-       * The environment gate is consulted exactly once, here, and settles two questions at the
-       * same time: whether the recorder records, and whether the configured driver is built at
-       * all.
+       * Recording and store selection are related, but not identical. Console processes must open
+       * the configured store even when recording is environment-disabled: maintenance commands
+       * run in short-lived console applications and must operate on the same durable data as the
+       * web process. Every other disabled process retains the cheap, side-effect-free MemoryStore
+       * path.
        */
-      const enabled = isRecordingEnabled(config, {
-        nodeEnv: this.app.nodeEnvironment,
-        periscopeEnabled: process.env.PERISCOPE_ENABLED,
-      })
+      const environment = this.app.getEnvironment()
+      const enabled =
+        PROVIDER_ENVIRONMENTS[environment] === true &&
+        isRecordingEnabled(config, {
+          nodeEnv: this.app.nodeEnvironment,
+          periscopeEnabled: process.env.PERISCOPE_ENABLED,
+        })
+      const useConfiguredStore = enabled || environment === 'console'
 
-      /**
-       * A disabled Periscope never touches the configured driver — it gets a `MemoryStore`
-       * instead, whatever `storage.driver` says.
-       *
-       * This is what makes "disabled" actually free (plan §0: zero cost when off). A disabled
-       * recorder drops every entry in `record()`, so it never buffers, never flushes and arms no
-       * ambient timer; nothing it owns can reach the store. The other reader of the store, the
-       * dashboard, is gated off by this very same switch (P4.1). Building the real driver would
-       * therefore open a sqlite file, load a native module or hold a database connection purely
-       * so that nothing could be written to it. Worse, it would let a switched-off Periscope
-       * fail a boot it has no business being part of: the `database` driver throws when Lucid is
-       * absent, and `sqlite-local` writes a file into `tmp/` on a host that asked for nothing.
-       * A `MemoryStore` is three empty `Map`s and cannot fail.
-       */
-      this.#store = enabled
+      this.#store = useConfiguredStore
         ? await createStore(config, this.#storeContext())
         : new MemoryStore({ maxEntries: config.storage.maxEntries })
 
@@ -164,9 +189,19 @@ export default class PeriscopeProvider {
    * be draining before the first event can arrive.
    */
   async ready() {
+    const recorder = await this.app.container.make(Recorder)
+
+    /**
+     * The internal reporter is not a watcher and does not patch a logger destination. Wiring it
+     * for both enabled and disabled recorders ensures configured-store teardown failures (notably
+     * from console maintenance processes) are still reported through the host logger.
+     */
     await this.#wireInternalLogger()
 
-    const recorder = await this.app.container.make(Recorder)
+    if (!recorder.enabled) {
+      return
+    }
+
     recorder.start()
 
     await this.#registerWatchers(recorder)
@@ -220,26 +255,45 @@ export default class PeriscopeProvider {
    * Ordering is the whole point, and it runs strictly backwards from `ready()`. The watchers go
    * first so nothing new is recorded while the recorder is winding down — a log line emitted by
    * a shutting-down provider must not land in a batch that is already being flushed. Then
-   * `Recorder.shutdown()` stops the ambient rotation and performs its final flush, which writes
-   * through the store, so the store can only be closed afterwards. The internal logger is
-   * unhooked last, for the same reason: a flush that fails on the way out is exactly the failure
-   * worth reporting.
+   * `Recorder.shutdown()` stops its lifecycle polls and ambient rotation and performs the final
+   * flush, which writes through the store, so the store can only be closed afterwards. The
+   * internal logger is unhooked last, for the same reason: a flush that fails on the way out is
+   * exactly the failure worth reporting.
+   *
+   * The application-level terminating hook starts this sequence before any provider shutdown.
+   * `shutdown()` remains the provider lifecycle fallback and reuses the same promise.
    */
   async shutdown() {
-    await this.#watchers?.cleanup()
-    await this.#recorder?.shutdown()
-    await this.#store?.close()
+    await this.#teardown()
+  }
 
-    this.#watchers = null
-    this.#recorder = null
-    this.#store = null
+  #teardown(): Promise<void> {
+    this.#shutdownPromise ??= this.#performTeardown()
+    return this.#shutdownPromise
+  }
 
-    /**
-     * Restores the standalone default reporter. A terminated application's logger may be writing
-     * to a closed destination, and in tests a leaked binding would have one suite's failures
-     * reported through another's logger.
-     */
-    setInternalLogger(null)
+  async #performTeardown(): Promise<void> {
+    try {
+      /**
+       * Keep teardown strictly ordered while isolating every stage. A failed watcher cleanup must
+       * not prevent the final recorder drain, and a rejected close must never escape into host
+       * shutdown.
+       */
+      await safeguardAsync('periscope.provider.watchers.cleanup', () => this.#watchers?.cleanup())
+      await safeguardAsync('periscope.provider.recorder.shutdown', () => this.#recorder?.shutdown())
+      await safeguardAsync('periscope.provider.store.close', () => this.#store?.close())
+    } finally {
+      this.#watchers = null
+      this.#recorder = null
+      this.#store = null
+
+      /**
+       * Restores the standalone default reporter. A terminated application's logger may be writing
+       * to a closed destination, and in tests a leaked binding would have one suite's failures
+       * reported through another's logger.
+       */
+      setInternalLogger(null)
+    }
   }
 
   /**
