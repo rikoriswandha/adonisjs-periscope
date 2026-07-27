@@ -47,14 +47,14 @@ const columns: EntryColumn[] = [
   },
 ]
 
-function RedisDetail({ entry, onClose }: RegisteredEntryDetailProps) {
+function RedisDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
   const value = content(entry)
   return (
     <EntryDetailDrawer
       description={formatDateTime(entry.createdAt)}
       meta={<DurationBadge value={value.durationMs} />}
       onOpenChange={(open) => !open && onClose()}
-      open
+      open={open}
       tags={entry.tags}
       title={value.command}
     >

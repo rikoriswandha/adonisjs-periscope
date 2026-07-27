@@ -73,8 +73,8 @@ export function JsonTree({ value, label = 'JSON data' }: { value: unknown; label
   }
 
   return (
-    <section aria-label={label} className="overflow-hidden rounded-lg border bg-muted/35">
-      <div className="flex min-h-9 items-center justify-between border-b px-3">
+    <section aria-label={label} className="overflow-hidden rounded-md border bg-muted/35">
+      <div className="flex min-h-8 items-center justify-between border-b px-3">
         <span className="text-xs font-medium text-muted-foreground">{label}</span>
         <CopyButton label={`Copy ${label}`} value={serialized} />
       </div>

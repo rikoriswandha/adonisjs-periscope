@@ -102,7 +102,7 @@ function DumpPageEffect() {
   return null
 }
 
-function DumpDetail({ entry, onClose }: RegisteredEntryDetailProps) {
+function DumpDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
   const content = dumpContent(entry)
   const count = valueCount(content.values)
   return (
@@ -117,29 +117,29 @@ function DumpDetail({ entry, onClose }: RegisteredEntryDetailProps) {
         </>
       }
       onOpenChange={(open) => !open && onClose()}
-      open
+      open={open}
       tags={entry.tags}
       title={truncate(preview(content.values), 96)}
     >
       {content.caller ? (
-        <dl className="grid gap-3 rounded-lg border p-4 sm:grid-cols-3">
+        <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-3">
           <div className="sm:col-span-3">
             <dt className="text-xs text-muted-foreground">Source file</dt>
-            <dd className="mt-1 max-h-24 overflow-auto break-all font-mono text-sm">
+            <dd className="mt-0.5 max-h-24 overflow-auto break-all font-mono text-sm">
               {content.caller.file}
             </dd>
           </div>
           <div>
             <dt className="text-xs text-muted-foreground">Line</dt>
-            <dd className="mt-1 font-mono text-sm">{content.caller.line}</dd>
+            <dd className="mt-0.5 font-mono text-sm">{content.caller.line}</dd>
           </div>
           <div>
             <dt className="text-xs text-muted-foreground">Column</dt>
-            <dd className="mt-1 font-mono text-sm">{content.caller.column ?? 'Unavailable'}</dd>
+            <dd className="mt-0.5 font-mono text-sm">{content.caller.column ?? 'Unavailable'}</dd>
           </div>
         </dl>
       ) : (
-        <section className="rounded-lg border bg-muted/25 p-4">
+        <section className="rounded-md border bg-muted/25 p-3">
           <h3 className="text-sm font-semibold">Application caller unavailable</h3>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             Periscope could not identify an application frame above this dump call. The captured

@@ -6,6 +6,7 @@ import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
 import { EntryIndexTable } from '@/components/entry-index-table'
 import type { EntryColumn } from '@/components/entry-index-table'
 import { JsonTree } from '@/components/json-tree'
+import { PageHeader } from '@/components/page-header'
 import { TagChip } from '@/components/tag-chip'
 import { Badge } from '@/components/ui/badge'
 import { useDashboard } from '@/dashboard-context'
@@ -82,6 +83,7 @@ export function SearchPage() {
   const [searchParams] = useSearchParams()
   const { status, revision } = useDashboard()
   const [selected, setSelected] = useState<StoredEntry | null>(null)
+  const [detailEntry, setDetailEntry] = useState<StoredEntry | null>(null)
   const [implementation, setImplementation] = useState<EntryTypeImplementation | null>(null)
   const tag = normalizeExactTag(searchParams.get('tag'))
   const filters = useMemo<EntryFilters>(() => globalSearchFilters(tag) ?? { limit: 50 }, [tag])
@@ -93,7 +95,7 @@ export function SearchPage() {
     !tag || (status?.paused ?? true),
     revision
   )
-  const registration = selected ? getWave2EntryType(selected.type) : undefined
+  const registration = detailEntry ? getWave2EntryType(detailEntry.type) : undefined
   const DetailComponent = implementation?.detailComponent
 
   useEffect(() => {
@@ -116,16 +118,12 @@ export function SearchPage() {
   }, [reload, revision, tag])
 
   return (
-    <div className="space-y-5">
-      <section className="flex flex-wrap items-end justify-between gap-3">
-        <div className="max-w-2xl">
-          <h2 className="text-lg font-semibold tracking-tight">Exact-tag search</h2>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            Search every recorded entry type without changing the screen you started from.
-          </p>
-        </div>
-        {tag && <TagChip tag={tag} />}
-      </section>
+    <div className="space-y-4">
+      <PageHeader
+        title="Exact-tag search"
+        description="Search every recorded entry type without changing the screen you started from."
+        aside={tag && <TagChip tag={tag} />}
+      />
 
       {tag ? (
         <EntryIndexTable
@@ -141,12 +139,15 @@ export function SearchPage() {
           onAcceptNew={() => pagination.prepend(polling.accept())}
           onLoadMore={() => void pagination.loadMore()}
           onRetry={() => void pagination.reload()}
-          onRowOpen={setSelected}
+          onRowOpen={(entry) => {
+            setDetailEntry(entry)
+            setSelected(entry)
+          }}
           rowLabel={(entry) => `Inspect ${entryTypeLabel(entry.type)}: ${entrySummary(entry)}`}
           rows={pagination.entries}
         />
       ) : (
-        <section className="rounded-lg border bg-muted/25 px-5 py-12 text-center">
+        <section className="rounded-md border bg-muted/25 px-4 py-10 text-center">
           <Search aria-hidden="true" className="mx-auto size-5 text-muted-foreground" />
           <h3 className="mt-3 text-sm font-semibold">Enter an exact tag to search</h3>
           <p className="mx-auto mt-1 max-w-md text-sm leading-6 text-muted-foreground">
@@ -155,19 +156,23 @@ export function SearchPage() {
         </section>
       )}
 
-      {selected && DetailComponent && (
-        <DetailComponent entry={selected} onClose={() => setSelected(null)} />
+      {detailEntry && registration && DetailComponent && (
+        <DetailComponent
+          entry={detailEntry}
+          onClose={() => setSelected(null)}
+          open={selected !== null}
+        />
       )}
-      {selected && !registration && (
+      {detailEntry && !registration && (
         <EntryDetailDrawer
-          description={`${entryTypeLabel(selected.type)} · ${formatDateTime(selected.createdAt)}`}
-          meta={<Badge variant="secondary">{entryTypeLabel(selected.type)}</Badge>}
+          description={`${entryTypeLabel(detailEntry.type)} · ${formatDateTime(detailEntry.createdAt)}`}
+          meta={<Badge variant="secondary">{entryTypeLabel(detailEntry.type)}</Badge>}
           onOpenChange={(open) => !open && setSelected(null)}
-          open
-          tags={selected.tags}
-          title={entrySummary(selected)}
+          open={selected !== null}
+          tags={detailEntry.tags}
+          title={entrySummary(detailEntry)}
         >
-          <JsonTree label="Recorded content" value={selected.content} />
+          <JsonTree label="Recorded content" value={detailEntry.content} />
         </EntryDetailDrawer>
       )}
     </div>

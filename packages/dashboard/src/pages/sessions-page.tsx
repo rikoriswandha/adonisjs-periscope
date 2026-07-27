@@ -46,14 +46,14 @@ const columns: EntryColumn[] = [
   },
 ]
 
-function SessionDetail({ entry, onClose }: RegisteredEntryDetailProps) {
+function SessionDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
   const value = content(entry)
   return (
     <EntryDetailDrawer
       description={formatDateTime(entry.createdAt)}
       meta={<Badge variant="secondary">{value.operation}</Badge>}
       onOpenChange={(open) => !open && onClose()}
-      open
+      open={open}
       tags={entry.tags}
       title={`Session ${value.sessionIdHash}`}
     >

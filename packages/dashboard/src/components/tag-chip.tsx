@@ -33,9 +33,9 @@ export function EntryTagChips({ tags }: { tags: readonly string[] }) {
   if (tags.length === 0) return null
 
   return (
-    <section aria-label="Entry tags" className="space-y-2">
-      <h3 className="text-xs font-medium text-muted-foreground">Tags</h3>
-      <div className="flex flex-wrap gap-2">
+    <section aria-label="Entry tags" className="space-y-1.5">
+      <h3 className="text-2xs font-medium tracking-wide text-muted-foreground uppercase">Tags</h3>
+      <div className="flex flex-wrap gap-1.5">
         {tags.map((tag) => (
           <TagChip key={tag} tag={tag} />
         ))}

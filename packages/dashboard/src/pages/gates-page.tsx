@@ -99,7 +99,7 @@ const columns: EntryColumn[] = [
   },
 ]
 
-function GateDetail({ entry, onClose }: RegisteredEntryDetailProps) {
+function GateDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
   const content = gateContent(entry)
   const argsCount = argumentCount(content.args)
   return (
@@ -123,22 +123,22 @@ function GateDetail({ entry, onClose }: RegisteredEntryDetailProps) {
         </>
       }
       onOpenChange={(open) => !open && onClose()}
-      open
+      open={open}
       tags={entry.tags}
       title={truncate(content.ability, 96)}
     >
-      <dl className="grid gap-3 rounded-lg border p-4 sm:grid-cols-2">
+      <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
         <div>
           <dt className="text-xs text-muted-foreground">Ability</dt>
-          <dd className="mt-1 break-all font-mono text-sm">{content.ability}</dd>
+          <dd className="mt-0.5 break-all font-mono text-sm">{content.ability}</dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">User ID</dt>
-          <dd className="mt-1 break-all font-mono text-sm">{content.userId ?? 'Anonymous'}</dd>
+          <dd className="mt-0.5 break-all font-mono text-sm">{content.userId ?? 'Anonymous'}</dd>
         </div>
         <div className="sm:col-span-2">
           <dt className="text-xs text-muted-foreground">Decision message</dt>
-          <dd className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words text-sm">
+          <dd className="mt-0.5 max-h-24 overflow-auto whitespace-pre-wrap break-words text-sm">
             {content.message ??
               (content.allowed ? 'The ability was authorized.' : 'No denial message was recorded.')}
           </dd>

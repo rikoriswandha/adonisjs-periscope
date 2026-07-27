@@ -95,7 +95,7 @@ const columns: EntryColumn[] = [
   },
 ]
 
-function HttpClientDetail({ entry, onClose }: RegisteredEntryDetailProps) {
+function HttpClientDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
   const content = httpClientContent(entry)
   return (
     <EntryDetailDrawer
@@ -107,22 +107,22 @@ function HttpClientDetail({ entry, onClose }: RegisteredEntryDetailProps) {
         </>
       }
       onOpenChange={(open) => !open && onClose()}
-      open
+      open={open}
       tags={entry.tags}
       title={truncate(`${content.method} ${content.url}`, 96)}
     >
-      <dl className="grid gap-3 rounded-lg border p-4 sm:grid-cols-2">
+      <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
         <div>
           <dt className="text-xs text-muted-foreground">Method</dt>
-          <dd className="mt-1 font-mono text-sm">{content.method}</dd>
+          <dd className="mt-0.5 font-mono text-sm">{content.method}</dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">Completion</dt>
-          <dd className="mt-1 text-sm">{content.completed ? 'Completed' : 'In progress'}</dd>
+          <dd className="mt-0.5 text-sm">{content.completed ? 'Completed' : 'In progress'}</dd>
         </div>
         <div className="sm:col-span-2">
           <dt className="text-xs text-muted-foreground">URL</dt>
-          <dd className="mt-1 break-all font-mono text-xs leading-5">{content.url}</dd>
+          <dd className="mt-0.5 break-all font-mono text-xs leading-5">{content.url}</dd>
         </div>
       </dl>
       <section aria-labelledby="http-client-headers-title" className="space-y-3">

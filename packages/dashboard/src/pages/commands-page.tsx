@@ -93,7 +93,7 @@ const columns: EntryColumn[] = [
   },
 ]
 
-function CommandDetail({ entry, onClose }: RegisteredEntryDetailProps) {
+function CommandDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
   const content = commandContent(entry)
   return (
     <EntryDetailDrawer
@@ -110,11 +110,11 @@ function CommandDetail({ entry, onClose }: RegisteredEntryDetailProps) {
         </>
       }
       onOpenChange={(open) => !open && onClose()}
-      open
+      open={open}
       tags={entry.tags}
       title={truncate(content.command, 96)}
     >
-      <section className="overflow-hidden rounded-lg border bg-muted/35">
+      <section className="overflow-hidden rounded-md border bg-muted/35">
         <div className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">
           Invocation
         </div>
@@ -122,12 +122,12 @@ function CommandDetail({ entry, onClose }: RegisteredEntryDetailProps) {
           {content.command}
         </pre>
       </section>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-2">
         <JsonTree label="Arguments" value={content.args} />
         <JsonTree label="Flags" value={content.flags} />
       </div>
       {content.output !== undefined && (
-        <section className="overflow-hidden rounded-lg border bg-muted/35">
+        <section className="overflow-hidden rounded-md border bg-muted/35">
           <div className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">
             Command output
           </div>

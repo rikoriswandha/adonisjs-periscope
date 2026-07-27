@@ -114,7 +114,7 @@ const columns: EntryColumn[] = [
   },
 ]
 
-function ModelDetail({ entry, onClose }: RegisteredEntryDetailProps) {
+function ModelDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
   const content = modelContent(entry)
   const dirtyCount = fieldCount(content.dirty)
   const hasAttributes = Object.prototype.hasOwnProperty.call(content, 'attributes')
@@ -133,22 +133,22 @@ function ModelDetail({ entry, onClose }: RegisteredEntryDetailProps) {
         </>
       }
       onOpenChange={(open) => !open && onClose()}
-      open
+      open={open}
       tags={entry.tags}
       title={truncate(content.model, 96)}
     >
-      <dl className="grid gap-3 rounded-lg border p-4 sm:grid-cols-2">
+      <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
         <div>
           <dt className="text-xs text-muted-foreground">Model</dt>
-          <dd className="mt-1 break-all font-mono text-sm">{content.model}</dd>
+          <dd className="mt-0.5 break-all font-mono text-sm">{content.model}</dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">Primary key</dt>
-          <dd className="mt-1 font-mono text-sm">{content.primaryKey ?? 'Not recorded'}</dd>
+          <dd className="mt-0.5 font-mono text-sm">{content.primaryKey ?? 'Not recorded'}</dd>
         </div>
         <div className="sm:col-span-2">
           <dt className="text-xs text-muted-foreground">Primary key value</dt>
-          <dd className="mt-1 max-h-24 overflow-auto break-all font-mono text-sm">
+          <dd className="mt-0.5 max-h-24 overflow-auto break-all font-mono text-sm">
             {preview(content.primaryKeyValue)}
           </dd>
         </div>
@@ -156,7 +156,7 @@ function ModelDetail({ entry, onClose }: RegisteredEntryDetailProps) {
       {hasDirty ? (
         <JsonTree label="Dirty attributes" value={content.dirty} />
       ) : (
-        <section className="rounded-lg border bg-muted/25 p-4">
+        <section className="rounded-md border bg-muted/25 p-3">
           <h3 className="text-sm font-semibold">Dirty attributes were not captured</h3>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             Enable dirty value capture to inspect the fields changed by future model mutations.

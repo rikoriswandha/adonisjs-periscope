@@ -6,6 +6,7 @@ import { DurationBadge } from '@/components/duration-badge'
 import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
 import { EntryIndexTable, type EntryColumn } from '@/components/entry-index-table'
 import { JsonTree } from '@/components/json-tree'
+import { PageHeader } from '@/components/page-header'
 import { SqlBlock } from '@/components/sql-block'
 import { TagChip } from '@/components/tag-chip'
 import { Badge } from '@/components/ui/badge'
@@ -164,32 +165,29 @@ export function QueriesPage() {
   }
 
   return (
-    <div className="space-y-5">
-      <section className="flex flex-wrap items-end justify-between gap-3">
-        <div className="max-w-2xl">
-          <h2 className="text-lg font-semibold tracking-tight">Database queries</h2>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            Inspect normalized query shapes, bindings, connection context, and repetition within a
-            request.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {tag && (
-            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Route aria-hidden="true" className="size-3.5" />
-              <TagChip tag={tag} />
-            </span>
-          )}
-          <label className="flex min-h-9 items-center gap-2 rounded-md border bg-background px-3 text-sm font-medium">
-            Slow only
-            <Switch
-              aria-label="Show slow queries only"
-              checked={slowOnly}
-              onCheckedChange={setSlowOnly}
-            />
-          </label>
-        </div>
-      </section>
+    <div className="space-y-4">
+      <PageHeader
+        title="Database queries"
+        description="Inspect normalized query shapes, bindings, connection context, and repetition within a request."
+        aside={
+          <div className="flex flex-wrap items-center gap-2">
+            {tag && (
+              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Route aria-hidden="true" className="size-3.5" />
+                <TagChip tag={tag} />
+              </span>
+            )}
+            <label className="flex min-h-8 items-center gap-2 rounded-md border bg-background px-2.5 text-xs font-medium">
+              Slow only
+              <Switch
+                aria-label="Show slow queries only"
+                checked={slowOnly}
+                onCheckedChange={setSlowOnly}
+              />
+            </label>
+          </div>
+        }
+      />
 
       <EntryIndexTable
         caption="Recorded database queries"
@@ -242,7 +240,7 @@ export function QueriesPage() {
           <>
             <SqlBlock bindings={content.bindings} sql={content.sql} />
 
-            <section className="rounded-lg border bg-muted/25 p-4">
+            <section className="rounded-md border bg-muted/25 p-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-semibold">Query shape in this batch</h3>
@@ -270,23 +268,23 @@ export function QueriesPage() {
               )}
             </section>
 
-            <dl className="grid gap-3 rounded-lg border p-4 sm:grid-cols-2">
+            <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
               <div>
                 <dt className="text-xs text-muted-foreground">Connection</dt>
-                <dd className="mt-1 font-mono text-sm">{content.connection}</dd>
+                <dd className="mt-0.5 font-mono text-sm">{content.connection}</dd>
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">Operation</dt>
-                <dd className="mt-1 font-mono text-sm">{content.method}</dd>
+                <dd className="mt-0.5 font-mono text-sm">{content.method}</dd>
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">Model</dt>
-                <dd className="mt-1 text-sm">{content.model ?? 'Not associated with a model'}</dd>
+                <dd className="mt-0.5 text-sm">{content.model ?? 'Not associated with a model'}</dd>
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">Family hash</dt>
                 <dd
-                  className="mt-1 truncate font-mono text-xs"
+                  className="mt-0.5 truncate font-mono text-xs"
                   title={selected.familyHash ?? undefined}
                 >
                   {selected.familyHash ?? 'Unavailable'}
@@ -294,7 +292,7 @@ export function QueriesPage() {
               </div>
             </dl>
 
-            <section className="flex items-start gap-3 rounded-lg border bg-muted/25 p-4">
+            <section className="flex items-start gap-3 rounded-md border bg-muted/25 p-3">
               <MapPinOff
                 aria-hidden="true"
                 className="mt-0.5 size-4 shrink-0 text-muted-foreground"

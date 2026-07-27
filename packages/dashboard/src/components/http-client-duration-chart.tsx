@@ -12,6 +12,7 @@ import {
 import { StatusBadge } from '@/components/status-badge'
 import { Badge } from '@/components/ui/badge'
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { Frame, FramePanel } from '@/components/ui/frame'
 import { formatDateTime, formatDuration } from '@/lib/format'
 import type { HttpClientContent, StoredEntry } from '@/types'
 
@@ -37,20 +38,19 @@ export function HttpClientDurationChart({ entries }: { entries: StoredEntry[] })
   if (data.length < 2) return null
 
   return (
-    <figure
-      aria-labelledby="http-client-duration-title"
-      className="overflow-hidden rounded-lg border bg-background"
-    >
-      <figcaption className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
+    <Frame className="rounded-lg p-0.5" aria-labelledby="http-client-duration-title">
+      <FramePanel className="overflow-hidden rounded-md p-0 shadow-none before:shadow-none">
+        <figure>
+          <figcaption className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
         <div>
           <h2
-            className="flex items-center gap-2 text-sm font-semibold"
+            className="flex items-center gap-2 text-xs font-semibold"
             id="http-client-duration-title"
           >
-            <BarChart3 aria-hidden="true" className="size-4 text-primary" />
+            <BarChart3 aria-hidden="true" className="size-3.5 text-primary" />
             Outbound request duration
           </h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          <p className="mt-0.5 text-2xs text-muted-foreground">
             Recent response time in milliseconds, oldest to newest. Outcomes are available in the
             data table.
           </p>
@@ -61,7 +61,7 @@ export function HttpClientDurationChart({ entries }: { entries: StoredEntry[] })
               {failureCount} {failureCount === 1 ? 'failure' : 'failures'}
             </Badge>
           )}
-          <span className="font-mono text-xs tabular-nums text-muted-foreground">
+          <span className="font-mono text-2xs tabular-nums text-muted-foreground">
             {data.length} samples
           </span>
         </div>
@@ -84,7 +84,7 @@ export function HttpClientDurationChart({ entries }: { entries: StoredEntry[] })
         </LineChart>
       </div>
       <Collapsible onOpenChange={setTableOpen} open={tableOpen}>
-        <CollapsibleTrigger className="flex w-full items-center justify-center gap-1.5 border-t px-3 py-2 text-xs font-medium text-muted-foreground outline-none hover:bg-accent/45 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+        <CollapsibleTrigger className="flex w-full items-center justify-center gap-1.5 border-t px-3 py-1.5 text-2xs font-medium text-muted-foreground outline-none hover:bg-accent/45 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
           {tableOpen ? 'Hide' : 'View'} chart data
           <ChevronDown
             aria-hidden="true"
@@ -99,10 +99,12 @@ export function HttpClientDurationChart({ entries }: { entries: StoredEntry[] })
               </caption>
               <thead className="sticky top-0 bg-muted text-muted-foreground">
                 <tr>
-                  <th className="px-3 py-2 font-medium">When</th>
-                  <th className="px-3 py-2 font-medium">Request</th>
-                  <th className="px-3 py-2 font-medium">Result</th>
-                  <th className="px-3 py-2 text-right font-medium">Duration</th>
+                  <th className="h-8 px-2.5 text-2xs font-medium tracking-wide uppercase">When</th>
+                  <th className="h-8 px-2.5 text-2xs font-medium tracking-wide uppercase">Request</th>
+                  <th className="h-8 px-2.5 text-2xs font-medium tracking-wide uppercase">Result</th>
+                  <th className="h-8 px-2.5 text-right text-2xs font-medium tracking-wide uppercase">
+                    Duration
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -127,6 +129,8 @@ export function HttpClientDurationChart({ entries }: { entries: StoredEntry[] })
           </div>
         </CollapsiblePanel>
       </Collapsible>
-    </figure>
+        </figure>
+      </FramePanel>
+    </Frame>
   )
 }

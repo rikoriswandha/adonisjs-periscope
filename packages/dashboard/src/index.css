@@ -36,9 +36,18 @@
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
 
-  --radius-sm: calc(var(--radius) - 0.25rem);
-  --radius-md: calc(var(--radius) - 0.125rem);
-  --radius-lg: var(--radius);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-sm: calc(var(--radius) - 0.125rem);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 0.125rem);
   --radius-xl: calc(var(--radius) + 0.25rem);
 
   --animate-skeleton: skeleton 2s -1s infinite linear;
@@ -70,52 +79,65 @@
   }
 }
 
+/*
+  Scene: local AdonisJS debugging at a cool-lit desk beside an editor.
+  Restrained strategy — cool slate neutrals, green primary for action/live only.
+*/
 :root {
   color-scheme: light;
-  --radius: 0.5rem;
+  --radius: 0.375rem;
 
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.205 0.012 265);
-  --card: oklch(1 0 0);
+  --background: oklch(0.985 0.005 255);
+  --foreground: oklch(0.22 0.018 265);
+  --card: oklch(0.995 0.003 255);
   --card-foreground: var(--foreground);
-  --popover: oklch(1 0 0);
+  --popover: oklch(0.995 0.003 255);
   --popover-foreground: var(--foreground);
-  --primary: oklch(0.55 0.142 130);
-  --primary-foreground: oklch(0.985 0.004 130);
-  --secondary: oklch(0.965 0.007 260);
-  --secondary-foreground: oklch(0.28 0.018 265);
-  --muted: oklch(0.97 0.006 255);
-  --muted-foreground: oklch(0.46 0.026 260);
-  --accent: oklch(0.955 0.025 248);
-  --accent-foreground: oklch(0.39 0.145 255);
-  --destructive: oklch(0.57 0.215 28);
-  --destructive-foreground: oklch(0.47 0.19 28);
-  --border: oklch(0.905 0.012 255);
-  --input: oklch(0.875 0.014 255);
-  --ring: oklch(0.57 0.15 255);
-  --info: oklch(0.59 0.17 255);
-  --info-foreground: oklch(0.43 0.145 255);
-  --success: oklch(0.58 0.14 145);
-  --success-foreground: oklch(0.39 0.12 145);
-  --warning: oklch(0.7 0.15 78);
-  --warning-foreground: oklch(0.43 0.12 68);
+  --primary: oklch(0.52 0.145 140);
+  --primary-foreground: oklch(0.985 0.004 140);
+  --secondary: oklch(0.95 0.01 255);
+  --secondary-foreground: oklch(0.28 0.02 265);
+  --muted: oklch(0.955 0.01 255);
+  --muted-foreground: oklch(0.42 0.028 260);
+  --accent: oklch(0.945 0.02 150);
+  --accent-foreground: oklch(0.32 0.08 145);
+  --destructive: oklch(0.55 0.21 28);
+  --destructive-foreground: oklch(0.45 0.18 28);
+  --border: oklch(0.88 0.014 255);
+  --input: oklch(0.86 0.016 255);
+  --ring: oklch(0.55 0.12 145);
+  --info: oklch(0.55 0.16 255);
+  --info-foreground: oklch(0.4 0.14 255);
+  --success: oklch(0.55 0.14 145);
+  --success-foreground: oklch(0.36 0.11 145);
+  --warning: oklch(0.68 0.14 78);
+  --warning-foreground: oklch(0.4 0.11 68);
 
-  --chart-1: oklch(0.55 0.142 130);
-  --chart-2: oklch(0.57 0.15 255);
-  --chart-3: oklch(0.62 0.12 195);
-  --chart-4: oklch(0.7 0.12 78);
-  --chart-5: oklch(0.58 0.15 25);
+  --sidebar: oklch(0.96 0.012 255);
+  --sidebar-foreground: oklch(0.3 0.02 265);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: oklch(0.925 0.028 145);
+  --sidebar-accent-foreground: oklch(0.28 0.07 145);
+  --sidebar-border: oklch(0.88 0.014 255);
+  --sidebar-ring: var(--ring);
+
+  --chart-1: oklch(0.52 0.145 140);
+  --chart-2: oklch(0.55 0.15 255);
+  --chart-3: oklch(0.6 0.11 195);
+  --chart-4: oklch(0.68 0.12 78);
+  --chart-5: oklch(0.55 0.15 25);
   --chart-background: var(--background);
   --chart-foreground: var(--foreground);
   --chart-foreground-muted: var(--muted-foreground);
   --chart-line-primary: var(--chart-1);
   --chart-line-secondary: var(--chart-2);
   --chart-crosshair: var(--chart-2);
-  --chart-grid: oklch(0.91 0.012 255);
+  --chart-grid: oklch(0.9 0.012 255);
   --chart-brush-border: var(--chart-grid);
-  --chart-tooltip-background: oklch(0.23 0.018 265 / 0.96);
+  --chart-tooltip-background: oklch(0.22 0.02 265 / 0.96);
   --chart-tooltip-foreground: oklch(0.985 0.004 260);
-  --chart-tooltip-muted: oklch(0.8 0.02 255);
+  --chart-tooltip-muted: oklch(0.78 0.02 255);
   --chart-marker-background: var(--background);
   --chart-marker-border: var(--border);
   --chart-marker-foreground: var(--foreground);
@@ -148,7 +170,7 @@ input,
 }
 
 ::selection {
-  background: oklch(0.55 0.142 130 / 0.2);
+  background: oklch(0.52 0.145 140 / 0.22);
 }
 
 @media (prefers-reduced-motion: reduce) {

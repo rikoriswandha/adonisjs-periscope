@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 
 import { DurationBadge } from '@/components/duration-badge'
 import { EntryIndexTable, type EntryColumn } from '@/components/entry-index-table'
+import { PageHeader } from '@/components/page-header'
 import { RequestActivityChart } from '@/components/request-activity-chart'
 import { StatusBadge } from '@/components/status-badge'
 import { TagChip } from '@/components/tag-chip'
@@ -40,7 +41,7 @@ const columns: EntryColumn[] = [
           <div className="max-w-xl truncate font-mono text-xs font-medium" title={content.url}>
             {truncate(content.url, 120)}
           </div>
-          <div className="mt-1 max-w-xl truncate text-xs text-muted-foreground">
+          <div className="mt-0.5 max-w-xl truncate text-2xs text-muted-foreground">
             {content.routePattern ?? content.routeName ?? 'Unmatched route'}
           </div>
         </div>
@@ -64,7 +65,10 @@ const columns: EntryColumn[] = [
     header: 'When',
     className: 'w-36',
     cell: (entry) => (
-      <span className="whitespace-nowrap text-xs text-muted-foreground" title={entry.createdAt}>
+      <span
+        className="whitespace-nowrap font-mono text-2xs tabular-nums text-muted-foreground"
+        title={entry.createdAt}
+      >
         {formatRelativeTime(entry.createdAt)}
       </span>
     ),
@@ -74,7 +78,7 @@ const columns: EntryColumn[] = [
     header: '',
     className: 'w-10 text-right',
     cell: () => (
-      <ArrowUpRight aria-hidden="true" className="ms-auto size-4 text-muted-foreground" />
+      <ArrowUpRight aria-hidden="true" className="ms-auto size-3.5 text-muted-foreground" />
     ),
   },
 ]
@@ -99,21 +103,19 @@ export function RequestsPage() {
   const acceptNew = () => pagination.prepend(polling.accept())
 
   return (
-    <div className="space-y-5">
-      <section className="flex flex-wrap items-end justify-between gap-3">
-        <div className="max-w-2xl">
-          <h2 className="text-lg font-semibold tracking-tight">HTTP request batches</h2>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            Follow a request from ingress through queries, logs, and exceptions in sequence order.
-          </p>
-        </div>
-        {tag && (
-          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Route aria-hidden="true" className="size-3.5" />
-            <TagChip tag={tag} />
-          </span>
-        )}
-      </section>
+    <div className="space-y-4">
+      <PageHeader
+        aside={
+          tag ? (
+            <span className="flex items-center gap-1.5 text-2xs text-muted-foreground">
+              <Route aria-hidden="true" className="size-3.5" />
+              <TagChip tag={tag} />
+            </span>
+          ) : undefined
+        }
+        description="Follow a request from ingress through queries, logs, and exceptions in sequence order."
+        title="HTTP request batches"
+      />
 
       <RequestActivityChart entries={pagination.entries} />
 

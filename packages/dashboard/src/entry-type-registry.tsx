@@ -6,6 +6,7 @@ import type { LucideIcon } from 'lucide-react'
 
 import { EntryIndexTable } from '@/components/entry-index-table'
 import type { EntryColumn } from '@/components/entry-index-table'
+import { PageHeader } from '@/components/page-header'
 import { TagChip } from '@/components/tag-chip'
 import { useDashboard } from '@/dashboard-context'
 import { useCursorPagination } from '@/hooks/use-cursor-pagination'
@@ -16,6 +17,7 @@ import type { EntryFilters, EntryType, StoredEntry } from '@/types'
 
 export type RegisteredEntryDetailProps = {
   entry: StoredEntry
+  open: boolean
   onClose: () => void
 }
 
@@ -55,6 +57,7 @@ export function RegisteredEntryPage({
   const [searchParams] = useSearchParams()
   const { status, revision } = useDashboard()
   const [selected, setSelected] = useState<StoredEntry | null>(null)
+  const [detailEntry, setDetailEntry] = useState<StoredEntry | null>(null)
   const tag = normalizeExactTag(searchParams.get('tag'))
   const filters = useMemo<EntryFilters>(
     () => ({ type: registration.type, tag, displayOnIndex: true, limit: 50 }),
@@ -72,22 +75,20 @@ export function RegisteredEntryPage({
   }, [reload, revision])
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {PageEffect && <PageEffect />}
-      <section className="flex flex-wrap items-end justify-between gap-3">
-        <div className="max-w-2xl">
-          <h2 className="text-lg font-semibold tracking-tight">{implementation.heading}</h2>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            {implementation.description}
-          </p>
-        </div>
-        {tag && (
-          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Route aria-hidden="true" className="size-3.5" />
-            <TagChip tag={tag} />
-          </span>
-        )}
-      </section>
+      <PageHeader
+        aside={
+          tag ? (
+            <span className="flex items-center gap-1.5 text-2xs text-muted-foreground">
+              <Route aria-hidden="true" className="size-3.5" />
+              <TagChip tag={tag} />
+            </span>
+          ) : undefined
+        }
+        description={implementation.description}
+        title={implementation.heading}
+      />
 
       {OverviewComponent && <OverviewComponent entries={pagination.entries} />}
 
@@ -104,12 +105,21 @@ export function RegisteredEntryPage({
         onAcceptNew={() => pagination.prepend(polling.accept())}
         onLoadMore={() => void pagination.loadMore()}
         onRetry={() => void pagination.reload()}
-        onRowOpen={setSelected}
+        onRowOpen={(entry) => {
+          setDetailEntry(entry)
+          setSelected(entry)
+        }}
         rowLabel={implementation.rowLabel}
         rows={pagination.entries}
       />
 
-      {selected && <DetailComponent entry={selected} onClose={() => setSelected(null)} />}
+      {detailEntry && (
+        <DetailComponent
+          entry={detailEntry}
+          onClose={() => setSelected(null)}
+          open={selected !== null}
+        />
+      )}
     </div>
   )
 }

@@ -4,12 +4,14 @@ import { Link, useSearchParams } from 'react-router-dom'
 
 import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
 import { JsonTree } from '@/components/json-tree'
+import { PageHeader } from '@/components/page-header'
 import { StackTrace } from '@/components/stack-trace'
 import { StatusBadge } from '@/components/status-badge'
 import { TagChip } from '@/components/tag-chip'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
+import { Frame, FramePanel } from '@/components/ui/frame'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -306,43 +308,54 @@ export function ExceptionsPage() {
   }
 
   return (
-    <div className="space-y-5">
-      <section className="flex flex-wrap items-end justify-between gap-3">
-        <div className="max-w-2xl">
-          <h2 className="text-lg font-semibold tracking-tight">Exception families</h2>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            Recurring failures are grouped by stack signature so frequency and the latest occurrence
-            stay visible together.
-          </p>
-        </div>
-        {tag && (
-          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Route aria-hidden="true" className="size-3.5" />
-            <TagChip tag={tag} />
-          </span>
-        )}
-      </section>
+    <div className="space-y-4">
+      <PageHeader
+        title="Exception families"
+        description="Recurring failures are grouped by stack signature so frequency and the latest occurrence stay visible together."
+        aside={
+          tag && (
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Route aria-hidden="true" className="size-3.5" />
+              <TagChip tag={tag} />
+            </span>
+          )
+        }
+      />
 
       {pendingNewCount > 0 && (
         <div className="flex justify-center">
-          <Button onClick={acceptPending} size="sm" variant="secondary">
+          <Button
+            className="font-mono text-xs tabular-nums"
+            onClick={acceptPending}
+            size="sm"
+            variant="secondary"
+          >
             <RefreshCw aria-hidden="true" />
-            {pendingNewCount} new {pendingNewCount === 1 ? 'exception' : 'exceptions'} — load now
+            {pendingNewCount} new {pendingNewCount === 1 ? 'exception' : 'exceptions'}
           </Button>
         </div>
       )}
 
-      <div className="overflow-hidden rounded-lg border bg-background">
+      <Frame className="rounded-lg p-0.5">
+        <FramePanel className="overflow-hidden rounded-md p-0 shadow-none before:shadow-none">
         <div className="overflow-x-auto">
-          <Table className="min-w-data-table">
+          <Table className="min-w-data-table text-xs">
             <TableCaption className="sr-only">Grouped recorded exceptions</TableCaption>
             <TableHeader>
-              <TableRow>
-                <TableHead>Latest exception</TableHead>
-                <TableHead className="w-28">Status</TableHead>
-                <TableHead className="w-28 text-right">Occurrences</TableHead>
-                <TableHead className="w-36">Last seen</TableHead>
-                <TableHead className="w-10">
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="h-8 px-2.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
+                  Latest exception
+                </TableHead>
+                <TableHead className="h-8 w-28 px-2.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
+                  Status
+                </TableHead>
+                <TableHead className="h-8 w-28 px-2.5 text-right text-2xs font-medium tracking-wide text-muted-foreground uppercase">
+                  Occurrences
+                </TableHead>
+                <TableHead className="h-8 w-36 px-2.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
+                  Last seen
+                </TableHead>
+                <TableHead className="h-8 w-10 px-2.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
                   <span className="sr-only">Open details</span>
                 </TableHead>
               </TableRow>
@@ -351,19 +364,19 @@ export function ExceptionsPage() {
               {indexLoading &&
                 Array.from({ length: 7 }, (_, index) => (
                   <TableRow key={index}>
-                    <TableCell>
+                    <TableCell className="px-2.5 py-2">
                       <Skeleton className="h-8 w-full max-w-xl" />
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="px-2.5 py-2">
                       <Skeleton className="h-5 w-14" />
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="px-2.5 py-2">
                       <Skeleton className="ms-auto h-5 w-10" />
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="px-2.5 py-2">
                       <Skeleton className="h-4 w-24" />
                     </TableCell>
-                    <TableCell />
+                    <TableCell className="px-2.5 py-2" />
                   </TableRow>
                 ))}
               {!indexLoading &&
@@ -375,7 +388,7 @@ export function ExceptionsPage() {
                       key={group.familyHash}
                       onClick={() => openGroup(group)}
                     >
-                      <TableCell>
+                      <TableCell className="px-2.5 py-2">
                         <button
                           className="block w-full rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                           type="button"
@@ -394,16 +407,16 @@ export function ExceptionsPage() {
                           </span>
                         </button>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="px-2.5 py-2">
                         <StatusBadge status={content.status} />
                       </TableCell>
-                      <TableCell className="text-right font-mono text-sm font-semibold tabular-nums">
+                      <TableCell className="px-2.5 py-2 text-right font-mono text-sm font-semibold tabular-nums">
                         {group.count.toLocaleString()}
                       </TableCell>
-                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                      <TableCell className="whitespace-nowrap px-2.5 py-2 text-xs text-muted-foreground">
                         {formatRelativeTime(group.lastSeen)}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="px-2.5 py-2">
                         <ArrowUpRight aria-hidden="true" className="size-4 text-muted-foreground" />
                       </TableCell>
                     </TableRow>
@@ -447,15 +460,15 @@ export function ExceptionsPage() {
         )}
 
         {visibleGroups.length > 0 && (
-          <div className="flex items-center justify-between border-t px-3 py-2">
-            <span className="text-xs text-muted-foreground">
+          <div className="flex items-center justify-between border-t bg-muted/40 px-2.5 py-1.5">
+            <span className="font-mono text-2xs tabular-nums text-muted-foreground">
               {visibleGroups.length.toLocaleString()} groups loaded
             </span>
             {nextCursor && (
               <Button
                 loading={loadingMore}
                 onClick={() => void loadMore()}
-                size="sm"
+                size="xs"
                 variant="ghost"
               >
                 <ArrowDown aria-hidden="true" /> Load older
@@ -463,7 +476,8 @@ export function ExceptionsPage() {
             )}
           </div>
         )}
-      </div>
+        </FramePanel>
+      </Frame>
 
       {error && visibleGroups.length > 0 && (
         <div className="flex items-center justify-between rounded-lg border bg-destructive/5 px-3 py-2 text-sm text-destructive-foreground">
@@ -502,7 +516,7 @@ export function ExceptionsPage() {
             {current && selectedOccurrence && (
               <>
                 {current.request && (
-                  <section className="rounded-lg border bg-muted/25 p-4">
+                  <section className="rounded-md border bg-muted/25 p-3">
                     <div className="flex items-center gap-2 text-sm font-semibold">
                       <Route aria-hidden="true" className="size-4 text-primary" />
                       {current.request.method} {current.request.url}
@@ -579,11 +593,11 @@ export function ExceptionsPage() {
                   )}
                 </section>
 
-                <dl className="grid gap-3 rounded-lg border p-4 sm:grid-cols-2">
+                <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
                   <div>
                     <dt className="text-xs text-muted-foreground">Family hash</dt>
                     <dd
-                      className="mt-1 truncate font-mono text-xs"
+                      className="mt-0.5 truncate font-mono text-xs"
                       title={selectedGroup.familyHash}
                     >
                       {selectedGroup.familyHash}
@@ -591,7 +605,7 @@ export function ExceptionsPage() {
                   </div>
                   <div>
                     <dt className="text-xs text-muted-foreground">Sequence</dt>
-                    <dd className="mt-1 truncate font-mono text-xs">
+                    <dd className="mt-0.5 truncate font-mono text-xs">
                       {selectedOccurrence.sequence}
                     </dd>
                   </div>

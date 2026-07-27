@@ -44,13 +44,13 @@ function eventVariant(
 function PlainTextBody({ text }: { text?: string }) {
   if (!text?.trim()) {
     return (
-      <p className="rounded-lg border bg-muted/25 p-4 text-sm leading-6 text-muted-foreground">
+      <p className="rounded-md border bg-muted/25 p-3 text-sm leading-6 text-muted-foreground">
         No plain-text body was captured for this message.
       </p>
     )
   }
   return (
-    <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-muted/25 p-4 font-sans text-sm leading-6 text-foreground">
+    <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/25 p-3 font-sans text-sm leading-6 text-foreground">
       {text}
     </pre>
   )
@@ -113,7 +113,7 @@ const columns: EntryColumn[] = [
   },
 ]
 
-function MailDetail({ entry, onClose }: RegisteredEntryDetailProps) {
+function MailDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
   const content = mailContent(entry)
   const hasRaw = typeof content.raw === 'string' && content.raw.length > 0
   return (
@@ -126,26 +126,26 @@ function MailDetail({ entry, onClose }: RegisteredEntryDetailProps) {
         </>
       }
       onOpenChange={(open) => !open && onClose()}
-      open
+      open={open}
       tags={entry.tags}
       title={mailSubject(content)}
     >
-      <dl className="grid gap-3 rounded-lg border p-4 sm:grid-cols-2">
+      <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
         <div>
           <dt className="text-xs text-muted-foreground">Mailer</dt>
-          <dd className="mt-1 font-mono text-sm">{content.mailer}</dd>
+          <dd className="mt-0.5 font-mono text-sm">{content.mailer}</dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">Lifecycle event</dt>
-          <dd className="mt-1 text-sm">{eventLabel(content.event)}</dd>
+          <dd className="mt-0.5 text-sm">{eventLabel(content.event)}</dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">Message ID</dt>
-          <dd className="mt-1 break-all font-mono text-xs">{content.messageId ?? 'Unavailable'}</dd>
+          <dd className="mt-0.5 break-all font-mono text-xs">{content.messageId ?? 'Unavailable'}</dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">Capture state</dt>
-          <dd className="mt-1 text-sm">
+          <dd className="mt-0.5 text-sm">
             {content.truncated ? 'Truncated at the configured limit' : 'Not truncated'}
           </dd>
         </div>

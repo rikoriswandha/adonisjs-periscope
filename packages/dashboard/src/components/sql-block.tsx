@@ -17,12 +17,12 @@ export function SqlBlock({ sql, bindings }: { sql: string; bindings?: unknown })
   }, [sql])
 
   return (
-    <section aria-label="SQL query" className="overflow-hidden rounded-lg border bg-muted/35">
-      <div className="flex min-h-9 items-center justify-between border-b px-3">
+    <section aria-label="SQL query" className="overflow-hidden rounded-md border bg-muted/35">
+      <div className="flex min-h-8 items-center justify-between border-b px-3">
         <span className="text-xs font-medium text-muted-foreground">SQL</span>
         <CopyButton label="Copy SQL" value={formatted} />
       </div>
-      <pre className="max-h-96 overflow-auto p-4 font-mono text-xs leading-5 text-foreground">
+      <pre className="max-h-96 overflow-auto p-3 font-mono text-xs leading-5 text-foreground">
         <code>{formatted}</code>
       </pre>
       {bindings !== undefined && (

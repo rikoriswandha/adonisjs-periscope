@@ -92,7 +92,7 @@ const columns: EntryColumn[] = [
   },
 ]
 
-function CacheDetail({ entry, onClose }: RegisteredEntryDetailProps) {
+function CacheDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
   const content = cacheContent(entry)
   const hasCapturedValue = Object.prototype.hasOwnProperty.call(content, 'value')
   return (
@@ -106,22 +106,22 @@ function CacheDetail({ entry, onClose }: RegisteredEntryDetailProps) {
         </>
       }
       onOpenChange={(open) => !open && onClose()}
-      open
+      open={open}
       tags={entry.tags}
       title={truncate(content.key ?? `Clear ${content.store}`, 96)}
     >
-      <dl className="grid gap-3 rounded-lg border p-4 sm:grid-cols-2">
+      <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
         <div>
           <dt className="text-xs text-muted-foreground">Store</dt>
-          <dd className="mt-1 break-all font-mono text-sm">{content.store}</dd>
+          <dd className="mt-0.5 break-all font-mono text-sm">{content.store}</dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">Layer</dt>
-          <dd className="mt-1 font-mono text-sm">{content.layer?.toUpperCase() ?? 'All layers'}</dd>
+          <dd className="mt-0.5 font-mono text-sm">{content.layer?.toUpperCase() ?? 'All layers'}</dd>
         </div>
         <div className="sm:col-span-2">
           <dt className="text-xs text-muted-foreground">Cache key</dt>
-          <dd className="mt-1 max-h-24 overflow-auto break-all font-mono text-sm">
+          <dd className="mt-0.5 max-h-24 overflow-auto break-all font-mono text-sm">
             {content.key ?? 'Operation applies to the entire store'}
           </dd>
         </div>
@@ -129,7 +129,7 @@ function CacheDetail({ entry, onClose }: RegisteredEntryDetailProps) {
       {hasCapturedValue ? (
         <JsonTree label="Captured cache value" value={content.value} />
       ) : (
-        <section className="rounded-lg border bg-muted/25 p-4">
+        <section className="rounded-md border bg-muted/25 p-3">
           <h3 className="text-sm font-semibold">No value payload recorded</h3>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             Values are omitted for this operation or value capture is disabled. Keys and operation

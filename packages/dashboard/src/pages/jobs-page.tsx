@@ -7,7 +7,7 @@ import type { EntryTypeImplementation, RegisteredEntryDetailProps } from '@/entr
 import { formatDateTime, formatRelativeTime, truncate } from '@/lib/format'
 import type { JobContent, ScheduleContent, StoredEntry } from '@/types'
 
-function JobDetail({ entry, onClose }: RegisteredEntryDetailProps) {
+function JobDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
   const content = entry.content as JobContent
   return (
     <EntryDetailDrawer
@@ -21,7 +21,7 @@ function JobDetail({ entry, onClose }: RegisteredEntryDetailProps) {
         </>
       }
       onOpenChange={(open) => !open && onClose()}
-      open
+      open={open}
       tags={entry.tags}
       title={content.name ?? content.jobId}
     >
@@ -30,14 +30,14 @@ function JobDetail({ entry, onClose }: RegisteredEntryDetailProps) {
   )
 }
 
-function ScheduleDetail({ entry, onClose }: RegisteredEntryDetailProps) {
+function ScheduleDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
   const content = entry.content as ScheduleContent
   return (
     <EntryDetailDrawer
       description={`${content.queue} · ${formatDateTime(entry.createdAt)}`}
       meta={<Badge variant="info">scheduled</Badge>}
       onOpenChange={(open) => !open && onClose()}
-      open
+      open={open}
       tags={entry.tags}
       title={content.name ?? content.jobId}
     >

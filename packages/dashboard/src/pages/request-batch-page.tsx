@@ -30,6 +30,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
+import { Frame, FramePanel } from '@/components/ui/frame'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsPanel, TabsTab } from '@/components/ui/tabs'
 import { useDashboard } from '@/dashboard-context'
@@ -140,42 +141,47 @@ function BatchTimeline({
   onSelect: (entry: StoredEntry) => void
 }) {
   return (
-    <section
-      aria-label="Batch timeline"
-      className="overflow-hidden rounded-lg border bg-background"
-    >
-      <ol className="divide-y">
-        {timeline.map((entry, index) => {
-          const duration = asNumber(entry.content.durationMs)
-          return (
-            <li key={entry.uuid}>
-              <button
-                className="grid w-full grid-cols-[2.25rem_minmax(0,1fr)] gap-3 px-4 py-3 text-left outline-none transition-colors hover:bg-accent/45 focus-visible:bg-accent/55 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:grid-cols-[2.25rem_7rem_minmax(0,1fr)_auto] sm:items-center"
-                onClick={() => onSelect(entry)}
-                type="button"
-              >
-                <span className="grid size-8 place-items-center rounded-md border bg-muted text-muted-foreground [&_svg]:size-4">
-                  <TimelineIcon type={entry.type} />
-                </span>
-                <span className="hidden font-mono text-xs text-muted-foreground sm:block">
-                  +{index.toString().padStart(2, '0')} · {entry.type.replace('_', ' ')}
-                </span>
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium">{entrySummary(entry)}</span>
-                  <span className="mt-0.5 block font-mono text-2xs text-muted-foreground sm:hidden">
-                    {entry.type.replace('_', ' ')}
-                  </span>
-                </span>
-                <span className="col-start-2 flex items-center gap-2 sm:col-auto">
-                  {duration !== undefined && <DurationBadge value={duration} />}
-                  {entry.type === 'exception' && <Badge variant="destructive">exception</Badge>}
-                </span>
-              </button>
-            </li>
-          )
-        })}
-      </ol>
-    </section>
+    <Frame className="rounded-lg p-0.5">
+      <FramePanel className="overflow-hidden rounded-md p-0 shadow-none before:shadow-none">
+        <section aria-label="Batch timeline">
+          <ol className="divide-y">
+            {timeline.map((entry, index) => {
+              const duration = asNumber(entry.content.durationMs)
+              return (
+                <li key={entry.uuid}>
+                  <button
+                    className="grid w-full grid-cols-[1.75rem_minmax(0,1fr)] gap-3 px-3 py-2 text-left outline-none transition-colors hover:bg-accent/45 focus-visible:bg-accent/55 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:grid-cols-[1.75rem_7rem_minmax(0,1fr)_auto] sm:items-center"
+                    onClick={() => onSelect(entry)}
+                    type="button"
+                  >
+                    <span className="grid size-7 place-items-center rounded-md border bg-muted text-muted-foreground [&_svg]:size-4">
+                      <TimelineIcon type={entry.type} />
+                    </span>
+                    <span className="hidden font-mono text-xs text-muted-foreground sm:block">
+                      +{index.toString().padStart(2, '0')} · {entry.type.replace('_', ' ')}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium">
+                        {entrySummary(entry)}
+                      </span>
+                      <span className="mt-0.5 block font-mono text-2xs text-muted-foreground sm:hidden">
+                        {entry.type.replace('_', ' ')}
+                      </span>
+                    </span>
+                    <span className="col-start-2 flex items-center gap-2 sm:col-auto">
+                      {duration !== undefined && <DurationBadge value={duration} />}
+                      {entry.type === 'exception' && (
+                        <Badge variant="destructive">exception</Badge>
+                      )}
+                    </span>
+                  </button>
+                </li>
+              )
+            })}
+          </ol>
+        </section>
+      </FramePanel>
+    </Frame>
   )
 }
 
@@ -227,7 +233,7 @@ export function RequestBatchPage() {
 
   if (loading) {
     return (
-      <div className="space-y-5" aria-label="Loading batch">
+      <div className="space-y-4" aria-label="Loading batch">
         <Skeleton className="h-8 w-52" />
         <Skeleton className="h-44 w-full" />
         <Skeleton className="h-80 w-full" />
@@ -294,60 +300,64 @@ export function RequestBatchPage() {
     const entryTypes = [...new Set(entries.map((entry) => entry.type.replace('_', ' ')))]
 
     return (
-      <div className="space-y-5">
+      <div className="space-y-4">
         <Button render={<Link to={genericBackTarget} />} size="sm" variant="ghost">
           <ArrowLeft aria-hidden="true" />
           Back to {indexLabel}
         </Button>
 
-        <section className="overflow-hidden rounded-lg border bg-background">
-          <div className="flex flex-col gap-4 border-b p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
-            <div className="min-w-0">
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <Badge variant="secondary">ambient/process batch</Badge>
-                {entryTypes.map((type) => (
-                  <Badge className="font-mono" key={type} variant="outline">
-                    {type}
-                  </Badge>
-                ))}
+        <Frame className="rounded-lg p-0.5">
+          <FramePanel className="overflow-hidden rounded-md p-0 shadow-none before:shadow-none">
+            <section>
+              <div className="flex flex-col gap-4 border-b p-3 sm:flex-row sm:items-start sm:justify-between sm:p-4">
+                <div className="min-w-0">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <Badge variant="secondary">ambient/process batch</Badge>
+                    {entryTypes.map((type) => (
+                      <Badge className="font-mono" key={type} variant="outline">
+                        {type}
+                      </Badge>
+                    ))}
+                  </div>
+                  <h2 className="break-all font-mono text-sm font-semibold leading-6 sm:text-base">
+                    {entrySummary(firstEntry)}
+                  </h2>
+                  <p className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">
+                    This batch was recorded outside an HTTP request lifecycle. Its entries remain
+                    available in sequence order.
+                  </p>
+                </div>
+                <div className="shrink-0 text-left sm:text-right">
+                  <div className="text-xs text-muted-foreground">Recorded</div>
+                  <time className="text-sm font-medium" dateTime={firstEntry.createdAt}>
+                    {formatDateTime(firstEntry.createdAt)}
+                  </time>
+                </div>
               </div>
-              <h2 className="break-all font-mono text-base font-semibold leading-6 sm:text-lg">
-                {entrySummary(firstEntry)}
-              </h2>
-              <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
-                This batch was recorded outside an HTTP request lifecycle. Its entries remain
-                available in sequence order.
-              </p>
-            </div>
-            <div className="shrink-0 text-left sm:text-right">
-              <div className="text-xs text-muted-foreground">Recorded</div>
-              <time className="text-sm font-medium" dateTime={firstEntry.createdAt}>
-                {formatDateTime(firstEntry.createdAt)}
-              </time>
-            </div>
-          </div>
-          <dl className="grid divide-y bg-muted/25 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-            <div className="p-4">
-              <dt className="text-xs text-muted-foreground">Batch ID</dt>
-              <dd
-                className="mt-1 truncate font-mono text-xs font-medium"
-                title={firstEntry.batchId}
-              >
-                {firstEntry.batchId}
-              </dd>
-            </div>
-            <div className="p-4">
-              <dt className="text-xs text-muted-foreground">Entries</dt>
-              <dd className="mt-1 font-mono text-sm font-medium">
-                {entries.length.toLocaleString()}
-              </dd>
-            </div>
-            <div className="p-4">
-              <dt className="text-xs text-muted-foreground">Entry types</dt>
-              <dd className="mt-1 text-sm font-medium">{entryTypes.join(', ')}</dd>
-            </div>
-          </dl>
-        </section>
+              <dl className="grid divide-y bg-muted/25 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+                <div className="p-3">
+                  <dt className="text-xs text-muted-foreground">Batch ID</dt>
+                  <dd
+                    className="mt-1 truncate font-mono text-xs font-medium"
+                    title={firstEntry.batchId}
+                  >
+                    {firstEntry.batchId}
+                  </dd>
+                </div>
+                <div className="p-3">
+                  <dt className="text-xs text-muted-foreground">Entries</dt>
+                  <dd className="mt-1 font-mono text-sm font-medium">
+                    {entries.length.toLocaleString()}
+                  </dd>
+                </div>
+                <div className="p-3">
+                  <dt className="text-xs text-muted-foreground">Entry types</dt>
+                  <dd className="mt-1 text-sm font-medium">{entryTypes.join(', ')}</dd>
+                </div>
+              </dl>
+            </section>
+          </FramePanel>
+        </Frame>
 
         <BatchTimeline onSelect={setSelected} timeline={timeline} />
 
@@ -375,91 +385,97 @@ export function RequestBatchPage() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <Button render={<Link to={backTarget} />} size="sm" variant="ghost">
         <ArrowLeft aria-hidden="true" />
         All requests
       </Button>
 
-      <section className="overflow-hidden rounded-lg border bg-background">
-        <div className="flex flex-col gap-4 border-b p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
-          <div className="min-w-0">
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <Badge className="font-mono" variant="outline">
-                {request.method}
-              </Badge>
-              <StatusBadge status={request.status} />
-              <DurationBadge value={request.durationMs} />
-              {request.clientDisconnected && <Badge variant="warning">client disconnected</Badge>}
+      <Frame className="rounded-lg p-0.5">
+        <FramePanel className="overflow-hidden rounded-md p-0 shadow-none before:shadow-none">
+          <section>
+            <div className="flex flex-col gap-4 border-b p-3 sm:flex-row sm:items-start sm:justify-between sm:p-4">
+              <div className="min-w-0">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <Badge className="font-mono" variant="outline">
+                    {request.method}
+                  </Badge>
+                  <StatusBadge status={request.status} />
+                  <DurationBadge value={request.durationMs} />
+                  {request.clientDisconnected && (
+                    <Badge variant="warning">client disconnected</Badge>
+                  )}
+                </div>
+                <h2 className="break-all font-mono text-sm font-semibold leading-6 sm:text-base">
+                  {request.url}
+                </h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {request.routePattern ?? 'Unmatched route'}
+                  {request.routeName ? ` · ${request.routeName}` : ''}
+                </p>
+                {request.traceId && (
+                  <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
+                    Trace <span title={request.traceId}>{request.traceId}</span>
+                  </p>
+                )}
+              </div>
+              <div className="shrink-0 text-left sm:text-right">
+                <div className="text-xs text-muted-foreground">Recorded</div>
+                <time className="text-sm font-medium" dateTime={requestEntry.createdAt}>
+                  {formatDateTime(requestEntry.createdAt)}
+                </time>
+                <Button
+                  className="mt-2"
+                  render={<a download href={api.getBatchExportUrl(batchId)} />}
+                  size="sm"
+                  variant="outline"
+                >
+                  <Download aria-hidden="true" />
+                  Export JSON
+                </Button>
+              </div>
             </div>
-            <h2 className="break-all font-mono text-base font-semibold leading-6 sm:text-lg">
-              {request.url}
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {request.routePattern ?? 'Unmatched route'}
-              {request.routeName ? ` · ${request.routeName}` : ''}
-            </p>
-            {request.traceId && (
-              <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
-                Trace <span title={request.traceId}>{request.traceId}</span>
-              </p>
+            {requestEntry.tags.length > 0 && (
+              <div className="border-b px-3 py-2 sm:px-4">
+                <EntryTagChips tags={requestEntry.tags} />
+              </div>
             )}
-          </div>
-          <div className="shrink-0 text-left sm:text-right">
-            <div className="text-xs text-muted-foreground">Recorded</div>
-            <time className="text-sm font-medium" dateTime={requestEntry.createdAt}>
-              {formatDateTime(requestEntry.createdAt)}
-            </time>
-            <Button
-              className="mt-2"
-              render={<a download href={api.getBatchExportUrl(batchId)} />}
-              size="sm"
-              variant="outline"
-            >
-              <Download aria-hidden="true" />
-              Export JSON
-            </Button>
-          </div>
-        </div>
-        {requestEntry.tags.length > 0 && (
-          <div className="border-b p-4 sm:px-5">
-            <EntryTagChips tags={requestEntry.tags} />
-          </div>
-        )}
-        <dl className="grid divide-y bg-muted/25 sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-4">
-          <div className="p-4">
-            <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Globe2 aria-hidden="true" className="size-3.5" /> Client
-            </dt>
-            <dd className="mt-1 break-all text-sm font-medium">{request.ip}</dd>
-          </div>
-          <div className="p-4">
-            <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <UserRound aria-hidden="true" className="size-3.5" /> User
-            </dt>
-            <dd className="mt-1 truncate text-sm font-medium">
-              {request.user?.email ?? request.user?.id ?? 'Guest'}
-            </dd>
-          </div>
-          <div className="p-4">
-            <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Clock3 aria-hidden="true" className="size-3.5" /> Memory delta
-            </dt>
-            <dd className="mt-1 font-mono text-sm font-medium">
-              {formatBytes(request.memoryDeltaBytes)}
-            </dd>
-          </div>
-          <div className="p-4">
-            <dt className="text-xs text-muted-foreground">Batch ID</dt>
-            <dd
-              className="mt-1 truncate font-mono text-xs font-medium"
-              title={requestEntry.batchId}
-            >
-              {requestEntry.batchId}
-            </dd>
-          </div>
-        </dl>
-      </section>
+            <dl className="grid divide-y bg-muted/25 sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-4">
+              <div className="p-3">
+                <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Globe2 aria-hidden="true" className="size-3.5" /> Client
+                </dt>
+                <dd className="mt-1 break-all text-sm font-medium">{request.ip}</dd>
+              </div>
+              <div className="p-3">
+                <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <UserRound aria-hidden="true" className="size-3.5" /> User
+                </dt>
+                <dd className="mt-1 truncate text-sm font-medium">
+                  {request.user?.email ?? request.user?.id ?? 'Guest'}
+                </dd>
+              </div>
+              <div className="p-3">
+                <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Clock3 aria-hidden="true" className="size-3.5" /> Memory delta
+                </dt>
+                <dd className="mt-1 font-mono text-sm font-medium">
+                  {formatBytes(request.memoryDeltaBytes)}
+                </dd>
+              </div>
+              <div className="p-3">
+                <dt className="text-xs text-muted-foreground">Batch ID</dt>
+                <dd
+                  className="mt-1 truncate font-mono text-xs font-medium"
+                  title={requestEntry.batchId}
+                >
+                  {requestEntry.batchId}
+                </dd>
+              </div>
+            </dl>
+          </section>
+        </FramePanel>
+      </Frame>
 
       {nPlusOneWarnings.length > 0 && (
         <Alert variant="warning">
