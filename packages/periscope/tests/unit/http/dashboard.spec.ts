@@ -109,6 +109,33 @@ test.group('Dashboard authorization', () => {
     assert.isTrue(mutedDuringAuthorize)
     assert.isTrue(mutedDuringHandler)
   })
+
+  test('re-run dashboard authorization before opening an SSE connection', async ({ assert }) => {
+    let authorizationCalls = 0
+    let streamHandlerCalls = 0
+    const config = defineConfig({
+      storage: { driver: 'memory' },
+      dashboard: {
+        authorize: () => {
+          authorizationCalls += 1
+          return false
+        },
+      },
+    })
+    const recorder = createRecorder(config).recorder
+    const context = createContext('/periscope/api/stream')
+
+    await createDashboardAuthorize(config, recorder, {
+      nodeEnv: 'development',
+      periscopeEnabled: () => undefined,
+    })(context, async () => {
+      streamHandlerCalls += 1
+    })
+
+    assert.equal(context.response.getStatus(), 403)
+    assert.equal(authorizationCalls, 1)
+    assert.equal(streamHandlerCalls, 0)
+  })
 })
 
 test.group('Dashboard JSON API', () => {

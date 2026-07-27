@@ -49,6 +49,12 @@ import type { EntryRow, TagRow } from './sql.ts'
  */
 type Binding = string | number | bigint | Buffer | null
 
+interface PendingSave {
+  entries: StoredEntry[]
+  resolve(): void
+  reject(error: unknown): void
+}
+
 /**
  * The entry columns, in the one order both the insert statement and the row type use. Written
  * once so a column added to {@link EntryRow} cannot be bound into the wrong slot.
@@ -252,13 +258,12 @@ function openDatabase(path: string): DatabaseHandle {
  *
  * - **The interface is async, the driver is not.** better-sqlite3 is synchronous by design — it
  *   is faster than an async driver for this workload precisely because there is no thread pool
- *   hop. `save` is nonetheless async-honest: it yields to the event loop *before* touching the
- *   database, so a flush of a few hundred rows can never run inline with whatever microtask
- *   called it. The recorder already took the flush off the request's hot path; this keeps the
- *   promise the interface makes literally true rather than nominally. Reads deliberately do not
- *   yield. They serve one dashboard request for one page of at most a thousand rows, an index
- *   scan that costs microseconds, and an extra `setImmediate` per read would only add a tick of
- *   latency to buy nothing.
+ *   hop. `save` is nonetheless async-honest: requests arriving in one event-loop turn are
+ *   coalesced and committed in one transaction from the check phase. The caller's I/O runs first,
+ *   and a busy application pays for one WAL commit per turn rather than one per request. Reads
+ *   deliberately do not yield. They serve one dashboard request for one page of at most a
+ *   thousand rows, an index scan that costs microseconds, and an extra `setImmediate` per read
+ *   would only add a tick of latency to buy nothing.
  *
  * - **Statements are prepared once and cached by their SQL text.** Prepared `Statement` objects
  *   are where better-sqlite3's speed comes from, and re-preparing on every call throws it away.
@@ -281,17 +286,21 @@ export class SqliteLocalStore implements PeriscopeStore {
    * The mutating operations, each wrapped once in a better-sqlite3 transaction. `db.transaction`
    * returns a function, so the wrappers are built here rather than rebuilt per call.
    */
-  readonly #saveAll: (entries: StoredEntry[]) => void
+  readonly #saveAll: (saves: readonly PendingSave[]) => void
   readonly #pruneBefore: (before: number, keepExceptions: boolean) => number
   readonly #trimTo: (cap: number) => number
   readonly #clearAll: () => void
+  readonly #pendingSaves: PendingSave[] = []
+  #saveScheduled = false
 
   constructor(options: SqliteLocalStoreOptions) {
     this.#db = openDatabase(options.path)
 
-    this.#saveAll = this.#db.transaction((entries: StoredEntry[]) => {
-      this.#insertEntries(entries)
-      this.#insertTags(entries)
+    this.#saveAll = this.#db.transaction((saves: readonly PendingSave[]) => {
+      for (const save of saves) {
+        this.#insertEntries(save.entries)
+        this.#insertTags(save.entries)
+      }
     })
 
     this.#pruneBefore = this.#db.transaction((before: number, keepExceptions: boolean) => {
@@ -428,6 +437,23 @@ export class SqliteLocalStore implements PeriscopeStore {
   }
 
   /**
+   * Commit every save that reached the driver during the current event-loop turn. Resolving each
+   * caller separately preserves the store contract while sharing SQLite's expensive WAL commit.
+   */
+  #drainPendingSaves(): void {
+    this.#saveScheduled = false
+    const saves = this.#pendingSaves.splice(0)
+    if (saves.length === 0) return
+
+    try {
+      this.#saveAll(saves)
+      for (const save of saves) save.resolve()
+    } catch (error) {
+      for (const save of saves) save.reject(error)
+    }
+  }
+
+  /**
    * Build the `select` behind {@link SqliteLocalStore.list}: one `where` fragment per filter that
    * was actually set, so an unfiltered query stays an index scan rather than a chain of
    * `1 = 1`s.
@@ -481,22 +507,15 @@ export class SqliteLocalStore implements PeriscopeStore {
   }
 
   async save(entries: StoredEntry[]): Promise<void> {
-    if (entries.length === 0) {
-      return
-    }
+    if (entries.length === 0) return
 
-    /*
-     * The yield that makes this driver async-honest — see the class note. It happens before the
-     * transaction rather than after it so the caller's synchronous continuation runs first: a
-     * flush of several hundred rows is the one operation here big enough to be worth not doing
-     * inline, and `setImmediate` puts it in the check phase, after any pending I/O callback the
-     * application is actually waiting on.
-     */
-    await new Promise<void>((resolve) => {
-      setImmediate(resolve)
+    return new Promise<void>((resolve, reject) => {
+      this.#pendingSaves.push({ entries, resolve, reject })
+      if (this.#saveScheduled) return
+
+      this.#saveScheduled = true
+      setImmediate(() => this.#drainPendingSaves())
     })
-
-    this.#saveAll(entries)
   }
 
   async find(uuid: string): Promise<StoredEntry | null> {

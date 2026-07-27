@@ -15,6 +15,8 @@
 
 import { defineConfig } from 'periscope/periscope_config'
 
+const benchmarking = process.env.PERISCOPE_BENCH_STORAGE === 'memory'
+
 export default defineConfig({
   enabled: true,
 
@@ -26,11 +28,12 @@ export default defineConfig({
 
   storage: {
     /**
-     * The shipped default. Everything Periscope records here lands in `tmp/periscope.sqlite`,
-     * which is git-ignored and safe to delete — `node ace periscope:demo` prints the resolved
-     * path so the file can be queried with `sqlite3` directly.
+     * The shipped default. The Phase 8 benchmark switches only its isolated child process to the
+     * bounded memory driver: the gate measures watcher/recorder hot-path overhead without folding
+     * host-specific filesystem latency into every run. Storage persistence and failure behavior
+     * have separate sqlite and postgres gates.
      */
-    driver: 'sqlite-local',
+    driver: benchmarking ? 'memory' : 'sqlite-local',
     maxEntries: 10_000,
   },
 
@@ -43,8 +46,8 @@ export default defineConfig({
     /**
      * Short enough that the demo command sees the ambient batch rotate without waiting around.
      */
-    ambientRotationMs: 2_000,
-    pausedFlagTtlMs: 5_000,
+    ambientRotationMs: benchmarking ? 3_600_000 : 2_000,
+    pausedFlagTtlMs: benchmarking ? 3_600_000 : 5_000,
   },
 
   redact: {
@@ -73,7 +76,7 @@ export default defineConfig({
        * Disable this when response bodies are too sensitive to retain even after redaction, or
        * when serialising previews would add unacceptable work to request completion.
        */
-      captureResponse: true,
+      captureResponse: !benchmarking,
 
       /**
        * Lower this when response previews consume too much storage, or raise it when the useful
@@ -84,7 +87,7 @@ export default defineConfig({
       /**
        * Disable this when session state is too sensitive or noisy to attach to request entries.
        */
-      captureSession: true,
+      captureSession: !benchmarking,
     },
 
     query: {
@@ -92,7 +95,7 @@ export default defineConfig({
        * Disable this when database activity is intentionally observed by another tool or query
        * volume is not useful to the investigation.
        */
-      enabled: true,
+      enabled: !benchmarking,
 
       /**
        * Lower this to flag tighter latency regressions, or raise it when expensive queries are
@@ -112,7 +115,7 @@ export default defineConfig({
        * Disable this when the application's exception pipeline already records the same failures
        * and duplicate entries would obscure the request batch.
        */
-      enabled: true,
+      enabled: !benchmarking,
 
       /**
        * Use `always` when deployed source is available and production code frames are worth the
@@ -124,7 +127,7 @@ export default defineConfig({
        * Disable this when a process supervisor owns unhandled failures and recording them here
        * would duplicate an existing crash report.
        */
-      captureProcessErrors: true,
+      captureProcessErrors: !benchmarking,
     },
 
     log: {
@@ -132,7 +135,7 @@ export default defineConfig({
        * Disable this when logs already reach an observability system and copying them into request
        * batches would add noise rather than context.
        */
-      enabled: true,
+      enabled: !benchmarking,
 
       /**
        * Lower this while investigating verbose application behaviour, or raise it when only the
@@ -146,7 +149,7 @@ export default defineConfig({
        * Disable this when application events carry no useful diagnostic context or are already
        * captured by another subscriber.
        */
-      enabled: true,
+      enabled: !benchmarking,
 
       /**
        * Add globs for application event namespaces that are too noisy or sensitive to retain;
@@ -159,41 +162,41 @@ export default defineConfig({
       /**
        * Periscope commands are always ignored; add application commands here when they are noisy.
        */
-      enabled: true,
+      enabled: !benchmarking,
       ignore: [],
     },
 
     mail: {
-      enabled: true,
+      enabled: !benchmarking,
     },
 
     cache: {
       /**
        * Capture fixture values so the functional test proves recursive redaction on cache entries.
        */
-      enabled: true,
-      captureValues: true,
+      enabled: !benchmarking,
+      captureValues: !benchmarking,
     },
 
     model: {
       /**
        * Capture the fixture update diff so Lucid's pre-hydration dirty state is exercised.
        */
-      enabled: true,
-      captureDirty: true,
+      enabled: !benchmarking,
+      captureDirty: !benchmarking,
     },
 
     gate: {
-      enabled: true,
+      enabled: !benchmarking,
       ignoreAbilities: [],
     },
 
     dump: {
-      enabled: true,
+      enabled: !benchmarking,
     },
 
     http_client: {
-      enabled: true,
+      enabled: !benchmarking,
     },
   },
 

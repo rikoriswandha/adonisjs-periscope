@@ -1,84 +1,381 @@
 # Periscope
 
-Periscope is a Laravel-Telescope-style debug assistant for AdonisJS v7. It records what an
-application actually did — HTTP requests, database queries, exceptions, logs, events, commands,
-mail, cache, model changes, authorization checks, dumps, and outbound HTTP calls — correlates each
-one into the batch that produced it, and serves the result from a local dashboard
-SPA mounted inside the app. It is a development and staging tool, not an APM: everything stays on
-the machine, and the package makes no outbound network calls.
+Periscope is a Laravel Telescope-style runtime recorder and local dashboard for AdonisJS v7. It
+correlates the work an application actually performs—HTTP requests, database queries, exceptions,
+logs, events, commands, mail, cache operations, model changes, authorization checks, dumps, and
+outbound HTTP calls—without sending telemetry to an external service.
 
-## Layout
-
-This repository is an npm workspaces monorepo.
-
-| Path                 | Package                | Description                                                                                 |
-| -------------------- | ---------------------- | ------------------------------------------------------------------------------------------- |
-| `packages/periscope` | `periscope`            | The publishable package: provider, recorder, watchers, storage drivers, dashboard HTTP API. |
-| `packages/dashboard` | `@periscope/dashboard` | Private. Vite + React SPA; builds into `packages/periscope/build/dashboard`.                |
-| `playground`         | `playground`           | Private. Fixture AdonisJS v7 app used for integration tests and manual QA.                  |
+Periscope is a development and staging diagnostic tool, not an APM or a production tracing backend.
+Recorded values remain in the configured local store.
 
 ## Requirements
 
-- Node.js >= 24
-- npm 11 or newer (workspaces, and the `allow-scripts` policy in `.npmrc`)
+- Node.js 24 or newer
+- AdonisJS 7
+- npm 11 or newer when contributing to this repository
 
-## Commands
+Optional integrations activate only when their host packages are installed: Lucid, Mail, Cache, and
+Bouncer.
 
-Run from the repository root.
+## Two-minute quickstart
 
-| Command             | What it does                                                                         |
-| ------------------- | ------------------------------------------------------------------------------------ |
-| `npm install`       | Install every workspace. Runs native install scripts (`better-sqlite3`).             |
-| `npm run build`     | Build `periscope`, then the dashboard SPA into `packages/periscope/build/dashboard`. |
-| `npm run dev`       | Run the playground migrations, then boot it with HMR.                                |
-| `npm test`          | Package unit tests, then playground integration tests.                               |
-| `npm run lint`      | ESLint across all workspaces.                                                        |
-| `npm run typecheck` | `tsc --noEmit` across all workspaces.                                                |
+Install and configure the package:
 
-## Status
+```sh
+npm install periscope
+node ace add periscope
+```
 
-**Phases 0–7 complete.** The recorder, storage drivers, watcher set, dashboard API and SPA,
-installer, Ace commands, live stream, monitoring, sampling, and doctor hook run end to end. See
-`docs/IMPLEMENTATION_PLAN.md` for the remaining hardening and release work.
+The configure hook creates `config/periscope.ts`, registers the provider early in `adonisrc.ts`,
+adds the request watcher as the first server middleware, and installs the exception reporter mixin.
+If you select the shared database driver, also run:
 
-The dashboard provides dedicated request, query, and exception workflows plus registry-driven
-screens for command, mail, cache, model, gate, dump, and outbound HTTP entries. Live mode uses an
-authenticated server-sent event stream with polling fallback. Tag chips can be monitored so a
-matching batch survives sampling.
+```sh
+node ace migration:run
+```
 
-The request middleware must remain **first** in `start/kernel.ts`'s `server.use([...])`; it opens
-the batch every other watcher records into. Queries additionally need `debug: true` on the Lucid
-connection so Lucid emits `db:query`. Add `periscopeDoctor()` to `adonisrc.ts` `hooks.init` to
-check both settings, migrations, dashboard route collisions, and the Node.js version during
-development.
+Start the application and open `/periscope`:
 
-## Production sampling
+```sh
+node ace serve --hmr
+```
 
-Production recording is opt-in. A useful baseline samples 1% of batches while always retaining
-exceptions, slow work, and 5xx responses:
+Generate some application traffic. New entries appear live and related work shares one batch. With
+the default `sqlite-local` driver, data is written to `tmp/periscope.sqlite`.
+
+### Verify the generated wiring
+
+The request middleware must remain first so it can establish the correlation scope around all
+downstream work:
+
+```ts
+// start/kernel.ts
+server.use([
+  () => import('periscope/middleware/request_watcher'),
+  // other server middleware
+])
+```
+
+The exception reporter preserves the application's existing handler and records during `report()`:
+
+```ts
+// app/exceptions/handler.ts
+import { ExceptionHandler } from '@adonisjs/core/http'
+import { withPeriscope } from 'periscope/exception_reporter'
+
+class HttpExceptionHandler extends ExceptionHandler {}
+
+export default withPeriscope(HttpExceptionHandler)
+```
+
+Query recording requires Lucid query events. Enable `debug: true` on the Lucid connection you want
+to observe.
+
+## Configuration
+
+`config/periscope.ts` exports `defineConfig(...)`. The generated stub documents every option and
+starts with safe local defaults:
 
 ```ts
 import { defineConfig } from 'periscope/periscope_config'
 
 export default defineConfig({
-  enabledIn: ['development', 'test', 'production'],
+  enabledIn: ['development', 'test'],
+
+  storage: {
+    driver: 'sqlite-local',
+    maxEntries: 10_000,
+  },
+
   recording: {
-    sampleRate: 0.01,
-    keepAlways: (batch) =>
-      batch.hasEntryOfType('exception') ||
-      batch.hasTag('slow') ||
-      batch.hasEntryWhere(
-        (entry) =>
-          entry.type === 'request' &&
-          typeof entry.content.status === 'number' &&
-          entry.content.status >= 500
-      ),
+    caps: { default: 100, query: 200 },
+    sampleRate: 1,
+  },
+
+  dashboard: {
+    path: '/periscope',
   },
 })
 ```
 
-Monitoring a tag in the dashboard also retains every matching batch, independently of
-`sampleRate`. Recorded content remains local; Periscope makes no outbound network calls.
+`PERISCOPE_ENABLED=true` explicitly enables recording outside `enabledIn`;
+`PERISCOPE_ENABLED=false` disables it everywhere. When disabled, the provider installs no watcher,
+logger, process, model, or dashboard hooks.
+
+### Storage drivers
+
+| Driver         | Use                             | Notes                                                                                         |
+| -------------- | ------------------------------- | --------------------------------------------------------------------------------------------- |
+| `sqlite-local` | Default local development       | Dedicated SQLite database, defaulting to `tmp/periscope.sqlite`; no Lucid dependency          |
+| `database`     | Shared or remote inspection     | Uses a Lucid connection and the package migration; configure `storage.connection` when needed |
+| `memory`       | Tests and short-lived processes | Bounded process-local ring buffer; all entries disappear at process exit                      |
+
+All drivers enforce `storage.maxEntries`. `sqlite-local` uses WAL mode and indexed, chunked
+operations; the database driver keeps the same storage contract across supported Lucid databases.
+
+## Dashboard security
+
+The dashboard and JSON/SSE API live below `dashboard.path`. Every dashboard request passes the
+environment gate and then `dashboard.authorize`. The default authorizer allows local development
+and denies production.
+
+For a deliberately exposed non-development environment, require an application-specific identity:
+
+```ts
+export default defineConfig({
+  enabledIn: ['development', 'staging'],
+
+  dashboard: {
+    path: '/internal/periscope',
+    authorize: async ({ auth }) => {
+      await auth.check()
+      return auth.user?.email === 'operator@example.com'
+    },
+  },
+})
+```
+
+Do not use a guessable URL as authorization. Terminate TLS at the application or a trusted proxy,
+protect the route with the same identity controls as other operational tools, and keep the
+production environment disabled unless an incident workflow requires it.
+
+Mail HTML is sanitized before rendering, then placed in an iframe with an empty `sandbox` and a
+`no-referrer` policy. Remote images, scripts, forms, embedded content, event handlers, refreshes,
+and network-capable CSS are removed.
+
+## Production sampling recipe
+
+Periscope is off in production by default. If an incident requires temporary production recording,
+combine explicit enablement, strict authorization, aggressive sampling, low caps, redaction, and
+short retention:
+
+```ts
+import {
+  DEFAULT_REDACT_HEADERS,
+  DEFAULT_REDACT_KEYS,
+  defineConfig,
+} from 'periscope/periscope_config'
+
+export default defineConfig({
+  enabledIn: ['development', 'test', 'production'],
+
+  storage: {
+    driver: 'database',
+    connection: 'periscope',
+    maxEntries: 2_000,
+  },
+
+  recording: {
+    sampleRate: 0.01,
+    caps: { default: 20, query: 50 },
+    keepAlways: (batch) =>
+      batch.hasEntryOfType('exception') ||
+      batch.hasEntryWhere(
+        (entry) => entry.type === 'request' && Number(entry.content.status) >= 500
+      ),
+  },
+
+  redact: {
+    keys: [...DEFAULT_REDACT_KEYS, 'tenantSecret'],
+    headers: [...DEFAULT_REDACT_HEADERS],
+  },
+
+  watchers: {
+    request: { captureResponse: false, captureSession: false },
+    query: { hideBindings: true },
+    command: { captureOutput: false },
+    mail: { captureBody: false },
+    cache: { captureValues: false },
+    model: { captureValues: false },
+    gate: { captureUser: false },
+    dump: { enabled: false },
+  },
+
+  dashboard: {
+    authorize: async ({ auth }) => {
+      await auth.check()
+      return auth.user?.isPeriscopeOperator === true
+    },
+  },
+})
+```
+
+Set `PERISCOPE_ENABLED=true` only for the incident window, monitor storage growth, then disable and
+clear retained data. Sampling is decided once per batch so correlated entries stay together.
+Monitored tags and `recording.keepAlways` can retain a sampled-out batch.
+
+## Watcher reference
+
+Every watcher is enabled by default and can be disabled under `watchers`. Disabling a watcher means
+it subscribes to nothing and adds no runtime hook.
+
+| Watcher       | Source                                          | Recorded content                                                                                                                                              |
+| ------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `request`     | Request middleware and `http:request_completed` | Method, URL, query, route, redacted headers and payload, status, duration, memory delta, client identity summary, optional response/session, disconnect state |
+| `query`       | Lucid `db:query`                                | SQL, serialized or hidden bindings, connection, model/method, duration, transaction/DDL flags, compact error                                                  |
+| `exception`   | Exception handler mixin and process observers   | Name, message, code/status, stack, parsed frames, application code frame, request summary, serialized context                                                 |
+| `log`         | AdonisJS/Pino destination                       | Level, message, context, and source timestamp; self-generated Periscope logs are excluded                                                                     |
+| `event`       | AdonisJS emitter                                | Event name, serialized payload, class-event identity, and listener count                                                                                      |
+| `command`     | Ace lifecycle                                   | Command, arguments, flags, main-command state, exit code, duration, optional output/error                                                                     |
+| `mail`        | AdonisJS Mail lifecycle                         | Lifecycle event, mailer, envelope, subject, optional rendered bodies/raw MIME, message ID, metadata, response/error                                           |
+| `cache`       | Bentocache events                               | Hit, miss, set, delete, or clear; store, key, cache layer/grace state, optional value                                                                         |
+| `model`       | Lucid model lifecycle                           | Create, update, or delete; model, primary key, optional attributes and dirty diff                                                                             |
+| `gate`        | Bouncer authorization events                    | Ability, decision, user ID, arguments, optional user/status/message                                                                                           |
+| `dump`        | `dump()` helper                                 | Safely serialized values and the application call site                                                                                                        |
+| `http_client` | Node diagnostics channel for Undici             | Method, URL, status, duration, redacted request/response headers, completion/error                                                                            |
+
+Watcher-specific options in the generated config control sensitive or expensive captures. All
+application-owned values pass through bounded serialization and recursive redaction before storage.
+
+## Hooks and extensibility
+
+### Filter and tag hooks
+
+Hooks run before an entry enters the recorder buffer:
+
+```ts
+export default defineConfig({
+  hooks: {
+    filter: [(entry) => entry.type !== 'request' || entry.content.routePattern !== '/health'],
+    tag: [
+      (entry) =>
+        entry.type === 'request' && typeof entry.content.routePattern === 'string'
+          ? [`route:${entry.content.routePattern}`]
+          : [],
+    ],
+  },
+})
+```
+
+A filter returning `false` drops the entry. A tag hook returns extra exact-match tags. Hooks are
+safeguarded: an application hook failure is reported internally and cannot break the host request.
+
+### Custom watcher
+
+`Watcher` is the lifecycle contract: a stable `name`, idempotent `register()`, and optional
+idempotent `cleanup()`. A custom application watcher can subscribe to a domain source and feed an
+existing entry type to `Recorder.record()`:
+
+```ts
+import { EntryType, IncomingEntry, type Watcher } from 'periscope'
+import type { Recorder } from 'periscope'
+
+export class PaymentWatcher implements Watcher {
+  readonly name = 'payment'
+  #unsubscribe: (() => void) | null = null
+
+  constructor(
+    private recorder: Recorder,
+    private subscribe: (listener: (paymentId: string) => void) => () => void
+  ) {}
+
+  register() {
+    if (this.#unsubscribe !== null) return
+    this.#unsubscribe = this.subscribe((paymentId) => {
+      this.recorder.record(
+        IncomingEntry.make(EntryType.EVENT, {
+          name: 'payment:settled',
+          payload: { paymentId },
+          isClassEvent: false,
+        }).withTags(['domain:payments'])
+      )
+    })
+  }
+
+  cleanup() {
+    this.#unsubscribe?.()
+    this.#unsubscribe = null
+  }
+}
+```
+
+Create and register it from an application provider after resolving `Recorder` from the container;
+clean it up during provider shutdown. Prefer the built-in event watcher when the source is already
+an AdonisJS emitter event.
+
+### Custom store
+
+`PeriscopeStore` is the complete persistence boundary. A store implements entry save/find/list,
+counts, exception grouping, clear/prune, monitored tags, flags, and `close()`. `MemoryStore`,
+`SqliteLocalStore`, and `DatabaseStore` are reference implementations.
+
+The built-in provider intentionally accepts only the three documented driver names. Advanced
+applications that need a custom backend should implement `PeriscopeStore`, construct `Recorder`
+with that store in an application provider, and wire custom watcher instances to that recorder.
+This keeps custom persistence behavior explicit instead of overloading the package driver resolver.
+
+## Commands
+
+```sh
+node ace periscope:clear
+node ace periscope:prune --hours=24
+node ace periscope:pause
+node ace periscope:resume
+```
+
+The commands start the application, use the configured store, and keep their own work out of the
+recorded timeline. Pause state is shared through the store and expires unless refreshed.
+
+## FAQ
+
+### Why is the dashboard empty?
+
+Check `enabledIn` and `PERISCOPE_ENABLED`, confirm the request middleware is first, enable Lucid
+`debug` for query events, confirm the selected storage path/connection is writable, and generate
+fresh traffic after Periscope has booted.
+
+### Why are database queries missing?
+
+The query watcher consumes Lucid's `db:query` event, which is emitted only when the connection has
+`debug: true`. Also confirm `watchers.query.enabled` is not `false`.
+
+### Why are entries missing under sampling?
+
+Sampling keeps or drops the whole batch. Raise `recording.sampleRate`, add a monitored tag, or use
+`recording.keepAlways` for important exceptions, slow requests, or error responses.
+
+### Why can asynchronously emitted work appear after the request entry?
+
+AdonisJS emitters and diagnostics sources may complete listener work after the host callback
+returns. Periscope assigns sequence numbers when signals are captured, tracks in-flight request
+completion work, and accepts late fragments into the same batch. The timeline orders by sequence;
+it does not block the host response to manufacture synchronous listener ordering.
+
+### Why did an entry contain `[Truncated]`, `[Circular]`, or `[Unserializable]`?
+
+Those are deliberate safety markers from bounded serialization. Periscope limits depth, entry
+size, and hostile object traversal so diagnostics cannot hang or exhaust the application.
+
+### Can Periscope call an external service?
+
+The shipped package code has no outbound telemetry path and CI forbids network APIs in package
+source. The HTTP client watcher observes diagnostics events; it does not issue requests.
+
+### Is it safe to expose `/periscope` publicly?
+
+No. Keep it disabled in production by default. If exposure is required, use a real authorization
+policy, TLS, restrictive retention/capture settings, and a short explicit enablement window.
+
+## Repository development
+
+This repository is an npm workspace monorepo:
+
+| Path                 | Package                                                                        |
+| -------------------- | ------------------------------------------------------------------------------ |
+| `packages/periscope` | Publishable AdonisJS provider, recorder, watchers, storage, HTTP API, commands |
+| `packages/dashboard` | Private React dashboard built into the publishable package                     |
+| `playground`         | AdonisJS integration fixture                                                   |
+
+```sh
+npm ci
+npm run typecheck
+npm run lint
+npm test
+npm run build
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for architecture invariants, focused test commands, security
+review requirements, and benchmark gates.
 
 ## License
 

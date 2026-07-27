@@ -126,11 +126,15 @@ async function makeWatcher(options: WatcherOptions = {}) {
 
   watcher.register()
   getActiveTest()?.cleanup(async () => {
-    watcher.cleanup()
+    await watcher.cleanup()
     await recorder.shutdown()
   })
 
   return { emitter, middleware, recorder, store, watcher }
+}
+
+function settleScheduledCompletion(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
 }
 
 test.group('RequestWatcher', () => {
@@ -144,6 +148,7 @@ test.group('RequestWatcher', () => {
     assert.equal(downstreamValue, 'controller result')
 
     await emitter.emit('http:request_completed', { ctx, duration: [1, 25_000_000] })
+    await settleScheduledCompletion()
 
     const page = await store.list({ type: EntryType.REQUEST })
     assert.lengthOf(page.data, 1)
@@ -169,6 +174,7 @@ test.group('RequestWatcher', () => {
     assert.isUndefined(findRequestBatch(ctx))
 
     await emitter.emit('http:request_completed', { ctx, duration: [0, 2_000_000] })
+    await settleScheduledCompletion()
     await recorder.flush()
 
     const page = await store.list()
@@ -183,6 +189,7 @@ test.group('RequestWatcher', () => {
       recorder.record(IncomingEntry.make(EntryType.QUERY, { sql: 'select application data' }))
     })
     await emitter.emit('http:request_completed', { ctx, duration: [0, 2_000_000] })
+    await settleScheduledCompletion()
     await recorder.flush()
 
     assert.isTrue(isIgnoredRequest(ctx))
@@ -202,6 +209,7 @@ test.group('RequestWatcher', () => {
 
     await middleware.handle(ctx, async () => {})
     await emitter.emit('http:request_completed', { ctx, duration: [0, 1_000_000] })
+    await settleScheduledCompletion()
 
     const page = await store.list({ type: EntryType.REQUEST })
     assert.deepEqual(page.data[0].content.payload, {
@@ -216,6 +224,7 @@ test.group('RequestWatcher', () => {
 
     await middleware.handle(ctx, async () => {})
     await emitter.emit('http:request_completed', { ctx, duration: [0, 10_000_000] })
+    await settleScheduledCompletion()
 
     const page = await store.list({ type: EntryType.REQUEST })
     assert.includeMembers(page.data[0].tags, ['status:422', 'method:PATCH', 'slow'])
@@ -230,6 +239,7 @@ test.group('RequestWatcher', () => {
     await middleware.handle(ctx, async () => {})
     await emitter.emit('http:request_completed', { ctx, duration: [0, 3_000_000] })
     await emitter.emit('http:request_completed', { ctx, duration: [0, 4_000_000] })
+    await settleScheduledCompletion()
 
     const page = await store.list({ type: EntryType.REQUEST })
     assert.lengthOf(page.data, 1)
@@ -255,6 +265,7 @@ test.group('RequestWatcher', () => {
     })
 
     await emitter.emit('http:request_completed', { ctx, duration: [0, 5_000_000] })
+    await settleScheduledCompletion()
 
     if (requestBatchId === undefined) {
       throw new Error('Expected the middleware to expose the request batch id')
@@ -378,6 +389,7 @@ test.group('RequestWatcher', () => {
 
     await middleware.handle(ctx, async () => {})
     await emitter.emit('http:request_completed', { ctx, duration: [0, 1_000_000] })
+    await settleScheduledCompletion()
 
     const page = await store.list({ type: EntryType.REQUEST })
     assert.deepEqual(page.data[0].content.payload, {
@@ -412,6 +424,7 @@ test.group('RequestWatcher', () => {
 
     await middleware.handle(ctx, async () => {})
     await emitter.emit('http:request_completed', { ctx, duration: [0, 1_000_000] })
+    await settleScheduledCompletion()
 
     const page = await store.list({ type: EntryType.REQUEST })
     assert.equal(page.data[0].content.response, '[Truncated]')
@@ -428,6 +441,7 @@ test.group('RequestWatcher', () => {
 
     await middleware.handle(ctx, async () => {})
     await emitter.emit('http:request_completed', { ctx, duration: [0, 8_000_000] })
+    await settleScheduledCompletion()
 
     const page = await store.list({ type: EntryType.REQUEST })
     assert.isNull(page.data[0].content.status)
@@ -443,6 +457,7 @@ test.group('RequestWatcher', () => {
     const ctx = makeHttpContext({ url: '/owned-by-second-app' })
     await second.middleware.handle(ctx, async () => {})
     await second.emitter.emit('http:request_completed', { ctx, duration: [0, 1_000_000] })
+    await settleScheduledCompletion()
 
     const page = await second.store.list({ type: EntryType.REQUEST })
     assert.lengthOf(page.data, 1)

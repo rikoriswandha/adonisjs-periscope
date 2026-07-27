@@ -342,6 +342,7 @@ export class RequestWatcher implements Watcher {
    * order as one batch.
    */
   readonly #completionFlushes = new WeakMap<BatchContext, Promise<void>>()
+  readonly #pendingCompletions = new Set<Promise<void>>()
 
   constructor(context: WatcherContext) {
     this.#context = context
@@ -351,75 +352,74 @@ export class RequestWatcher implements Watcher {
     if (this.#unsubscribe === null) {
       this.#unsubscribe = this.#context.emitter.on(
         'http:request_completed',
-        (payload: RequestCompletedPayload) =>
-          safeguardAsync('periscope.watcher.request.completed', async () => {
+        (payload: RequestCompletedPayload) => {
+          safeguard('periscope.watcher.request.schedule', () => {
             const batch = takeRequestBatch(payload.ctx)
-
-            if (batch === undefined) {
-              return
-            }
+            if (batch === undefined) return
 
             const intermediate = this.#openContexts.has(batch.context)
-            const completion = intermediate ? Promise.withResolvers<void>() : null
-
-            if (completion !== null) {
+            const completion = Promise.withResolvers<void>()
+            if (intermediate) {
               this.#completionFlushes.set(batch.context, completion.promise)
             }
+            this.#pendingCompletions.add(completion.promise)
 
-            try {
-              const completed = makeRequestEntry(this.#context, batch.startedHeapUsed, payload)
+            /**
+             * Adonis awaits async completion listeners while finalising the response. Recording
+             * is observability work, not response work: move it to the check phase so the socket
+             * can finish first. The promise is registered synchronously so abort handling and
+             * watcher cleanup still wait for every scheduled flush.
+             */
+            setImmediate(() => {
+              void safeguardAsync('periscope.watcher.request.completed', async () => {
+                try {
+                  const completed = makeRequestEntry(this.#context, batch.startedHeapUsed, payload)
 
-              BatchScope.runWith(batch.context, () => {
-                this.#context.recorder.record(completed.entry)
+                  BatchScope.runWith(batch.context, () => {
+                    this.#context.recorder.record(completed.entry)
 
-                if (completed.routePattern === undefined) {
-                  return
+                    if (completed.routePattern === undefined) return
+
+                    /**
+                     * Queries, logs and events happen before the router has returned control to
+                     * the server middleware, so the route is unknowable when those entries are
+                     * recorded. Stamp everything still buffered at request completion.
+                     */
+                    for (const entry of batch.context.buffer) {
+                      entry.withTags(`route:${completed.routePattern}`)
+                    }
+                  })
+                } finally {
+                  await this.#context.recorder.flush(
+                    batch.context,
+                    intermediate ? 'intermediate' : 'final'
+                  )
                 }
-
-                /**
-                 * Queries, logs and events happen before the router has returned control to the
-                 * server middleware, so the route is honestly unknowable when those entries are
-                 * recorded. The request's closing act is the first moment the pattern exists; by
-                 * stamping every entry still buffered here, all earlier activity becomes
-                 * cross-filterable by route without guessing from a URL.
-                 */
-                for (const entry of batch.context.buffer) {
-                  entry.withTags(`route:${completed.routePattern}`)
-                }
-              })
-            } finally {
-              try {
-                /**
-                 * While the middleware remains open this is only a streaming boundary. A failed
-                 * optional accessor or hostile application value still cannot strand entries:
-                 * the middleware's final flush follows this one on aborts, while normally this
-                 * completion event is itself final.
-                 */
-                await this.#context.recorder.flush(
-                  batch.context,
-                  intermediate ? 'intermediate' : 'final'
-                )
-              } finally {
-                if (completion !== null) {
-                  completion.resolve()
+              }).finally(() => {
+                completion.resolve()
+                this.#pendingCompletions.delete(completion.promise)
+                if (intermediate) {
                   this.#completionFlushes.delete(batch.context)
                 }
-              }
-            }
+              })
+            })
           })
+        }
       )
     }
 
     setActiveWatcher(WatcherName.REQUEST, this)
   }
 
-  cleanup(): void {
+  async cleanup(): Promise<void> {
     const unsubscribe = this.#unsubscribe
     this.#unsubscribe = null
 
     if (unsubscribe !== null) {
       safeguard('periscope.watcher.request.cleanup', unsubscribe)
     }
+
+    await Promise.allSettled([...this.#pendingCompletions])
 
     if (getActiveWatcher(WatcherName.REQUEST) === this) {
       setActiveWatcher(WatcherName.REQUEST, null)

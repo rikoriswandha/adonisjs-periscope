@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "regressionTolerancePercent": 20,
+  "recordMedianMicros": 16.5,
+  "latencyDeltaMs": 0.8,
+  "throughputLossPercent": 4,
+  "rssGrowthMb": 25
+}

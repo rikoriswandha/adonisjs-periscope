@@ -15,7 +15,7 @@
 - Non-negotiable invariants enforced from day one (CI-gated):
   1. Periscope never throws into host-app code paths — every watcher/recorder entry point is wrapped in a `safeguard()` try/catch that logs and drops.
   2. Periscope never records itself (recursion tests run in every phase after P2).
-  3. No outbound network calls anywhere in the package (lint rule banning `fetch`/`http.request` outside the HttpClientWatcher's *subscription* code).
+  3. No outbound network calls anywhere in the package (lint rule banning `fetch`/`http.request` outside the HttpClientWatcher's _subscription_ code).
 
 ---
 
@@ -73,7 +73,7 @@ periscope/
 }
 ```
 
-Lucid is an *optional* peer: the sqlite-local driver bundles its own better-sqlite3 usage so API-only apps without Lucid still get storage (decided here to avoid rework in P2).
+Lucid is an _optional_ peer: the sqlite-local driver bundles its own better-sqlite3 usage so API-only apps without Lucid still get storage (decided here to avoid rework in P2).
 
 **Done when:** `npm run build` compiles the package; `npm -w playground run dev` boots the fixture app; CI runs typecheck + lint + unit tests on Node 24.
 
@@ -120,14 +120,22 @@ export class BatchScope {
 
   static run<T>(kind: BatchKind, fn: () => T): T {
     const ctx: BatchContext = {
-      batchId: randomUUID(), kind,
+      batchId: randomUUID(),
+      kind,
       startedAt: process.hrtime.bigint(),
-      buffer: [], counters: {}, muted: false, truncated: {},
+      buffer: [],
+      counters: {},
+      muted: false,
+      truncated: {},
     }
     return this.storage.run(ctx, fn)
   }
-  static current() { return this.storage.getStore() }
-  static async mute<T>(fn: () => Promise<T>) { /* set muted in a child scope */ }
+  static current() {
+    return this.storage.getStore()
+  }
+  static async mute<T>(fn: () => Promise<T>) {
+    /* set muted in a child scope */
+  }
 }
 ```
 
@@ -149,7 +157,7 @@ Pipeline order exactly as architecture §6.1: muted → enabled/paused → filte
 **Tests (the important ones):**
 
 - Caps: 201st query entry in a batch is dropped, `truncated.query === 1`.
-- Redaction: `{ password: 'x', nested: { api_key: 'y' } }` → both redacted; runs *before* buffering (assert buffer contents).
+- Redaction: `{ password: 'x', nested: { api_key: 'y' } }` → both redacted; runs _before_ buffering (assert buffer contents).
 - Filter hook returning false drops; tag hook tags land in entry.
 - Flush failure (store that throws) does not propagate.
 
@@ -174,6 +182,7 @@ Pipeline order exactly as architecture §6.1: muted → enabled/paused → filte
 ### P2.1 Migration + Lucid `database` driver
 
 **Deliverables:**
+
 - `stubs/migrations/create_periscope_tables.stub` (schema from architecture §7.2; conditional `jsonb` vs `text` on client detection).
 - `src/storage/database_store.ts` — uses `db.connection(config.storage.connection)` directly (query-builder, **no Lucid models** — avoids model-watcher self-recording and keeps Lucid optionality clean at this layer even though the driver requires Lucid).
 - Batched inserts: one `insert` for entries (chunked at 200 rows), one for tags.
@@ -212,6 +221,7 @@ Pipeline order exactly as architecture §6.1: muted → enabled/paused → filte
 ### P3.2 RequestWatcher ⭐ (the keystone)
 
 **Deliverables:**
+
 - `src/watchers/request/middleware.ts` — server middleware, exported at `periscope/middleware/request_watcher`:
 
 ```ts
@@ -244,6 +254,7 @@ export default class PeriscopeMiddleware {
 ### P3.4 ExceptionWatcher
 
 **Deliverables:**
+
 - `src/watchers/exception/mixin.ts` (`withPeriscope(ExceptionHandler)`) — overrides `report()` to record then `super.report()`. Content: class name, message, source-mapped stack (use `Error.prepareStackTrace`-safe parsing + `node:module` `findSourceMap`), code frame (dev only, read ±5 lines), request summary if in a request batch.
 - `familyHash = sha1(class + message + topAppFrame)`.
 - `src/watchers/exception/process.ts` — `uncaughtExceptionMonitor` + `unhandledRejection` observers (monitor variant: never alters semantics); these flush the ambient batch immediately after recording (process may die).
@@ -272,7 +283,7 @@ export default class PeriscopeMiddleware {
 
 **Deliverables:** `src/http/routes.ts`, `src/http/controllers/*.ts`, `src/http/middleware/authorize.ts`
 
-- Route group under `config.dashboard.path`, own middleware stack: `[authorize]` only (explicitly *not* the app's router middleware — register via `router.group().use()` on raw routes; document CSRF exemption need if @adonisjs/shield present → configure step adds the path to shield's ignore list in P5).
+- Route group under `config.dashboard.path`, own middleware stack: `[authorize]` only (explicitly _not_ the app's router middleware — register via `router.group().use()` on raw routes; document CSRF exemption need if @adonisjs/shield present → configure step adds the path to shield's ignore list in P5).
 - Endpoints per architecture §8.1. `GET /api/entries?type=&tag=&family_hash=&cursor=&limit=` → `{ data, nextCursor }`. Entry payloads are `StoredEntry` verbatim (content is already redacted).
 - `authorize` middleware: env-gate first (`enabledIn` + `PERISCOPE_ENABLED`), then `config.dashboard.authorize(ctx)`; 404 (not 403) when env-gated so production leaks nothing.
 - Static serving: `GET :path` → `index.html`; `GET :path/assets/*` → files from `build/dashboard/` with `immutable` cache headers and path-traversal guard.
@@ -287,7 +298,7 @@ Shared UI primitives to build once: `EntryIndexTable` (generic, columns injected
 
 ### P4.3 MVP screens (Requests, Queries, Exceptions)
 
-- **Requests index:** method, path, status, duration, when; row → **Batch detail**: header card (url/route/user), tabs (Timeline | Headers | Payload | Response | Session), Timeline = all batch entries sorted by `sequence` with type icons — *this screen is the product; budget real polish time.*
+- **Requests index:** method, path, status, duration, when; row → **Batch detail**: header card (url/route/user), tabs (Timeline | Headers | Payload | Response | Session), Timeline = all batch entries sorted by `sequence` with type icons — _this screen is the product; budget real polish time._
 - **Queries index:** sql preview, duration, slow filter toggle, connection; detail: formatted SQL, bindings, location, "N occurrences of this query shape in batch" (familyHash count) with n+1 hint badge when N ≥ config threshold.
 - **Exceptions index:** grouped by familyHash (latest message, count, last seen); detail: stack, code frame, occurrences list, link to each batch.
 
@@ -306,6 +317,7 @@ Simple 2.5 s polling on index screens with new-rows-pill ("12 new entries — cl
 ### P5.1 Provider finalization
 
 **Deliverables:** `providers/periscope_provider.ts` per architecture §9.2, plus:
+
 - Registers early so its shutdown (flushAll + ambient stop + watcher cleanup) runs **late** (v7 reverse-order shutdown).
 - Environments: `['web', 'console', 'test']` gating logic (recording on in console for CommandWatcher later; dashboard routes only in `web`).
 - Hard zero-cost path verified: with `enabled: false`, assert no listeners registered on emitter (test introspects listener counts).
@@ -340,26 +352,33 @@ Simple 2.5 s polling on index screens with new-rows-pill ("12 new entries — cl
 Each follows the P3 per-watcher pattern (dir, content types, unit + integration + recursion tests, dashboard screen via the generic `EntryIndexTable` + a type-specific detail panel).
 
 ### P6.1 CommandWatcher
+
 Ace kernel lifecycle hooks; batch per command (`BatchScope.run('command', …)` wrapping execution — hook into kernel's execute path via the documented hooks, else a kernel decorator installed by the provider in console environment). Ignore `periscope:*` + config list. Output tail: ring-buffer last 4 KB of stdout via a logger tap, not stream patching, if feasible; otherwise omit output in v1 (decide in-task, don't block).
 
 ### P6.2 MailWatcher
+
 `mail:sending/sent/queueing/queued` + queue-error event. Content: envelope, subject, rendered HTML (cap 256 KB), text alt; store `.eml`-able raw message when the driver exposes it. Dashboard: HTML preview iframe (sandboxed, CSP `sandbox` attr), ".eml download" endpoint (`GET /api/entries/:uuid/eml`).
 
 ### P6.3 CacheWatcher
+
 Bentocache event bus (`@adonisjs/cache` emits bus events — subscribe via the cache service's events). Ops: hit/miss/set/delete/clear; values stored only when `captureValues: true` (default false; keys only).
 
 ### P6.4 ModelWatcher
+
 Boot-path hook install on `BaseModel` (wrap `$boot` or use `compose`-time registration): append `afterCreate/afterUpdate/afterDelete` recording hooks to every model except Periscope internals (none exist — DB driver is query-builder-only, by P2.1 design). Dirty diff on updates behind `captureDirty` config; diff values pass redactor.
 
 **Risk task:** Lucid internals may shift — pin an integration test against the actual Lucid version matrix (min supported + latest) in CI.
 
 ### P6.5 GateWatcher (Bouncer)
+
 Wrap ability/policy execution: provider detects `@adonisjs/bouncer`, decorates the bouncer service's `allows/denies/authorize` (composition wrapper registered in container, not prototype patching if a container swap suffices). Content: ability name, result, user id, serialized args; `ignoreAbilities` config.
 
 ### P6.6 DumpWatcher + `dump()`
+
 `src/dump.ts` export: `dump(...values)` → records `dump` entry (safeSerialize, caller file:line via stack) **only when** `dump-open` flag set (dashboard sets it on tab focus via `POST /api/flags`, clears on blur/timeout 30 s heartbeat). Returns first value for inline use: `const user = dump(await User.find(1))`.
 
 ### P6.7 HttpClientWatcher
+
 `diagnostics_channel.subscribe('undici:request:create' | ':headers' | ':trailers' | 'undici:request:error')`; WeakMap request→partial entry; batch stamped at create; finalize at trailers/error. Redact query-string + auth headers. Skip requests to self dashboard/API (loopback guard by port+path).
 
 **Done when (phase-wide):** playground exercises each watcher; every screen renders; recursion suite still green; total watcher registration time at boot < 50 ms (measured in CI).
@@ -369,18 +388,23 @@ Wrap ability/policy execution: provider detects `@adonisjs/bouncer`, decorates t
 ## Phase 7 — Live Mode, Monitoring, Sampling, Doctor (est. 1 week)
 
 ### P7.1 SSE stream
+
 `GET /api/stream` — server-sent events pushing `{type, uuid, indexRow}` on each flush (recorder emits internal `flushed` notification; the SSE controller fans out to connected clients, max 5, auth re-checked at connect). SPA: swap polling for SSE with polling fallback; "live" indicator dot.
 
 ### P7.2 Monitored tags
+
 Dashboard UI on tag chips ("monitor this tag"); store methods already exist (P1.4/P2 contract). Recorder flush consults monitored set (cached 10 s): batch containing a monitored tag bypasses sampling drop.
 
 ### P7.3 Sampling + `keepAlways`
+
 Implement `sampleRate` (decided at batch open, stored on context) and `keepAlways(batchView)` evaluated at flush with a cheap batch-view facade (`hasEntryOfType`, `hasTag`, `hasEntryWhere`). Document the production recipe (sample 1%, keep exceptions/slow/5xx) in README with copy-paste config.
 
 ### P7.4 `periscopeDoctor()` hook
+
 `src/hooks/doctor.ts` for `adonisrc.ts` `hooks.init`: dev-only checks — migration present (database driver), Lucid `debug` flags vs QueryWatcher enabled, dashboard path route collision, middleware position (request watcher first), Node ≥ 24. Prints a compact table; never throws.
 
 ### P7.5 Dashboard: remaining index screens + global search
+
 Generic screens for all wave-2 types via `registerEntryType` metadata (label, icon, index columns, detail component). Global search box: tag-search (`Auth:42`, `status:500`, free tag) hitting `/api/entries?tag=`.
 
 **🏁 Phase 7 demo:** two browser windows — one clicking playground routes, one watching entries stream in live; monitor `Auth:1`, set sampleRate 0.05, verify monitored batches always appear.
@@ -389,38 +413,55 @@ Generic screens for all wave-2 types via `registerEntryType` metadata (label, ic
 
 ## Phase 8 — Hardening, Performance, Security Review (est. 1 week)
 
+**Status:** Complete. The gates below are enforced by CI and the executed drills are retained as
+regression coverage.
+
 ### P8.1 Performance gate (CI benchmark job)
+
 `tests/bench/overhead.bench.ts` using autocannon against playground `/ok`:
+
 - Baseline (periscope disabled) vs enabled: p99 latency delta < 1 ms, throughput delta < 5 %.
 - Memory: 10-minute soak at 200 rps, RSS growth < 30 MB (caps + trim working).
 - Record-path micro-bench: `record()` < 20 µs median (mitata).
-Fail CI on regression > 20 % vs stored baseline.
+  Fail CI on regression > 20 % vs stored baseline.
+
+Implemented in `packages/periscope/tests/bench/overhead.bench.ts` with the stored
+`tests/bench/baseline.json`; `.github/workflows/ci.yml` runs the full scheduled soak.
 
 ### P8.2 Security review checklist (executed, not aspirational)
-- [ ] Path traversal tests on asset route (`/periscope/assets/../../config`…)
-- [ ] Env-gated 404 in production mode (boot playground with `NODE_ENV=production`, assert dashboard absent, API absent, zero listeners unless opted in)
-- [ ] Redaction fuzz: property-test that no configured deny-key survives at any nesting depth in stored content
-- [ ] Mail preview iframe sandbox verified (script injection attempt in mail HTML doesn't execute)
-- [ ] SSE auth re-validation; connection cap enforced
-- [ ] Dependency audit clean; lint rule for no-outbound-network green
+
+- [x] Path traversal tests on asset route (`/periscope/assets/../../config`…)
+- [x] Env-gated 404 in production mode (boot playground with `NODE_ENV=production`, assert dashboard absent, API absent, zero listeners unless opted in)
+- [x] Redaction fuzz: property-test that no configured deny-key survives at any nesting depth in stored content
+- [x] Mail preview iframe sandbox verified (script injection attempt in mail HTML doesn't execute)
+- [x] SSE auth re-validation; connection cap enforced
+- [x] Dependency audit clean; lint rule for no-outbound-network green
 
 ### P8.3 Failure-mode drills
+
 Kill storage mid-flush (drop sqlite file / close PG) → app keeps serving, internal log line only. Malformed entries (circular, 10 MB payload, BigInt, Symbol keys) → serialized within caps, never throw.
 
+Executed by `tests/unit/recorder/failure_modes.spec.ts` and the sqlite lifecycle/serializer suites.
+
 ### P8.4 Docs
+
 - README: 2-minute quickstart (the P5 gif), production sampling recipe, watcher reference table with content shapes, extensibility guide (custom watcher, custom store, tag/filter hooks), FAQ (why no queries? → `debug: true`; why async ordering note).
 - `CONTRIBUTING.md` incl. the invariants from §0.
+
+Implemented in the root `README.md` and `CONTRIBUTING.md`.
 
 ---
 
 ## Phase 9 — Release & Post-1.0 Track (est. 3–4 days + ongoing)
 
 ### P9.1 Release engineering
+
 - Version 0.1.0 → dogfood in 2–3 real apps ≥ 2 weeks → 1.0.0.
 - `np`/changesets release flow; provenance-signed npm publish; `build/dashboard` verified present in the tarball by a pack-test in CI (classic packaging failure — gate it).
 - Version support policy: track AdonisJS v7 minors; Lucid min-version matrix in CI.
 
 ### P9.2 Post-1.0 backlog (ordered, from architecture roadmap)
+
 1. Job/Schedule watcher **adapters** (interface + `@rlanz/bull-queue` reference impl) — was deliberately deferred: queue ecosystem is pluggable and adapter interface benefits from 1.0 user feedback.
 2. Redis & Session watchers (off-by-default ones).
 3. n+1 detector heuristics surfaced as batch-level warnings (familyHash count ≥ threshold within batch → warning banner on request detail).
@@ -432,28 +473,28 @@ Kill storage mid-flush (drop sqlite file / close PG) → app keeps serving, inte
 
 ## 10. Cross-Cutting Workstreams (run continuously)
 
-| Workstream | Cadence | Gate |
-|---|---|---|
-| Recursion test suite (self-recording) | every PR after P2 | CI required |
-| Storage contract suite across drivers | every PR | CI required |
-| Playground manual QA script | every phase exit | checklist in PR template |
-| Perf baseline | nightly after P8.1 | alert on >20 % regression |
-| API contract snapshot (dashboard ↔ package) | every PR touching `src/http` | CI required |
+| Workstream                                  | Cadence                      | Gate                      |
+| ------------------------------------------- | ---------------------------- | ------------------------- |
+| Recursion test suite (self-recording)       | every PR after P2            | CI required               |
+| Storage contract suite across drivers       | every PR                     | CI required               |
+| Playground manual QA script                 | every phase exit             | checklist in PR template  |
+| Perf baseline                               | nightly after P8.1           | alert on >20 % regression |
+| API contract snapshot (dashboard ↔ package) | every PR touching `src/http` | CI required               |
 
 ---
 
 ## 11. Risk Register
 
-| # | Risk | Likelihood | Impact | Mitigation | Trigger/fallback |
-|---|---|---|---|---|---|
-| R1 | Emittery async ordering causes entries to miss their batch flush | Med | Med | sequence-at-capture + setImmediate flush + straggler insert path (built in P1/P3) | If straggler rate > 1 % in dogfood, add `flushGraceMs` default > 0 |
-| R2 | Lucid internals (model boot, db:query payload) shift across minors | Med | High for ModelWatcher | version-matrix CI (P6.4); model watcher isolated so it can be disabled without collateral | Ship 1.0 with ModelWatcher behind `experimental` flag if matrix is red |
-| R3 | Middleware codemod can't guarantee first position | Low | Med | verify + warn in configure; doctor re-checks (P7.4) | Manual instruction path |
-| R4 | pino multistream injection point unavailable for custom logger setups | Med | Low | exported `periscopeLogStream()` escape hatch + docs (P3.5) | — |
-| R5 | better-sqlite3 native build friction on some platforms | Low | Med | prebuilt binaries via the package's own prebuilds; memory-store fallback with boot warning | Driver falls back gracefully, never blocks boot |
-| R6 | Dashboard assets missing from published tarball | Low | High | pack-test in CI (P9.1) | — |
-| R7 | Overhead unacceptable with Lucid `debug: true` in prod sampling setups | Med | Med | document clearly; QueryWatcher prod guidance; sampling keeps flush cheap | Add "query watcher off, requests only" prod preset |
-| R8 | Scope creep into APM territory | Med | Med | Non-goals in architecture §1.2 quoted in CONTRIBUTING; roadmap discipline | — |
+| #   | Risk                                                                   | Likelihood | Impact                | Mitigation                                                                                 | Trigger/fallback                                                       |
+| --- | ---------------------------------------------------------------------- | ---------- | --------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
+| R1  | Emittery async ordering causes entries to miss their batch flush       | Med        | Med                   | sequence-at-capture + setImmediate flush + straggler insert path (built in P1/P3)          | If straggler rate > 1 % in dogfood, add `flushGraceMs` default > 0     |
+| R2  | Lucid internals (model boot, db:query payload) shift across minors     | Med        | High for ModelWatcher | version-matrix CI (P6.4); model watcher isolated so it can be disabled without collateral  | Ship 1.0 with ModelWatcher behind `experimental` flag if matrix is red |
+| R3  | Middleware codemod can't guarantee first position                      | Low        | Med                   | verify + warn in configure; doctor re-checks (P7.4)                                        | Manual instruction path                                                |
+| R4  | pino multistream injection point unavailable for custom logger setups  | Med        | Low                   | exported `periscopeLogStream()` escape hatch + docs (P3.5)                                 | —                                                                      |
+| R5  | better-sqlite3 native build friction on some platforms                 | Low        | Med                   | prebuilt binaries via the package's own prebuilds; memory-store fallback with boot warning | Driver falls back gracefully, never blocks boot                        |
+| R6  | Dashboard assets missing from published tarball                        | Low        | High                  | pack-test in CI (P9.1)                                                                     | —                                                                      |
+| R7  | Overhead unacceptable with Lucid `debug: true` in prod sampling setups | Med        | Med                   | document clearly; QueryWatcher prod guidance; sampling keeps flush cheap                   | Add "query watcher off, requests only" prod preset                     |
+| R8  | Scope creep into APM territory                                         | Med        | Med                   | Non-goals in architecture §1.2 quoted in CONTRIBUTING; roadmap discipline                  | —                                                                      |
 
 ---
 
@@ -469,18 +510,18 @@ P3 + P4 ──▶ P5 ──▶ P6.x (parallel among themselves) ──▶ P7 ─
 
 **Single developer (13-week nominal):**
 
-| Weeks | Focus |
-|---|---|
-| 1 | Phase 0 + start Phase 1 |
-| 2 | Finish Phase 1 |
-| 3 | Phase 2 |
-| 4–5.5 | Phase 3 |
-| 5.5–7.5 | Phase 4 |
-| 8 | Phase 5 |
-| 9–10.5 | Phase 6 |
-| 11 | Phase 7 |
-| 12 | Phase 8 |
-| 13 | Phase 9 / buffer |
+| Weeks   | Focus                   |
+| ------- | ----------------------- |
+| 1       | Phase 0 + start Phase 1 |
+| 2       | Finish Phase 1          |
+| 3       | Phase 2                 |
+| 4–5.5   | Phase 3                 |
+| 5.5–7.5 | Phase 4                 |
+| 8       | Phase 5                 |
+| 9–10.5  | Phase 6                 |
+| 11      | Phase 7                 |
+| 12      | Phase 8                 |
+| 13      | Phase 9 / buffer        |
 
 **Two developers:** Dev A: P0–P3 → P5 → P6 (engine). Dev B: P4 from week 3 (against memory-store seeded API), then P7 UI + P6 screens. Converge weeks 7–8 for Phase 8. ≈ 8 weeks.
 

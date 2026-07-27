@@ -6,6 +6,7 @@
  */
 
 import { test } from '@japa/runner'
+import fc from 'fast-check'
 
 import {
   DEFAULT_REDACT_HEADERS,
@@ -197,6 +198,62 @@ test.group('Redactor | keys', () => {
     for (const key of DEFAULT_REDACT_KEYS) {
       assert.deepEqual(scrubber.redact({ [key]: 'leak' }), { [key]: '[REDACTED]' }, key)
     }
+  })
+
+  test('property: no configured deny key survives at any generated nesting depth', () => {
+    const denied = new Set(
+      DEFAULT_REDACT_KEYS.map((key) => key.toLowerCase().replace(/[^a-z0-9]/g, ''))
+    )
+    const key = fc.constantFrom(
+      ...DEFAULT_REDACT_KEYS.flatMap((item) => [
+        item,
+        item.toUpperCase(),
+        [...item].join('_'),
+        [...item].join('-'),
+      ])
+    )
+    const nestedSecret = fc
+      .tuple(
+        key,
+        fc.array(fc.boolean(), { minLength: 1, maxLength: 16 }),
+        fc.jsonValue({ maxDepth: 8 })
+      )
+      .map(([secretKey, branches, noise]) => {
+        let value: unknown = { [secretKey]: 'plaintext-secret' }
+
+        for (const arrayBranch of branches) {
+          value = arrayBranch ? [noise, value] : { noise, nested: value }
+        }
+
+        return value
+      })
+    const assertRedacted = (value: unknown): void => {
+      if (Array.isArray(value)) {
+        value.forEach(assertRedacted)
+        return
+      }
+
+      if (value === null || typeof value !== 'object') return
+
+      for (const [name, nested] of Object.entries(value)) {
+        const normalised = name.toLowerCase().replace(/[^a-z0-9]/g, '')
+        if (denied.has(normalised)) {
+          if (nested !== '[REDACTED]') {
+            throw new Error(`deny-listed key ${JSON.stringify(name)} retained an unredacted value`)
+          }
+        } else {
+          assertRedacted(nested)
+        }
+      }
+    }
+    const scrubber = redactor()
+
+    fc.assert(
+      fc.property(nestedSecret, (input) => {
+        assertRedacted(scrubber.redact(input))
+      }),
+      { numRuns: 1_000 }
+    )
   })
 
   test('honour a custom replacement string', ({ assert }) => {
