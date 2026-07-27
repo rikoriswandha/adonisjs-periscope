@@ -85,6 +85,11 @@ export type BatchContext = {
   kind: BatchKind
 
   /**
+   * OpenTelemetry trace active when the batch opened, when the optional API package is present.
+   */
+  traceId?: string
+
+  /**
    * `process.hrtime.bigint()` at batch open. Used for batch duration, never for ordering
    * across processes.
    */
@@ -183,6 +188,7 @@ export type KeepAlwaysHook = (batch: BatchView) => boolean
 export type StoredEntry = {
   uuid: string
   batchId: string
+  application: string
   type: EntryType
   familyHash: string | null
   content: EntryContent
@@ -198,6 +204,7 @@ export type StoredEntry = {
 export type FlushedIndexRow = {
   readonly uuid: string
   readonly batchId: string
+  readonly application: string
   readonly type: EntryType
   readonly familyHash: string | null
   readonly tags: readonly string[]
@@ -228,6 +235,7 @@ export type EntryQuery = {
 
   familyHash?: string
   batchId?: string
+  application?: string
 
   /**
    * When `true`, only entries a watcher left visible on index screens. Sub-entries hidden with
@@ -268,6 +276,15 @@ export type ExceptionGroup = {
 }
 
 /**
+ * One application represented in a shared store.
+ */
+export type ApplicationSummary = {
+  name: string
+  entries: number
+  latestAt: Date | null
+}
+
+/**
  * Cursor pagination accepted by the exception-family aggregation.
  */
 export type ExceptionGroupQuery = {
@@ -275,6 +292,8 @@ export type ExceptionGroupQuery = {
    * Exact tag match. Only matching exception occurrences contribute to a family.
    */
   tag?: string
+
+  application?: string
 
   cursor?: string
   limit?: number
@@ -347,7 +366,12 @@ export interface PeriscopeStore {
    * Number of stored entries per type. Powers the dashboard sidebar counts. Types with no
    * entries may be omitted.
    */
-  counts(): Promise<EntryTypeCounts>
+  counts(application?: string): Promise<EntryTypeCounts>
+
+  /**
+   * Applications represented in the store, newest activity first.
+   */
+  applications(): Promise<ApplicationSummary[]>
 
   /**
    * Exception entries grouped by family hash, ordered by their newest occurrence.
@@ -368,7 +392,7 @@ export interface PeriscopeStore {
    * Delete every entry. Monitored tags and flags are left alone — they are user intent, not
    * recorded data.
    */
-  clear(): Promise<void>
+  clear(application?: string): Promise<void>
 
   /**
    * Tags the user asked to be monitored. Batches carrying one bypass sampling (P7.2).
@@ -461,6 +485,38 @@ export type FilterHook = (entry: IncomingEntry) => boolean
 export type TagHook = (entry: IncomingEntry) => string[] | undefined | void
 
 /**
+ * Queue lifecycle metadata emitted by pluggable job/schedule adapters.
+ */
+export type QueueJobEvent = {
+  adapter: string
+  queue: string
+  jobId: string
+  name?: string
+  payload?: unknown
+  attempts?: number
+  scheduledAt?: Date
+}
+
+export type QueueJobResult = QueueJobEvent & {
+  result?: unknown
+  error?: unknown
+}
+
+export interface QueueWatcherObserver {
+  started(event: QueueJobEvent): void
+  completed(event: QueueJobResult): void
+  failed(event: QueueJobResult): void
+  scheduled(event: QueueJobEvent): void
+}
+
+export interface QueueWatcherAdapter {
+  readonly name: string
+  register(
+    observer: QueueWatcherObserver
+  ): void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
+}
+
+/**
  * A watcher: something that subscribes to a source of events and feeds the recorder.
  *
  * The registry (P3.1) resolves enabled watchers from config, calls `register()` inside
@@ -500,6 +556,9 @@ export const WatcherName = {
   GATE: 'gate',
   DUMP: 'dump',
   HTTP_CLIENT: 'http_client',
+  JOB_SCHEDULE: 'job_schedule',
+  REDIS: 'redis',
+  SESSION: 'session',
 } as const
 
 export type WatcherName = (typeof WatcherName)[keyof typeof WatcherName]
@@ -648,6 +707,19 @@ export type WatchersConfig = {
   http_client?: {
     enabled?: boolean
   }
+  job_schedule?: {
+    enabled?: boolean
+    adapters?: QueueWatcherAdapter[]
+    capturePayload?: boolean
+  }
+  redis?: {
+    enabled?: boolean
+    captureArguments?: boolean
+  }
+  session?: {
+    enabled?: boolean
+    captureValues?: boolean
+  }
 }
 
 /**
@@ -704,6 +776,19 @@ export type ResolvedWatchersConfig = {
   http_client: {
     enabled: boolean
   }
+  job_schedule: {
+    enabled: boolean
+    adapters: QueueWatcherAdapter[]
+    capturePayload: boolean
+  }
+  redis: {
+    enabled: boolean
+    captureArguments: boolean
+  }
+  session: {
+    enabled: boolean
+    captureValues: boolean
+  }
 }
 
 /**
@@ -757,6 +842,11 @@ export type PeriscopeConfig = {
    * environment variable to decide whether Periscope records at all. Defaults to `true`.
    */
   enabled?: boolean
+
+  /**
+   * Stable identity stamped onto every entry. Shared stores use it to separate applications.
+   */
+  applicationName?: string
 
   /**
    * `NODE_ENV` values Periscope is allowed to run in. Defaults to `['development', 'test']` —
@@ -863,6 +953,7 @@ export type PeriscopeConfig = {
  */
 export type ResolvedPeriscopeConfig = {
   enabled: boolean
+  applicationName: string
   enabledIn: string[]
   storage: {
     driver: StorageDriverName

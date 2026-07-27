@@ -271,6 +271,7 @@ function authSummary(ctx: HttpContext): RequestAuthSummary | undefined {
  */
 function makeRequestEntry(
   watcherContext: WatcherContext,
+  batchContext: BatchContext,
   batchStartedHeapUsed: number,
   payload: RequestCompletedPayload
 ): { entry: IncomingEntry; routePattern?: string } {
@@ -289,6 +290,7 @@ function makeRequestEntry(
     ? sessionSnapshot(ctx, watcherContext.recorder.redactor)
     : undefined
   const content: RequestEntryContent = {
+    ...(batchContext.traceId === undefined ? {} : { traceId: batchContext.traceId }),
     method: request.method(),
     url: request.url(),
     query: safeSerialize(request.qs()),
@@ -373,7 +375,12 @@ export class RequestWatcher implements Watcher {
             setImmediate(() => {
               void safeguardAsync('periscope.watcher.request.completed', async () => {
                 try {
-                  const completed = makeRequestEntry(this.#context, batch.startedHeapUsed, payload)
+                  const completed = makeRequestEntry(
+                    this.#context,
+                    batch.context,
+                    batch.startedHeapUsed,
+                    payload
+                  )
 
                   BatchScope.runWith(batch.context, () => {
                     this.#context.recorder.record(completed.entry)

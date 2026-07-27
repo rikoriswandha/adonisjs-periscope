@@ -383,6 +383,7 @@ export class Recorder {
     const indexRow = Object.freeze({
       uuid: entry.uuid,
       batchId: entry.batchId,
+      application: entry.application,
       type: entry.type,
       familyHash: entry.familyHash,
       tags: Object.freeze([...entry.tags]),
@@ -570,7 +571,7 @@ export class Recorder {
         }
       }
 
-      const stored = drained.map((entry) => entry.toStored())
+      const stored = drained.map((entry) => entry.toStored(this.#config.applicationName))
 
       /**
        * §0, invariant 2. The driver's own work — a Lucid insert, its query log, whatever it

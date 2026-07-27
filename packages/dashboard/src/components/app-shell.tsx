@@ -32,6 +32,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group'
 import { Switch } from '@/components/ui/switch'
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 type NavigationItem = {
   to: string
@@ -49,7 +50,7 @@ const navigationGroups: { label: string; items: NavigationItem[] }[] = [
       { to: '/exceptions', label: 'Exceptions', type: 'exception', icon: Bug },
     ],
   },
-  ...(['Application', 'Diagnostics'] as const).map((label) => ({
+  ...(['Application', 'Infrastructure', 'Diagnostics'] as const).map((label) => ({
     label,
     items: wave2EntryTypes
       .filter((registration) => registration.group === label)
@@ -75,7 +76,7 @@ const titleByPath: Record<string, string> = {
 export function AppShell() {
   const navigate = useNavigate()
   const location = useLocation()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [status, setStatus] = useState<DashboardStatus | null>(null)
   const [counts, setCounts] = useState<EntryCounts>({})
   const [statusError, setStatusError] = useState<Error | null>(null)
@@ -98,6 +99,24 @@ export function AppShell() {
     setMonitoredTags(next)
   }, [])
   const activeNavigationRef = useRef<HTMLAnchorElement>(null)
+  const requestedApplication = searchParams.get('application')
+  const selectedApplication = useMemo(() => {
+    if (
+      requestedApplication &&
+      status?.applications.some((application) => application.name === requestedApplication)
+    ) {
+      return requestedApplication
+    }
+    return status?.applicationName ?? requestedApplication ?? 'default'
+  }, [requestedApplication, status])
+  const selectApplication = useCallback(
+    (application: string) => {
+      const next = new URLSearchParams(searchParams)
+      next.set('application', application)
+      setSearchParams(next, { replace: true })
+    },
+    [searchParams, setSearchParams]
+  )
 
   const refreshMonitoredTags = useCallback(async () => {
     if (monitoredTagMutationsRef.current.size > 0) return
@@ -133,7 +152,7 @@ export function AppShell() {
   const refreshCounts = useCallback(async () => {
     const generation = refreshGenerationRef.current
     try {
-      const nextCounts = await api.getCounts()
+      const nextCounts = await api.getCounts(selectedApplication)
       if (generation !== refreshGenerationRef.current) return
       setCounts(nextCounts)
       setStatusError(null)
@@ -141,12 +160,18 @@ export function AppShell() {
       if (generation !== refreshGenerationRef.current) return
       setStatusError(cause instanceof Error ? cause : new Error('Unable to refresh counts'))
     }
-  }, [])
+  }, [selectedApplication])
 
   const refreshDashboard = useCallback(async () => {
     const generation = refreshGenerationRef.current
     try {
-      const [nextStatus, nextCounts] = await Promise.all([api.getStatus(), api.getCounts()])
+      const nextStatus = await api.getStatus()
+      const application =
+        requestedApplication &&
+        nextStatus.applications.some((item) => item.name === requestedApplication)
+          ? requestedApplication
+          : nextStatus.applicationName
+      const nextCounts = await api.getCounts(application)
       if (generation !== refreshGenerationRef.current) return
       setStatus(nextStatus)
       setCounts(nextCounts)
@@ -155,7 +180,7 @@ export function AppShell() {
       if (generation !== refreshGenerationRef.current) return
       setStatusError(cause instanceof Error ? cause : new Error('Dashboard API unavailable'))
     }
-  }, [])
+  }, [requestedApplication])
 
   usePolling(refreshDashboard, {
     enabled: status === null || (status.enabled && !status.paused),
@@ -191,6 +216,7 @@ export function AppShell() {
     const receiveFlush = (event: Event) => {
       const parsed = parseFlushStreamEvent((event as MessageEvent<string>).data)
       if (!parsed) return
+      if (parsed.indexRow.application !== selectedApplication) return
       setFlushEvent(parsed)
       setFlushRevision((value) => value + 1)
     }
@@ -201,7 +227,7 @@ export function AppShell() {
       source.removeEventListener('flush', receiveFlush)
       source.close()
     }
-  }, [status?.enabled, status?.paused])
+  }, [selectedApplication, status?.enabled, status?.paused])
 
   const togglePaused = useCallback(
     async (paused: boolean) => {
@@ -227,7 +253,7 @@ export function AppShell() {
     setMutating(true)
     setStatusError(null)
     try {
-      await api.clear()
+      await api.clear(selectedApplication)
       refreshGenerationRef.current += 1
       setCounts({})
       setRevision((value) => value + 1)
@@ -236,7 +262,7 @@ export function AppShell() {
     } finally {
       setMutating(false)
     }
-  }, [mutating])
+  }, [mutating, selectedApplication])
 
   const toggleTagMonitoring = useCallback(
     async (value: string) => {
@@ -273,6 +299,8 @@ export function AppShell() {
     () => ({
       status,
       counts,
+      selectedApplication,
+      selectApplication,
       statusError,
       mutating,
       revision,
@@ -296,6 +324,8 @@ export function AppShell() {
       monitoredTags,
       monitoringTags,
       monitoredTagsReady,
+      selectApplication,
+      selectedApplication,
       mutating,
       refreshCounts,
       revision,
@@ -413,6 +443,31 @@ export function AppShell() {
               <div className="me-auto min-w-28">
                 <h1 className="text-base font-semibold tracking-tight">{pageTitle}</h1>
               </div>
+              <Select
+                items={(status?.applications ?? []).map((application) => ({
+                  label: application.name,
+                  value: application.name,
+                }))}
+                onValueChange={(value) => {
+                  if (typeof value === 'string' && value !== '') selectApplication(value)
+                }}
+                value={selectedApplication}
+              >
+                <SelectTrigger aria-label="Application" className="w-44 max-w-[48vw]" size="sm">
+                  <Database aria-hidden="true" />
+                  <SelectValue placeholder="Application" />
+                </SelectTrigger>
+                <SelectPopup>
+                  {(status?.applications ?? []).map((application) => (
+                    <SelectItem key={application.name} value={application.name}>
+                      <span className="min-w-0 flex-1 truncate">{application.name}</span>
+                      <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                        {application.entries.toLocaleString()}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
 
               <form
                 className="order-last w-full sm:order-none sm:w-72"
@@ -457,8 +512,8 @@ export function AppShell() {
                   <AlertDialogHeader>
                     <AlertDialogTitle>Clear recorded entries?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      This permanently removes every stored entry and cannot be undone. Recording
-                      continues unless it is paused separately.
+                      This permanently removes entries recorded by “{selectedApplication}” and
+                      cannot be undone. Other applications in this shared store are not changed.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
@@ -467,7 +522,7 @@ export function AppShell() {
                       render={<Button loading={mutating} variant="destructive" />}
                       onClick={() => void clearEntries()}
                     >
-                      Clear all entries
+                      Clear {selectedApplication}
                     </AlertDialogClose>
                   </AlertDialogFooter>
                 </AlertDialogPopup>

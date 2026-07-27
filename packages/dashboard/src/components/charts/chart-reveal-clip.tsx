@@ -1,26 +1,26 @@
-"use client";
+'use client'
 
-import type { Transition } from "motion/react";
-import { motion } from "motion/react";
-import { clipRevealTransition } from "./animation";
+import type { Transition } from 'motion/react'
+import { motion } from 'motion/react'
+import { clipRevealTransition } from './animation'
 
-export type ChartRevealClipMode = "reveal" | "conceal";
+export type ChartRevealClipMode = 'reveal' | 'conceal'
 
 export interface ChartRevealClipProps {
-  clipPathId: string;
-  height: number;
-  targetWidth: number;
-  enterTransition?: Transition;
+  clipPathId: string
+  height: number
+  targetWidth: number
+  enterTransition?: Transition
   /** Bumps when motion settings change to replay the reveal. */
-  revealEpoch: number;
+  revealEpoch: number
   /** Extra inset around the clip rect so edge glyphs are not cut off. */
-  padding?: number;
+  padding?: number
   /** When false, clip stays at full width (no grow animation). */
-  animating?: boolean;
+  animating?: boolean
   /** Reveal grows 0 → full; conceal shrinks full → 0 (ready → loading). */
-  mode?: ChartRevealClipMode;
+  mode?: ChartRevealClipMode
   /** Called when a conceal animation finishes. */
-  onComplete?: () => void;
+  onComplete?: () => void
 }
 
 /**
@@ -35,30 +35,25 @@ export function ChartRevealClip({
   revealEpoch,
   padding = 0,
   animating = true,
-  mode = "reveal",
+  mode = 'reveal',
   onComplete,
 }: ChartRevealClipProps) {
-  const transition = clipRevealTransition(enterTransition);
-  const paddedWidth = Math.max(0, targetWidth + padding * 2);
-  const paddedHeight = height + padding * 2;
+  const transition = clipRevealTransition(enterTransition)
+  const paddedWidth = Math.max(0, targetWidth + padding * 2)
+  const paddedHeight = height + padding * 2
 
   if (!animating) {
     return (
       <clipPath id={clipPathId}>
-        <rect
-          height={paddedHeight}
-          width={paddedWidth}
-          x={-padding}
-          y={-padding}
-        />
+        <rect height={paddedHeight} width={paddedWidth} x={-padding} y={-padding} />
       </clipPath>
-    );
+    )
   }
 
-  if (mode === "conceal") {
+  if (mode === 'conceal') {
     // Mirror the LTR reveal: advance the clip's left edge rightward while width
     // shrinks (same geometry as `LineLoadingPulseStroke` exit half-cycle).
-    const rightEdge = -padding + paddedWidth;
+    const rightEdge = -padding + paddedWidth
 
     return (
       <clipPath id={clipPathId}>
@@ -72,7 +67,7 @@ export function ChartRevealClip({
           y={-padding}
         />
       </clipPath>
-    );
+    )
   }
 
   return (
@@ -88,5 +83,5 @@ export function ChartRevealClip({
         y={-padding}
       />
     </clipPath>
-  );
+  )
 }

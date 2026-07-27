@@ -68,6 +68,7 @@ export const api = {
     appendFilter(params, 'tag', filters.tag)
     appendFilter(params, 'family_hash', filters.familyHash)
     appendFilter(params, 'batch_id', filters.batchId)
+    appendFilter(params, 'application', filters.application)
     appendFilter(params, 'cursor', filters.cursor)
     appendFilter(params, 'limit', filters.limit)
     appendFilter(params, 'display_on_index', filters.displayOnIndex)
@@ -90,8 +91,16 @@ export const api = {
     }).then((response) => response.data)
   },
 
-  getCounts(signal?: AbortSignal): Promise<EntryCounts> {
-    return request<{ data: EntryCounts }>('counts', { signal }).then((response) => response.data)
+  getBatchExportUrl(batchId: string): string {
+    return endpoint(`batches/${encodeURIComponent(batchId)}/export`).toString()
+  },
+
+  getCounts(application?: string, signal?: AbortSignal): Promise<EntryCounts> {
+    const params = new URLSearchParams()
+    appendFilter(params, 'application', application)
+    return request<{ data: EntryCounts }>(`counts?${params.toString()}`, { signal }).then(
+      (response) => response.data
+    )
   },
 
   getStatus(signal?: AbortSignal): Promise<DashboardStatus> {
@@ -130,8 +139,10 @@ export const api = {
     })
   },
 
-  clear(): Promise<void> {
-    return request<void>('clear', { method: 'POST' })
+  clear(application?: string): Promise<void> {
+    const params = new URLSearchParams()
+    appendFilter(params, 'application', application)
+    return request<void>(`clear?${params.toString()}`, { method: 'POST' })
   },
 
   getExceptionGroups(
@@ -142,6 +153,7 @@ export const api = {
     appendFilter(params, 'cursor', filters.cursor)
     appendFilter(params, 'limit', filters.limit ?? 50)
     appendFilter(params, 'tag', filters.tag)
+    appendFilter(params, 'application', filters.application)
     return request<ExceptionGroupPage>(`exception-groups?${params.toString()}`, {
       signal,
     })

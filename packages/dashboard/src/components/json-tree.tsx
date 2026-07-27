@@ -2,11 +2,7 @@ import { ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 
 import { CopyButton } from '@/components/copy-button'
-import {
-  Collapsible,
-  CollapsiblePanel,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { cn } from '@/lib/utils'
 
 function primitiveValue(value: unknown) {
@@ -19,15 +15,7 @@ function primitiveValue(value: unknown) {
   return <span className="text-muted-foreground">{String(value)}</span>
 }
 
-function JsonNode({
-  name,
-  value,
-  depth,
-}: {
-  name?: string
-  value: unknown
-  depth: number
-}) {
+function JsonNode({ name, value, depth }: { name?: string; value: unknown; depth: number }) {
   const structured = typeof value === 'object' && value !== null
   const [open, setOpen] = useState(depth < 1)
   if (!structured) {

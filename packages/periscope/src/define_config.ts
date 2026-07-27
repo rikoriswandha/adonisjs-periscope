@@ -39,6 +39,7 @@ import type {
   KeepAlwaysHook,
   LogLevelName,
   PeriscopeConfig,
+  QueueWatcherAdapter,
   ResolvedPeriscopeConfig,
   ResolvedWatchersConfig,
   StorageDriverName,
@@ -67,6 +68,7 @@ export { DEFAULT_REDACT_HEADERS, DEFAULT_REDACT_KEYS } from './recorder/redactor
  */
 const TOP_LEVEL_KEYS = [
   'enabled',
+  'applicationName',
   'enabledIn',
   'storage',
   'recording',
@@ -97,6 +99,8 @@ const DEFAULT_MAX_ENTRIES = 10_000
 const DEFAULT_AMBIENT_ROTATION_MS = 10_000
 const DEFAULT_PAUSED_FLAG_TTL_MS = 5_000
 const DEFAULT_SAMPLE_RATE = 1
+const DEFAULT_APPLICATION_NAME = 'default'
+const MAX_APPLICATION_NAME_LENGTH = 191
 export const DEFAULT_KEEP_ALWAYS: KeepAlwaysHook = () => false
 
 /**
@@ -384,6 +388,37 @@ function readFunction<T>(path: string, value: unknown, issues: string[]): T | un
   return value as T
 }
 
+function readQueueAdapters(
+  path: string,
+  value: unknown,
+  issues: string[]
+): QueueWatcherAdapter[] | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+
+  if (!Array.isArray(value)) {
+    issues.push(`${path}: must be an array of queue watcher adapters; got ${describe(value)}`)
+    return undefined
+  }
+
+  let valid = true
+  for (const [index, adapter] of value.entries()) {
+    if (
+      adapter === null ||
+      typeof adapter !== 'object' ||
+      typeof (adapter as QueueWatcherAdapter).name !== 'string' ||
+      (adapter as QueueWatcherAdapter).name.trim() === '' ||
+      typeof (adapter as QueueWatcherAdapter).register !== 'function'
+    ) {
+      issues.push(`${path}[${index}]: must expose a non-empty name and register(observer) function`)
+      valid = false
+    }
+  }
+
+  return valid ? (value as QueueWatcherAdapter[]).slice() : undefined
+}
+
 /**
  * Resolves the sparse `recording.caps` map into a dense one covering every {@link EntryType}.
  *
@@ -455,9 +490,9 @@ function readEnum<T extends string>(
 /**
  * Resolves the `watchers` block.
  *
- * Every watcher is enabled by default. That is the whole promise of the package — install it
- * and see what your application is doing — and a watcher an application does not want costs it
- * one `enabled: false`, after which the watcher subscribes to nothing at all.
+ * Core watchers are enabled by default. Integrations that observe session identifiers, Redis
+ * commands, or external queue infrastructure are explicitly opt-in and subscribe to nothing
+ * until enabled.
  */
 function resolveWatchers(input: Record<string, unknown>, issues: string[]): ResolvedWatchersConfig {
   const watchers = readBlock(
@@ -476,6 +511,9 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
       'gate',
       'dump',
       'http_client',
+      'job_schedule',
+      'redis',
+      'session',
     ],
     issues
   )
@@ -510,6 +548,27 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
   const gate = readBlock(watchers, 'gate', ['enabled', 'ignoreAbilities'], issues, 'watchers.gate')
   const dump = readBlock(watchers, 'dump', ['enabled'], issues, 'watchers.dump')
   const httpClient = readBlock(watchers, 'http_client', ['enabled'], issues, 'watchers.http_client')
+  const jobSchedule = readBlock(
+    watchers,
+    'job_schedule',
+    ['enabled', 'adapters', 'capturePayload'],
+    issues,
+    'watchers.job_schedule'
+  )
+  const redis = readBlock(
+    watchers,
+    'redis',
+    ['enabled', 'captureArguments'],
+    issues,
+    'watchers.redis'
+  )
+  const session = readBlock(
+    watchers,
+    'session',
+    ['enabled', 'captureValues'],
+    issues,
+    'watchers.session'
+  )
 
   return {
     request: {
@@ -588,6 +647,24 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
     http_client: {
       enabled: readBoolean('watchers.http_client.enabled', httpClient.enabled, issues) ?? true,
     },
+    job_schedule: {
+      enabled: readBoolean('watchers.job_schedule.enabled', jobSchedule.enabled, issues) ?? false,
+      adapters:
+        readQueueAdapters('watchers.job_schedule.adapters', jobSchedule.adapters, issues) ?? [],
+      capturePayload:
+        readBoolean('watchers.job_schedule.capturePayload', jobSchedule.capturePayload, issues) ??
+        false,
+    },
+    redis: {
+      enabled: readBoolean('watchers.redis.enabled', redis.enabled, issues) ?? false,
+      captureArguments:
+        readBoolean('watchers.redis.captureArguments', redis.captureArguments, issues) ?? false,
+    },
+    session: {
+      enabled: readBoolean('watchers.session.enabled', session.enabled, issues) ?? false,
+      captureValues:
+        readBoolean('watchers.session.captureValues', session.captureValues, issues) ?? false,
+    },
   }
 }
 
@@ -632,11 +709,18 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
   }
 
   const enabled = readBoolean('enabled', input.enabled, issues)
+  const applicationName = readNonEmptyString('applicationName', input.applicationName, issues)
   const enabledIn = readStringArray('enabledIn', input.enabledIn, issues)
 
   if (enabledIn !== undefined && enabledIn.length === 0) {
     issues.push(
       'enabledIn: must list at least one NODE_ENV value; set enabled: false to switch Periscope off'
+    )
+  }
+
+  if (applicationName !== undefined && applicationName.length > MAX_APPLICATION_NAME_LENGTH) {
+    issues.push(
+      `applicationName: must be at most ${MAX_APPLICATION_NAME_LENGTH} characters; got ${applicationName.length}`
     )
   }
 
@@ -741,6 +825,7 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
 
   return {
     enabled: enabled ?? true,
+    applicationName: applicationName ?? DEFAULT_APPLICATION_NAME,
     enabledIn: enabledIn ?? [...DEFAULT_ENABLED_IN],
     storage: resolvedStorage,
     recording: {

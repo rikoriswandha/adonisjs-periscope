@@ -11,6 +11,7 @@ import { isRecordingEnabled } from '../../define_config.ts'
 import { Flag } from '../../types.ts'
 import type { PeriscopeStore, ResolvedPeriscopeConfig } from '../../types.ts'
 import type { DashboardEnvironment } from '../middleware/authorize.ts'
+import { firstQueryString } from '../query.ts'
 
 const DUMP_OPEN_LEASE_FLAG_PATTERN = /^dump-open:[A-Za-z0-9_-]{1,128}$/
 const DUMP_OPEN_TTL_MS = 30_000
@@ -22,8 +23,9 @@ export class DashboardController {
     private readonly environment: DashboardEnvironment
   ) {}
 
-  async counts() {
-    return { data: await this.store.counts() }
+  async counts({ request }: HttpContext) {
+    const application = firstQueryString(request.qs().application)
+    return { data: await this.store.counts(application) }
   }
 
   async status() {
@@ -31,11 +33,25 @@ export class DashboardController {
       nodeEnv: this.environment.nodeEnv,
       periscopeEnabled: this.environment.periscopeEnabled(),
     })
+    const applications = await this.store.applications()
+
+    if (!applications.some((application) => application.name === this.config.applicationName)) {
+      applications.unshift({
+        name: this.config.applicationName,
+        entries: 0,
+        latestAt: null,
+      })
+    }
 
     return {
       enabled,
       paused: (await this.store.getFlag(Flag.PAUSED)) !== null,
       path: this.config.dashboard.path,
+      applicationName: this.config.applicationName,
+      applications: applications.map((application) => ({
+        ...application,
+        latestAt: application.latestAt?.toISOString() ?? null,
+      })),
       nPlusOneThreshold: this.config.dashboard.nPlusOneThreshold,
     }
   }
@@ -72,8 +88,9 @@ export class DashboardController {
     response.noContent()
   }
 
-  async clear({ response }: HttpContext) {
-    await this.store.clear()
+  async clear({ request, response }: HttpContext) {
+    const application = firstQueryString(request.qs().application)
+    await this.store.clear(application)
     response.noContent()
   }
 }

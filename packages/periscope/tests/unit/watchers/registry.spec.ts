@@ -38,6 +38,9 @@ type ListenerProbe = {
 type TestContext = ConstructorParameters<typeof WatcherRegistry>[0]
 
 const WATCHER_EVENTS: Record<WatcherName, string> = {
+  job_schedule: 'test:job',
+  redis: 'adonisjs.redis.command',
+  session: 'session:committed',
   request: 'http:request_completed',
   query: 'db:query',
   exception: 'test:exception',
@@ -51,6 +54,11 @@ const WATCHER_EVENTS: Record<WatcherName, string> = {
   dump: 'test:dump',
   http_client: 'test:http_client',
 }
+
+const OPT_IN_WATCHERS: readonly WatcherName[] = ['job_schedule', 'redis', 'session']
+const DEFAULT_ENABLED_WATCHER_NAMES = WATCHER_NAMES.filter(
+  (name) => !OPT_IN_WATCHERS.includes(name)
+)
 
 async function makeContext(options: { config?: PeriscopeConfig; enabled?: boolean } = {}) {
   const { app, emitter } = await createApp()
@@ -120,7 +128,12 @@ function makeStructuralContext(enabled = true): TestContext {
   }
   const config = defineConfig({
     storage: { driver: 'memory' },
-    watchers: { exception: { captureProcessErrors: false } },
+    watchers: {
+      exception: { captureProcessErrors: false },
+      job_schedule: { enabled: true },
+      redis: { enabled: true },
+      session: { enabled: true },
+    },
   })
   const store = new MemoryStore({ maxEntries: 100 })
   const recorder = new Recorder({ config, store, enabled })
@@ -175,7 +188,7 @@ test.group('WatcherRegistry', () => {
 
     assert.deepEqual(
       registry.watchers.map((watcher) => watcher.name),
-      WATCHER_NAMES.filter((name) => name !== 'query' && name !== 'log')
+      DEFAULT_ENABLED_WATCHER_NAMES.filter((name) => name !== 'query' && name !== 'log')
     )
   })
 
@@ -214,7 +227,10 @@ test.group('WatcherRegistry', () => {
     await registry.register()
     await registry.register()
 
-    const expectedOrder = ['model', ...WATCHER_NAMES.filter((name) => name !== 'model')]
+    const expectedOrder = [
+      'model',
+      ...DEFAULT_ENABLED_WATCHER_NAMES.filter((name) => name !== 'model'),
+    ]
     assert.strictEqual(registry.watchers[0], earlyModelWatcher)
     assert.deepEqual(
       registry.watchers.map((watcher) => watcher.name),
@@ -269,7 +285,7 @@ test.group('WatcherRegistry', () => {
     await registry.register()
     const elapsedMs = performance.now() - startedAt
 
-    assert.lengthOf(WATCHER_NAMES, 12)
+    assert.lengthOf(WATCHER_NAMES, 15)
     assert.deepEqual(constructed, WATCHER_NAMES)
     assert.deepEqual(registered, WATCHER_NAMES)
     assert.deepEqual(
@@ -323,7 +339,7 @@ test.group('WatcherRegistry', () => {
 
     assert.deepEqual(
       registry.watchers.map((watcher) => watcher.name),
-      WATCHER_NAMES.filter((name) => name !== 'query')
+      DEFAULT_ENABLED_WATCHER_NAMES.filter((name) => name !== 'query')
     )
   })
 
@@ -405,7 +421,7 @@ test.group('WatcherRegistry', () => {
     await registry.cleanup()
     await registry.cleanup()
 
-    assert.deepEqual(cleanupOrder, [...WATCHER_NAMES].reverse())
+    assert.deepEqual(cleanupOrder, [...DEFAULT_ENABLED_WATCHER_NAMES].reverse())
     assert.isEmpty(registry.watchers)
 
     for (const event of Object.values(WATCHER_EVENTS)) {
@@ -417,7 +433,14 @@ test.group('WatcherRegistry', () => {
     assert,
   }) => {
     const { context, emitter, recorder, store } = await makeContext({
-      config: { watchers: { exception: { captureProcessErrors: false } } },
+      config: {
+        watchers: {
+          exception: { captureProcessErrors: false },
+          job_schedule: { enabled: true },
+          redis: { enabled: true },
+          session: { enabled: true },
+        },
+      },
     })
     const output: string[] = []
     const logger = new LoggerFactory().merge({ enabled: true }).pushLogsTo(output).create()

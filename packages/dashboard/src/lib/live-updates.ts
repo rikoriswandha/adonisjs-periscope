@@ -32,6 +32,7 @@ export function parseFlushStreamEvent(data: string): FlushStreamEvent | null {
     row.type !== event.type ||
     row.uuid !== event.uuid ||
     typeof row.batchId !== 'string' ||
+    typeof row.application !== 'string' ||
     !(row.familyHash === null || typeof row.familyHash === 'string') ||
     !Array.isArray(row.tags) ||
     !row.tags.every((tag) => typeof tag === 'string') ||
@@ -52,6 +53,7 @@ export function streamEventMatchesFilters(event: FlushStreamEvent, filters: Entr
     (!filters.tag || row.tags.includes(filters.tag)) &&
     (!filters.familyHash || filters.familyHash === row.familyHash) &&
     (!filters.batchId || filters.batchId === row.batchId) &&
+    (!filters.application || filters.application === row.application) &&
     (filters.displayOnIndex !== true || row.shouldDisplayOnIndex)
   )
 }

@@ -111,6 +111,7 @@ test.group('Dashboard live HTTP API', () => {
       indexRow: {
         uuid: 'entry-1',
         batchId: 'batch-1',
+        application: 'default',
         type: EntryType.QUERY,
         familyHash: 'select-users',
         tags: ['slow'],

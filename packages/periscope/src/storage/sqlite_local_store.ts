@@ -14,6 +14,7 @@ import type { Database as DatabaseHandle, Statement } from 'better-sqlite3'
 import { PeriscopeStorageError } from '../errors.ts'
 import { EntryType } from '../types.ts'
 import type {
+  ApplicationSummary,
   EntryQuery,
   EntryTypeCounts,
   ExceptionGroup,
@@ -60,12 +61,12 @@ interface PendingSave {
  * once so a column added to {@link EntryRow} cannot be bound into the wrong slot.
  */
 const ENTRY_COLUMNS =
-  'uuid, batch_id, type, family_hash, content, tags, should_display_on_index, sequence, created_at'
+  'uuid, batch_id, application, type, family_hash, content, tags, should_display_on_index, sequence, created_at'
 
 /**
  * Bind slots per entry row — the column count of {@link ENTRY_COLUMNS}.
  */
-const ENTRY_COLUMN_COUNT = 9
+const ENTRY_COLUMN_COUNT = 10
 
 /**
  * How long a statement waits for a lock held by another connection before giving up.
@@ -101,6 +102,7 @@ const SCHEMA = `
 create table if not exists ${ENTRIES_TABLE} (
   uuid varchar(36) not null primary key,
   batch_id varchar(36) not null,
+  application varchar(191) not null default 'default',
   type varchar(32) not null,
   family_hash varchar(64),
   content text not null,
@@ -140,6 +142,13 @@ create table if not exists ${FLAGS_TABLE} (
   value text not null,
   expires_at integer
 );
+`
+
+const APPLICATION_INDEXES = `
+create index if not exists periscope_entries_application_type_display_index
+  on ${ENTRIES_TABLE} (application, type, should_display_on_index, sequence);
+create index if not exists periscope_entries_application_sequence_index
+  on ${ENTRIES_TABLE} (application, sequence);
 `
 
 /**
@@ -223,6 +232,15 @@ function openDatabase(path: string): DatabaseHandle {
     db.pragma('foreign_keys = ON')
 
     db.exec(SCHEMA)
+    const entryColumns = db.prepare(`pragma table_info(${ENTRIES_TABLE})`).all() as {
+      name: string
+    }[]
+    if (!entryColumns.some((column) => column.name === 'application')) {
+      db.exec(
+        `alter table ${ENTRIES_TABLE} add column application varchar(191) not null default 'default'`
+      )
+    }
+    db.exec(APPLICATION_INDEXES)
 
     return db
   } catch (error) {
@@ -290,6 +308,7 @@ export class SqliteLocalStore implements PeriscopeStore {
   readonly #pruneBefore: (before: number, keepExceptions: boolean) => number
   readonly #trimTo: (cap: number) => number
   readonly #clearAll: () => void
+  readonly #clearApplication: (application: string) => void
   readonly #pendingSaves: PendingSave[] = []
   #saveScheduled = false
 
@@ -347,6 +366,12 @@ export class SqliteLocalStore implements PeriscopeStore {
       this.#prepare(`delete from ${TAGS_TABLE}`).run()
       this.#prepare(`delete from ${ENTRIES_TABLE}`).run()
     })
+    this.#clearApplication = this.#db.transaction((application: string) => {
+      this.#prepare(
+        `delete from ${TAGS_TABLE} where entry_uuid in (select uuid from ${ENTRIES_TABLE} where application = ?)`
+      ).run(application)
+      this.#prepare(`delete from ${ENTRIES_TABLE} where application = ?`).run(application)
+    })
   }
 
   /**
@@ -393,6 +418,7 @@ export class SqliteLocalStore implements PeriscopeStore {
         values.push(
           row.uuid,
           row.batch_id,
+          row.application,
           row.type,
           row.family_hash,
           row.content as string,
@@ -488,6 +514,11 @@ export class SqliteLocalStore implements PeriscopeStore {
       values.push(query.batchId)
     }
 
+    if (query.application !== undefined) {
+      conditions.push('application = ?')
+      values.push(query.application)
+    }
+
     if (query.displayOnIndex !== undefined) {
       conditions.push('should_display_on_index = ?')
       values.push(query.displayOnIndex ? 1 : 0)
@@ -557,10 +588,12 @@ export class SqliteLocalStore implements PeriscopeStore {
     return rows.map(toStoredEntry)
   }
 
-  async counts(): Promise<EntryTypeCounts> {
+  async counts(application?: string): Promise<EntryTypeCounts> {
+    const where = application === undefined ? '' : ' where application = ?'
+    const values: Binding[] = application === undefined ? [] : [application]
     const rows = this.#prepare<{ type: EntryType; total: number }>(
-      `select type, count(*) as total from ${ENTRIES_TABLE} group by type`
-    ).all()
+      `select type, count(*) as total from ${ENTRIES_TABLE}${where} group by type`
+    ).all(...values)
 
     const counts: EntryTypeCounts = {}
 
@@ -569,6 +602,22 @@ export class SqliteLocalStore implements PeriscopeStore {
     }
 
     return counts
+  }
+
+  async applications(): Promise<ApplicationSummary[]> {
+    const rows = this.#prepare<{
+      application: string
+      total: number
+      latest_at: number | null
+    }>(
+      `select application, count(*) as total, max(created_at) as latest_at from ${ENTRIES_TABLE} group by application order by latest_at desc, application asc`
+    ).all()
+
+    return rows.map((row) => ({
+      name: row.application,
+      entries: row.total,
+      latestAt: row.latest_at === null ? null : new Date(row.latest_at),
+    }))
   }
 
   async exceptionGroups(query: ExceptionGroupQuery = {}): Promise<Paginated<ExceptionGroup>> {
@@ -580,6 +629,11 @@ export class SqliteLocalStore implements PeriscopeStore {
         `exists (select 1 from ${TAGS_TABLE} where ${TAGS_TABLE}.entry_uuid = ${ENTRIES_TABLE}.uuid and ${TAGS_TABLE}.tag = ?)`
       )
       values.push(query.tag)
+    }
+
+    if (query.application !== undefined) {
+      conditions.push('application = ?')
+      values.push(query.application)
     }
 
     const rows = this.#prepare<EntryRow>(
@@ -612,8 +666,12 @@ export class SqliteLocalStore implements PeriscopeStore {
     return (total?.total ?? 0) <= cap ? 0 : this.#trimTo(cap)
   }
 
-  async clear(): Promise<void> {
-    this.#clearAll()
+  async clear(application?: string): Promise<void> {
+    if (application === undefined) {
+      this.#clearAll()
+    } else {
+      this.#clearApplication(application)
+    }
   }
 
   async monitoredTags(): Promise<string[]> {

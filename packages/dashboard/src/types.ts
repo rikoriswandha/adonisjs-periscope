@@ -25,6 +25,7 @@ export type EntryContent = Record<string, unknown>
 export type StoredEntry = {
   uuid: string
   batchId: string
+  application: string
   type: EntryType
   familyHash: string | null
   content: EntryContent
@@ -44,15 +45,24 @@ export type EntryFilters = {
   tag?: string
   familyHash?: string
   batchId?: string
+  application?: string
   cursor?: string
   limit?: number
   displayOnIndex?: boolean
+}
+
+export type ApplicationSummary = {
+  name: string
+  entries: number
+  latestAt: string | null
 }
 
 export type DashboardStatus = {
   enabled: boolean
   paused: boolean
   path: string
+  applicationName: string
+  applications: ApplicationSummary[]
   nPlusOneThreshold: number
 }
 
@@ -86,12 +96,14 @@ export type ExceptionGroupFilters = {
   cursor?: string
   limit?: number
   tag?: string
+  application?: string
 }
 
 export type RequestContent = EntryContent & {
   method: string
   url: string
   query: unknown
+  traceId?: string
   routePattern?: string
   routeName?: string
   headers: Record<string, unknown>
@@ -228,4 +240,45 @@ export type HttpClientContent = EntryContent & {
   responseHeaders?: Record<string, unknown>
   error?: unknown
   completed: boolean
+}
+
+export type JobContent = EntryContent & {
+  adapter: string
+  queue: string
+  jobId: string
+  name?: string
+  status: 'completed' | 'failed'
+  durationMs?: number
+  attempts?: number
+  payload?: unknown
+  result?: unknown
+  error?: unknown
+}
+
+export type ScheduleContent = EntryContent & {
+  adapter: string
+  queue: string
+  jobId: string
+  name?: string
+  scheduledAt?: string
+  delayMs?: number
+  payload?: unknown
+}
+
+export type RedisContent = EntryContent & {
+  command: string
+  argumentCount: number
+  arguments?: unknown
+  durationMs: number
+  error?: unknown
+}
+
+export type SessionContent = EntryContent & {
+  operation: 'initiated' | 'committed' | 'migrated'
+  sessionIdHash: string
+  fromSessionIdHash?: string
+  fresh: boolean
+  readonly: boolean
+  modified: boolean
+  values?: unknown
 }

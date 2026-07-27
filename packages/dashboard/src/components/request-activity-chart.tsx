@@ -5,11 +5,7 @@ import { ChartTooltip } from '@/components/charts/tooltip'
 import { Grid } from '@/components/charts/grid'
 import { LineChart, Line } from '@/components/charts/line-chart'
 import { XAxis } from '@/components/charts/x-axis'
-import {
-  Collapsible,
-  CollapsiblePanel,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { formatDateTime, formatDuration, sequenceCompareAscending } from '@/lib/format'
 import type { RequestContent, StoredEntry } from '@/types'
 
@@ -31,7 +27,10 @@ export function RequestActivityChart({ entries }: { entries: StoredEntry[] }) {
   if (data.length < 2) return null
 
   return (
-    <figure className="overflow-hidden rounded-lg border bg-background" aria-labelledby="activity-title">
+    <figure
+      className="overflow-hidden rounded-lg border bg-background"
+      aria-labelledby="activity-title"
+    >
       <figcaption className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
         <div>
           <h2 className="flex items-center gap-2 text-sm font-semibold" id="activity-title">
@@ -46,7 +45,11 @@ export function RequestActivityChart({ entries }: { entries: StoredEntry[] }) {
           {data.length} samples
         </span>
       </figcaption>
-      <div className="px-2 pt-2 sm:px-4" role="img" aria-label="Line chart of recent request duration">
+      <div
+        className="px-2 pt-2 sm:px-4"
+        role="img"
+        aria-label="Line chart of recent request duration"
+      >
         <LineChart
           animationDuration={0}
           aspectRatio="3 / 1"
@@ -80,7 +83,9 @@ export function RequestActivityChart({ entries }: { entries: StoredEntry[] }) {
               <tbody className="divide-y">
                 {data.map((point, index) => (
                   <tr key={`${point.date.toISOString()}-${index}`}>
-                    <td className="whitespace-nowrap px-3 py-2">{formatDateTime(point.date.toISOString())}</td>
+                    <td className="whitespace-nowrap px-3 py-2">
+                      {formatDateTime(point.date.toISOString())}
+                    </td>
                     <td className="max-w-80 truncate px-3 py-2 font-mono">{point.label}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-right font-mono tabular-nums">
                       {formatDuration(point.duration)}

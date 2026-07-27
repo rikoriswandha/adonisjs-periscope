@@ -4,11 +4,7 @@ import { format } from 'sql-formatter'
 
 import { CopyButton } from '@/components/copy-button'
 import { JsonTree } from '@/components/json-tree'
-import {
-  Collapsible,
-  CollapsiblePanel,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@/components/ui/collapsible'
 
 export function SqlBlock({ sql, bindings }: { sql: string; bindings?: unknown }) {
   const [bindingsOpen, setBindingsOpen] = useState(false)

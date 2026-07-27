@@ -9,6 +9,8 @@ import { EventEmitter } from 'node:events'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { test } from '@japa/runner'
+import { context as otelContext, ROOT_CONTEXT, trace } from '@opentelemetry/api'
+import type { Context, ContextManager } from '@opentelemetry/api'
 
 import { IncomingEntry } from '../../../src/entry.ts'
 import { BatchScope } from '../../../src/recorder/context.ts'
@@ -59,6 +61,44 @@ test.group('BatchScope | contexts', (group) => {
     assert.deepEqual(context.counters, {})
     assert.deepEqual(context.truncated, {})
     assert.isTrue(context.startedAt > 0n)
+  })
+
+  test('capture a valid active OpenTelemetry trace identifier', ({ assert }) => {
+    let activeContext: Context = ROOT_CONTEXT
+    const manager: ContextManager = {
+      active: () => activeContext,
+      with(contextValue, callback, thisArg, ...args) {
+        const previous = activeContext
+        activeContext = contextValue
+        try {
+          return callback.call(thisArg, ...args)
+        } finally {
+          activeContext = previous
+        }
+      },
+      bind: (_contextValue, target) => target,
+      enable() {
+        return this
+      },
+      disable() {
+        activeContext = ROOT_CONTEXT
+        return this
+      },
+    }
+    assert.isTrue(otelContext.setGlobalContextManager(manager))
+
+    try {
+      const tracedContext = trace.setSpanContext(ROOT_CONTEXT, {
+        traceId: '0123456789abcdef0123456789abcdef',
+        spanId: '0123456789abcdef',
+        traceFlags: 1,
+      })
+      const batch = otelContext.with(tracedContext, () => BatchScope.createContext('request'))
+
+      assert.equal(batch.traceId, '0123456789abcdef0123456789abcdef')
+    } finally {
+      otelContext.disable()
+    }
   })
 
   test('give every created context its own batch id', ({ assert }) => {

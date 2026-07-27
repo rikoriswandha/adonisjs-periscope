@@ -460,6 +460,11 @@ Implemented in the root `README.md` and `CONTRIBUTING.md`.
 - `np`/changesets release flow; provenance-signed npm publish; `build/dashboard` verified present in the tarball by a pack-test in CI (classic packaging failure — gate it).
 - Version support policy: track AdonisJS v7 minors; Lucid min-version matrix in CI.
 
+Implemented with Changesets, provenance-enabled GitHub publication, an npm tarball content gate,
+and an oldest/latest AdonisJS 7 × Lucid 22 compatibility matrix. The public package begins at
+`0.1.0`; `1.0.0` remains gated on at least two real applications and a two-week defect-free
+dogfood window.
+
 ### P9.2 Post-1.0 backlog (ordered, from architecture roadmap)
 
 1. Job/Schedule watcher **adapters** (interface + `@rlanz/bull-queue` reference impl) — was deliberately deferred: queue ecosystem is pluggable and adapter interface benefits from 1.0 user feedback.
@@ -468,6 +473,11 @@ Implemented in the root `README.md` and `CONTRIBUTING.md`.
 4. OpenTelemetry trace-id cross-link (read active span at batch open, store `traceId` in request content).
 5. Batch export ("download this batch as JSON bundle") for bug reports.
 6. Multi-app viewer.
+
+Implemented in Phase 9: pluggable queue lifecycle adapters plus the BullMQ reference adapter;
+off-by-default Redis and Session watchers; batch-level N+1 warnings; optional OpenTelemetry trace
+capture; JSON batch export; and application-labelled storage, API filtering, scoped clear, and
+dashboard selection.
 
 ---
 

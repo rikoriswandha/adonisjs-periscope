@@ -45,7 +45,7 @@ export function useNewEntryPolling(
   paused: boolean,
   revision: number
 ) {
-  const { liveUpdateMode, flushEvent, flushRevision } = useDashboard()
+  const { liveUpdateMode, flushEvent, flushRevision, selectedApplication } = useDashboard()
   const entriesRef = useRef(entries)
   entriesRef.current = entries
   const [pending, setPending] = useState<StoredEntry[]>([])
@@ -53,7 +53,10 @@ export function useNewEntryPolling(
   const pendingGenerationRef = useRef(0)
   const generationRef = useRef(0)
   const controllerRef = useRef<AbortController | null>(null)
-  const filterKey = useMemo(() => JSON.stringify(filters), [filters])
+  const filterKey = useMemo(
+    () => JSON.stringify({ ...filters, application: selectedApplication }),
+    [filters, selectedApplication]
+  )
   const stableFilters = useMemo<EntryFilters>(
     () => JSON.parse(filterKey) as EntryFilters,
     [filterKey]

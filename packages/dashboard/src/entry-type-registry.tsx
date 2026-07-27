@@ -36,7 +36,7 @@ export type EntryTypeRegistration = {
   type: EntryType
   path: string
   label: string
-  group: 'Application' | 'Diagnostics'
+  group: 'Application' | 'Infrastructure' | 'Diagnostics'
   icon: LucideIcon
   load: () => Promise<EntryTypeImplementation>
 }

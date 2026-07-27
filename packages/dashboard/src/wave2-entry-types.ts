@@ -1,4 +1,15 @@
-import { Box, Braces, DatabaseZap, Globe2, Mail, ShieldCheck, SquareTerminal } from 'lucide-react'
+import {
+  Box,
+  Braces,
+  CalendarClock,
+  CircleGauge,
+  DatabaseZap,
+  Globe2,
+  KeyRound,
+  Mail,
+  ShieldCheck,
+  SquareTerminal,
+} from 'lucide-react'
 
 import { registerEntryType } from '@/entry-type-registry'
 import type { EntryTypeRegistration } from '@/entry-type-registry'
@@ -70,6 +81,43 @@ const httpClientEntryType = registerEntryType({
     import('@/pages/http-client-page').then((module) => module.httpClientEntryTypeImplementation),
 })
 
+const schedulesEntryType = registerEntryType({
+  type: 'schedule',
+  path: 'schedules',
+  label: 'Schedules',
+  group: 'Application',
+  icon: CalendarClock,
+  load: () => import('@/pages/jobs-page').then((module) => module.schedulesEntryTypeImplementation),
+})
+
+const jobsEntryType = registerEntryType({
+  type: 'job',
+  path: 'jobs',
+  label: 'Jobs',
+  group: 'Application',
+  icon: CircleGauge,
+  load: () => import('@/pages/jobs-page').then((module) => module.jobsEntryTypeImplementation),
+})
+
+const redisEntryType = registerEntryType({
+  type: 'redis',
+  path: 'redis',
+  label: 'Redis',
+  group: 'Infrastructure',
+  icon: DatabaseZap,
+  load: () => import('@/pages/redis-page').then((module) => module.redisEntryTypeImplementation),
+})
+
+const sessionsEntryType = registerEntryType({
+  type: 'session',
+  path: 'sessions',
+  label: 'Sessions',
+  group: 'Infrastructure',
+  icon: KeyRound,
+  load: () =>
+    import('@/pages/sessions-page').then((module) => module.sessionsEntryTypeImplementation),
+})
+
 export const wave2EntryTypes: readonly EntryTypeRegistration[] = Object.freeze([
   commandsEntryType,
   mailEntryType,
@@ -78,6 +126,10 @@ export const wave2EntryTypes: readonly EntryTypeRegistration[] = Object.freeze([
   gatesEntryType,
   dumpsEntryType,
   httpClientEntryType,
+  schedulesEntryType,
+  jobsEntryType,
+  redisEntryType,
+  sessionsEntryType,
 ])
 
 assertUniqueEntryTypeMetadata(wave2EntryTypes)

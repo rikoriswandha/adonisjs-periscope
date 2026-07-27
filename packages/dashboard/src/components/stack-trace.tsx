@@ -13,7 +13,10 @@ export function StackTrace({
   return (
     <div className="space-y-4">
       {codeFrame && codeFrame.length > 0 && (
-        <section aria-label="Source code frame" className="overflow-hidden rounded-lg border bg-muted/35">
+        <section
+          aria-label="Source code frame"
+          className="overflow-hidden rounded-lg border bg-muted/35"
+        >
           <div className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">
             Source context
           </div>
@@ -50,7 +53,9 @@ export function StackTrace({
                   <Badge size="sm" variant={frame.type === 'app' ? 'info' : 'secondary'}>
                     {frame.type}
                   </Badge>
-                  <span className="truncate text-foreground">{frame.function ?? '(anonymous)'}</span>
+                  <span className="truncate text-foreground">
+                    {frame.function ?? '(anonymous)'}
+                  </span>
                 </div>
                 <span className="min-w-0 break-all text-muted-foreground">
                   {frame.file}

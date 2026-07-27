@@ -9,6 +9,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 
 import type { BatchContext, BatchKind } from '../types.ts'
+import { activeTraceId } from './trace_context.ts'
 
 /**
  * The one and only batch store (plan P1.2).
@@ -62,10 +63,12 @@ export class BatchScope {
    * across processes — `StoredEntry.sequence` owns ordering.
    */
   static createContext(kind: BatchKind): BatchContext {
+    const traceId = activeTraceId()
     return {
       batchId: randomUUID(),
       kind,
       startedAt: process.hrtime.bigint(),
+      ...(traceId === undefined ? {} : { traceId }),
       sampled: sampleRate >= 1 || (sampleRate > 0 && Math.random() < sampleRate),
       retention: 'pending',
       buffer: [],

@@ -54,6 +54,7 @@ const storeDouble: PeriscopeStore = {
   list: async () => ({ data: [], nextCursor: null }),
   batch: async () => [],
   counts: async () => ({}),
+  applications: async () => [],
   exceptionGroups: async () => ({ data: [], nextCursor: null }),
   prune: async () => 0,
   trim: async () => 0,
@@ -75,6 +76,7 @@ const storeDouble: PeriscopeStore = {
 const storedEntry: StoredEntry = {
   uuid: '5c9f9f3a-2b5e-4c1f-8f3a-1b2c3d4e5f60',
   batchId: 'batch-1',
+  application: 'default',
   type: EntryType.QUERY,
   familyHash: 'family-1',
   content: { sql: 'select 1' },
@@ -103,7 +105,7 @@ test.group('Types | EntryType', () => {
 })
 
 test.group('Types | WatcherName', () => {
-  test('append every Phase 6 watcher in registration order', ({ assert, expectTypeOf }) => {
+  test('append every shipped watcher in registration order', ({ assert, expectTypeOf }) => {
     assert.deepEqual(WATCHER_NAMES, [
       'request',
       'query',
@@ -117,6 +119,9 @@ test.group('Types | WatcherName', () => {
       'gate',
       'dump',
       'http_client',
+      'job_schedule',
+      'redis',
+      'session',
     ])
 
     expectTypeOf<(typeof WATCHER_NAMES)[number]>().toEqualTypeOf<WatcherName>()
@@ -152,6 +157,7 @@ test.group('Types | StoredEntry', () => {
 
   test('keep the key set closed and every field required', ({ assert, expectTypeOf }) => {
     assert.deepEqual(Object.keys(storedEntry).sort(), [
+      'application',
       'batchId',
       'content',
       'createdAt',
@@ -166,6 +172,7 @@ test.group('Types | StoredEntry', () => {
     expectTypeOf<keyof StoredEntry>().toEqualTypeOf<
       | 'uuid'
       | 'batchId'
+      | 'application'
       | 'type'
       | 'familyHash'
       | 'content'
@@ -202,17 +209,25 @@ test.group('Types | EntryQuery', () => {
       tag: 'status:500',
       familyHash: 'family-1',
       batchId: 'batch-1',
+      application: 'default',
       displayOnIndex: true,
       cursor: 'cursor-1',
       limit: 25,
     }
 
     assert.deepEqual(Object.keys(unfiltered), [])
-    assert.lengthOf(Object.keys(filtered), 7)
+    assert.lengthOf(Object.keys(filtered), 8)
 
     expectTypeOf<Partial<EntryQuery>>().toEqualTypeOf<EntryQuery>()
     expectTypeOf<keyof EntryQuery>().toEqualTypeOf<
-      'type' | 'tag' | 'familyHash' | 'batchId' | 'displayOnIndex' | 'cursor' | 'limit'
+      | 'type'
+      | 'tag'
+      | 'familyHash'
+      | 'batchId'
+      | 'application'
+      | 'displayOnIndex'
+      | 'cursor'
+      | 'limit'
     >()
 
     /**
@@ -229,6 +244,7 @@ test.group('Types | EntryQuery', () => {
 test.group('Types | PeriscopeStore', () => {
   test('expose exactly the methods every driver implements', ({ assert, expectTypeOf }) => {
     assert.deepEqual(Object.keys(storeDouble).sort(), [
+      'applications',
       'batch',
       'clear',
       'close',
@@ -254,6 +270,7 @@ test.group('Types | PeriscopeStore', () => {
       | 'list'
       | 'batch'
       | 'counts'
+      | 'applications'
       | 'exceptionGroups'
       | 'prune'
       | 'trim'
@@ -288,7 +305,9 @@ test.group('Types | PeriscopeStore', () => {
     expectTypeOf<PeriscopeStore['batch']>().toEqualTypeOf<
       (batchId: string) => Promise<StoredEntry[]>
     >()
-    expectTypeOf<PeriscopeStore['counts']>().toEqualTypeOf<() => Promise<EntryTypeCounts>>()
+    expectTypeOf<PeriscopeStore['counts']>().toEqualTypeOf<
+      (application?: string) => Promise<EntryTypeCounts>
+    >()
     expectTypeOf<PeriscopeStore['exceptionGroups']>().toEqualTypeOf<
       (query?: ExceptionGroupQuery) => Promise<Paginated<ExceptionGroup>>
     >()
@@ -303,7 +322,7 @@ test.group('Types | PeriscopeStore', () => {
       (options: PruneOptions) => Promise<number>
     >()
     expectTypeOf<PeriscopeStore['trim']>().toEqualTypeOf<(maxEntries: number) => Promise<number>>()
-    expectTypeOf<PeriscopeStore['clear']>().toEqualTypeOf<() => Promise<void>>()
+    expectTypeOf<PeriscopeStore['clear']>().toEqualTypeOf<(application?: string) => Promise<void>>()
     expectTypeOf<PeriscopeStore['close']>().toEqualTypeOf<() => Promise<void>>()
 
     expectTypeOf<PruneOptions>().toEqualTypeOf<{ before: Date; keepExceptions?: boolean }>()
@@ -354,6 +373,7 @@ test.group('Types | BatchContext', () => {
 
     expectTypeOf<keyof BatchContext>().toEqualTypeOf<
       | 'batchId'
+      | 'traceId'
       | 'kind'
       | 'startedAt'
       | 'sampled'
@@ -363,7 +383,7 @@ test.group('Types | BatchContext', () => {
       | 'truncated'
       | 'muted'
     >()
-    expectTypeOf<Required<BatchContext>>().toEqualTypeOf<BatchContext>()
+    expectTypeOf<BatchContext['traceId']>().toEqualTypeOf<string | undefined>()
     expectTypeOf<BatchContext['batchId']>().toBeString()
     expectTypeOf<BatchContext['kind']>().toEqualTypeOf<BatchKind>()
     expectTypeOf<BatchContext['startedAt']>().toEqualTypeOf<bigint>()
@@ -422,6 +442,7 @@ test.group('Types | configuration', () => {
     expectTypeOf({}).toExtend<PeriscopeConfig>()
     expectTypeOf<keyof PeriscopeConfig>().toEqualTypeOf<
       | 'enabled'
+      | 'applicationName'
       | 'enabledIn'
       | 'storage'
       | 'recording'
@@ -435,6 +456,7 @@ test.group('Types | configuration', () => {
   test('require every block of the resolved configuration', ({ assert, expectTypeOf }) => {
     const resolved: ResolvedPeriscopeConfig = {
       enabled: true,
+      applicationName: 'default',
       enabledIn: ['development', 'test'],
       storage: { driver: 'memory', maxEntries: 10_000 },
       recording: {
@@ -483,11 +505,15 @@ test.group('Types | configuration', () => {
         gate: { enabled: true, ignoreAbilities: [] },
         dump: { enabled: true },
         http_client: { enabled: true },
+        job_schedule: { enabled: false, adapters: [], capturePayload: false },
+        redis: { enabled: false, captureArguments: false },
+        session: { enabled: false, captureValues: false },
       },
       dashboard: { path: '/periscope', authorize: () => true, nPlusOneThreshold: 5 },
     }
 
     assert.deepEqual(Object.keys(resolved).sort(), [
+      'applicationName',
       'dashboard',
       'enabled',
       'enabledIn',
@@ -506,6 +532,7 @@ test.group('Types | configuration', () => {
     expectTypeOf<Partial<ResolvedPeriscopeConfig>>().not.toEqualTypeOf<ResolvedPeriscopeConfig>()
     expectTypeOf<keyof ResolvedPeriscopeConfig>().toEqualTypeOf<
       | 'enabled'
+      | 'applicationName'
       | 'enabledIn'
       | 'storage'
       | 'recording'

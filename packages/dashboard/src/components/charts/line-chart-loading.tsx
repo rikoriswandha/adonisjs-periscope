@@ -1,54 +1,53 @@
-"use client";
+'use client'
 
-import { curveNatural } from "@visx/curve";
-import { useMemo } from "react";
-import type { Margin } from "./chart-context";
-import type { LoadingStyle } from "./chart-phase";
+import { curveNatural } from '@visx/curve'
+import { useMemo } from 'react'
+import type { Margin } from './chart-context'
+import type { LoadingStyle } from './chart-phase'
 import {
   DEFAULT_SKELETON_DATA_KEY,
   DEFAULT_SKELETON_POINT_COUNT,
   generateChartSkeletonData,
-} from "./generate-chart-skeleton-data";
-import { Grid } from "./grid";
-import { Line } from "./line";
-import { LineChart } from "./line-chart";
+} from './generate-chart-skeleton-data'
+import { Grid } from './grid'
+import { Line } from './line'
+import { LineChart } from './line-chart'
 
-const LOADING_DATA_KEY = DEFAULT_SKELETON_DATA_KEY;
-const DEFAULT_LOADING_STROKE = "var(--foreground)";
-const DEFAULT_LOADING_GRID_STROKE =
-  "color-mix(in oklch, var(--chart-grid) 50%, transparent)";
+const LOADING_DATA_KEY = DEFAULT_SKELETON_DATA_KEY
+const DEFAULT_LOADING_STROKE = 'var(--foreground)'
+const DEFAULT_LOADING_GRID_STROKE = 'color-mix(in oklch, var(--chart-grid) 50%, transparent)'
 const DEFAULT_LOADING_GRID_SHIMMER_STROKE =
-  "color-mix(in oklch, var(--foreground) 68%, transparent)";
-const DEFAULT_LOADING_STROKE_OPACITY = 0.5;
+  'color-mix(in oklch, var(--foreground) 68%, transparent)'
+const DEFAULT_LOADING_STROKE_OPACITY = 0.5
 
 export interface LineChartLoadingProps {
   /** Chart margins */
-  margin?: Partial<Margin>;
+  margin?: Partial<Margin>
   /** Stroke color for the animated loading segment. */
-  stroke?: string;
+  stroke?: string
   /** Stroke opacity for the animated loading segment. Default: 0.5 */
-  strokeOpacity?: number;
+  strokeOpacity?: number
   /** Grid line stroke (color and opacity via color-mix or oklch alpha). */
-  gridStroke?: string;
+  gridStroke?: string
   /** Shimmer band stroke (color and opacity via color-mix or oklch alpha). */
-  gridShimmerStroke?: string;
+  gridShimmerStroke?: string
   /** Animate a shimmer band across grid lines. Default: true */
-  gridShimmer?: boolean;
+  gridShimmer?: boolean
   /** Shimmer band width in pixels. Default: 140 */
-  gridShimmerLength?: number;
+  gridShimmerLength?: number
   /** Shimmer speed multiplier (higher = faster). Default: 1 */
-  gridShimmerSpeed?: number;
+  gridShimmerSpeed?: number
   /** Match shimmer loop to the loading line pulse (cycle + inter-loop pause). */
-  gridShimmerSync?: boolean;
+  gridShimmerSync?: boolean
   /** Loading animation: `"pulse"` (default traveling pulse) or `"sweep"` (a
    * diagonal shimmer across the skeleton line). Default: `"pulse"`. */
-  loadingStyle?: LoadingStyle;
+  loadingStyle?: LoadingStyle
   /** Centered shimmer label text. Default: "Loading" */
-  label?: string;
+  label?: string
   /** Aspect ratio as "width / height". Default: "2 / 1" */
-  aspectRatio?: string;
+  aspectRatio?: string
   /** Additional class name for the container */
-  className?: string;
+  className?: string
 }
 
 export function LineChartLoading({
@@ -61,10 +60,10 @@ export function LineChartLoading({
   gridShimmerLength,
   gridShimmerSpeed,
   gridShimmerSync = false,
-  loadingStyle = "pulse",
-  label = "Loading",
-  aspectRatio = "2 / 1",
-  className = "",
+  loadingStyle = 'pulse',
+  label = 'Loading',
+  aspectRatio = '2 / 1',
+  className = '',
 }: LineChartLoadingProps) {
   const data = useMemo(
     () =>
@@ -73,7 +72,7 @@ export function LineChartLoading({
         pointCount: DEFAULT_SKELETON_POINT_COUNT,
       }),
     []
-  );
+  )
 
   return (
     <LineChart
@@ -87,7 +86,7 @@ export function LineChartLoading({
     >
       <Grid
         horizontal
-        shimmer={loadingStyle === "sweep" ? false : gridShimmer}
+        shimmer={loadingStyle === 'sweep' ? false : gridShimmer}
         shimmerLength={gridShimmerLength}
         shimmerSpeed={gridShimmerSpeed}
         shimmerStroke={gridShimmerStroke}
@@ -106,7 +105,7 @@ export function LineChartLoading({
         strokeWidth={2.5}
       />
     </LineChart>
-  );
+  )
 }
 
-export default LineChartLoading;
+export default LineChartLoading

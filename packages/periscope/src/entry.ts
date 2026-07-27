@@ -141,7 +141,7 @@ export class IncomingEntry {
    * Throws when the entry was never stamped — that would mean an entry escaped the recorder,
    * which is a bug in Periscope rather than in the host application.
    */
-  toStored(): StoredEntry {
+  toStored(application: string = 'default'): StoredEntry {
     if (this.batchId === null || this.sequence === null) {
       throw new PeriscopeError(
         `Entry ${this.uuid} (${this.type}) was never stamped with a batch id and sequence. ` +
@@ -152,6 +152,7 @@ export class IncomingEntry {
     return {
       uuid: this.uuid,
       batchId: this.batchId,
+      application,
       type: this.type,
       familyHash: this.familyHash,
       content: this.content,

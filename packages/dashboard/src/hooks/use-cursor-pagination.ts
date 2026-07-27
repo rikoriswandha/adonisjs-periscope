@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { useDashboard } from '@/dashboard-context'
 import { api } from '@/lib/api'
 import type { EntryFilters, StoredEntry } from '@/types'
 
@@ -18,7 +19,11 @@ function mergeUnique(
 }
 
 export function useCursorPagination(filters: EntryFilters, options: { enabled?: boolean } = {}) {
-  const filterKey = useMemo(() => JSON.stringify(filters), [filters])
+  const { selectedApplication } = useDashboard()
+  const filterKey = useMemo(
+    () => JSON.stringify({ ...filters, application: selectedApplication }),
+    [filters, selectedApplication]
+  )
   const stableFilters = useMemo<EntryFilters>(
     () => JSON.parse(filterKey) as EntryFilters,
     [filterKey]

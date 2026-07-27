@@ -114,6 +114,7 @@ const UNSERIALIZABLE_CONTENT = '{"periscope:unserializable":true}'
 export type EntryRow = {
   uuid: string
   batch_id: string
+  application: string
   type: string
   family_hash: string | null
   content: unknown
@@ -191,6 +192,7 @@ export function toEntryRow(entry: StoredEntry): EntryRow {
   return {
     uuid: entry.uuid,
     batch_id: entry.batchId,
+    application: entry.application,
     type: entry.type,
     family_hash: entry.familyHash,
     content: encodeJson(entry.content),
@@ -241,6 +243,8 @@ export function toStoredEntry(row: EntryRow): StoredEntry {
   return {
     uuid: row.uuid,
     batchId: row.batch_id,
+    application:
+      typeof row.application === 'string' && row.application !== '' ? row.application : 'default',
     type: row.type as EntryType,
     familyHash: row.family_hash === undefined ? null : row.family_hash,
     content:

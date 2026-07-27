@@ -177,6 +177,21 @@ test.group('Dashboard JSON API', () => {
       createContext('/periscope/api/batches/:batchId', 'GET', { batchId: 'missing' })
     )
     assert.deepEqual(batch, { data: [] })
+
+    const exported = createContext('/periscope/api/batches/:batchId/export', 'GET', {
+      batchId: query.batchId,
+    })
+    await controller.exportBatch(exported)
+    assert.equal(
+      exported.response.getHeaders()['content-disposition'],
+      `attachment; filename="periscope-batch-${query.batchId}.json"`
+    )
+    assert.deepInclude(JSON.parse(exported.response.getBody()), {
+      format: 'periscope.batch',
+      version: 1,
+      batchId: query.batchId,
+      application: 'default',
+    })
   })
 
   test('serve only mail raw as a safely named EML attachment', async ({ assert }) => {
@@ -261,15 +276,26 @@ test.group('Dashboard JSON API', () => {
       dashboard: { path: '/scope', nPlusOneThreshold: 7 },
     })
     const { store } = createRecorder(config)
-    await store.save([makeStoredEntry({ type: EntryType.REQUEST })])
+    const entry = makeStoredEntry({ type: EntryType.REQUEST })
+    await store.save([entry])
     const controller = new DashboardController(store, config, {
       nodeEnv: 'development',
       periscopeEnabled: () => undefined,
     })
 
-    assert.deepEqual(await controller.counts(), { data: { request: 1 } })
+    assert.deepEqual(await controller.counts(createContext('/scope/api/counts')), {
+      data: { request: 1 },
+    })
     assert.deepEqual(await controller.status(), {
       enabled: true,
+      applicationName: 'default',
+      applications: [
+        {
+          name: 'default',
+          entries: 1,
+          latestAt: entry.createdAt.toISOString(),
+        },
+      ],
       paused: false,
       path: '/scope',
       nPlusOneThreshold: 7,

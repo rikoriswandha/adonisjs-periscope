@@ -16,10 +16,13 @@ import { EventWatcher } from './event/watcher.ts'
 import { ExceptionWatcher } from './exception/watcher.ts'
 import { GateWatcher } from './gate/watcher.ts'
 import { HttpClientWatcher } from './http_client/watcher.ts'
+import { JobScheduleWatcher } from './job_schedule/watcher.ts'
 import { LogWatcher } from './log/watcher.ts'
 import { MailWatcher } from './mail/watcher.ts'
 import { ModelWatcher } from './model/watcher.ts'
 import { QueryWatcher } from './query/watcher.ts'
+import { RedisWatcher } from './redis/watcher.ts'
+import { SessionWatcher } from './session/watcher.ts'
 import { RequestWatcher } from './request/watcher.ts'
 
 /**
@@ -48,6 +51,9 @@ export const WATCHER_FACTORIES: Record<WatcherName, WatcherFactory> = {
   gate: (context) => new GateWatcher(context),
   dump: (context) => new DumpWatcher(context),
   http_client: (context) => new HttpClientWatcher(context),
+  job_schedule: (context) => new JobScheduleWatcher(context),
+  redis: (context) => new RedisWatcher(context),
+  session: (context) => new SessionWatcher(context),
 }
 
 /**

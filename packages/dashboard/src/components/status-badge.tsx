@@ -6,13 +6,7 @@ export function StatusBadge({ status }: { status: number | null | undefined }) {
   }
 
   const variant =
-    status >= 500
-      ? 'destructive'
-      : status >= 400
-        ? 'warning'
-        : status >= 300
-          ? 'info'
-          : 'success'
+    status >= 500 ? 'destructive' : status >= 400 ? 'warning' : status >= 300 ? 'info' : 'success'
 
   return <Badge variant={variant}>{status}</Badge>
 }

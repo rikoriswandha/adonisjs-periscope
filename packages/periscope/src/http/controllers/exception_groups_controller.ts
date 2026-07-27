@@ -19,9 +19,11 @@ export class ExceptionGroupsController {
     const cursor = firstQueryString(qs.cursor)
     const rawLimit = firstQueryString(qs.limit)
     const tag = firstQueryString(qs.tag)
+    const application = firstQueryString(qs.application)
     const query: ExceptionGroupQuery = {}
 
     if (tag !== undefined) query.tag = tag
+    if (application !== undefined) query.application = application
     if (cursor !== undefined) query.cursor = cursor
     if (rawLimit !== undefined) query.limit = Number(rawLimit)
 

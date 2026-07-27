@@ -1,22 +1,22 @@
-"use client";
+'use client'
 
-import { useId } from "react";
+import { useId } from 'react'
 
 export interface DashTailStrokeProps {
   /** SVG path `d` for the full series (single curved path). */
-  pathD: string | null;
+  pathD: string | null
   /** Total length of `pathD` in user units. */
-  pathLength: number;
+  pathLength: number
   /** Path length at which the dashed tail begins. */
-  dashStartLength: number;
+  dashStartLength: number
   /** X coordinate (chart inner space) where the tail clip begins. */
-  dashStartX: number;
-  innerWidth: number;
-  innerHeight: number;
+  dashStartX: number
+  innerWidth: number
+  innerHeight: number
   /** Stroke paint — solid color or gradient url. */
-  stroke: string;
-  strokeWidth: number;
-  dashArray: string;
+  stroke: string
+  strokeWidth: number
+  dashArray: string
 }
 
 export function DashTailStroke({
@@ -30,14 +30,14 @@ export function DashTailStroke({
   strokeWidth,
   dashArray,
 }: DashTailStrokeProps) {
-  const clipPathId = useId().replace(/:/g, "");
+  const clipPathId = useId().replace(/:/g, '')
 
   if (!pathD || pathLength <= 0 || dashStartLength >= pathLength) {
-    return null;
+    return null
   }
 
-  const pad = strokeWidth * 2;
-  const tailWidth = Math.max(0, innerWidth - dashStartX + pad);
+  const pad = strokeWidth * 2
+  const tailWidth = Math.max(0, innerWidth - dashStartX + pad)
 
   return (
     <>
@@ -71,5 +71,5 @@ export function DashTailStroke({
         strokeWidth={strokeWidth}
       />
     </>
-  );
+  )
 }

@@ -1,41 +1,41 @@
-"use client";
+'use client'
 
-import { memo, useEffect, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
-import { cn } from "@/lib/utils";
-import { useChart, useChartStable } from "./chart-context";
-import { shortDateFmt } from "./chart-formatters";
-import { DEFAULT_Y_DOMAIN_TWEEN_MS } from "./chart-phase";
-import { LINE_LOADING_PULSE_EASE } from "./line-loading-timing";
+import { memo, useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { cn } from '@/lib/utils'
+import { useChart, useChartStable } from './chart-context'
+import { shortDateFmt } from './chart-formatters'
+import { DEFAULT_Y_DOMAIN_TWEEN_MS } from './chart-phase'
+import { LINE_LOADING_PULSE_EASE } from './line-loading-timing'
 
-const X_AXIS_POSITION_TWEEN_MS = DEFAULT_Y_DOMAIN_TWEEN_MS;
+const X_AXIS_POSITION_TWEEN_MS = DEFAULT_Y_DOMAIN_TWEEN_MS
 
 export interface XAxisProps {
   /** Number of ticks to show (including first and last). Default: 5. */
-  numTicks?: number;
+  numTicks?: number
   /** Width of the date ticker box for fade calculation. Default: 50 */
-  tickerHalfWidth?: number;
+  tickerHalfWidth?: number
   /**
    * `"data"` — tick labels snap to data rows so crosshair and tooltip stay aligned (default).
    * `"domain"` — evenly spaced ticks across the time domain (may not align with hover).
    */
-  tickMode?: "domain" | "data";
+  tickMode?: 'domain' | 'data'
 }
 
 interface AxisTick {
-  date: Date;
-  x: number;
-  label: string;
+  date: Date
+  x: number
+  label: string
 }
 
 interface XAxisLabelProps {
-  label: string;
-  x: number;
-  crosshairX: number | null;
-  hoveredLabel: string | null;
-  isHovering: boolean;
-  tickerHalfWidth: number;
-  animatePosition: boolean;
+  label: string
+  x: number
+  crosshairX: number | null
+  hoveredLabel: string | null
+  isHovering: boolean
+  tickerHalfWidth: number
+  animatePosition: boolean
 }
 
 function XAxisLabel({
@@ -47,18 +47,18 @@ function XAxisLabel({
   tickerHalfWidth,
   animatePosition,
 }: XAxisLabelProps) {
-  const fadeBuffer = 20;
-  const fadeRadius = tickerHalfWidth + fadeBuffer;
+  const fadeBuffer = 20
+  const fadeRadius = tickerHalfWidth + fadeBuffer
 
-  let opacity = 1;
+  let opacity = 1
   if (isHovering && crosshairX !== null) {
-    const distance = Math.abs(x - crosshairX);
+    const distance = Math.abs(x - crosshairX)
     if (distance < tickerHalfWidth) {
-      opacity = 0;
+      opacity = 0
     } else if (hoveredLabel && label === hoveredLabel) {
-      opacity = 0;
+      opacity = 0
     } else if (distance < fadeRadius) {
-      opacity = (distance - tickerHalfWidth) / fadeBuffer;
+      opacity = (distance - tickerHalfWidth) / fadeBuffer
     }
   }
 
@@ -69,102 +69,102 @@ function XAxisLabel({
         left: x,
         bottom: 12,
         width: 0,
-        display: "flex",
-        justifyContent: "center",
+        display: 'flex',
+        justifyContent: 'center',
         transition: animatePosition
-          ? `left ${X_AXIS_POSITION_TWEEN_MS}ms cubic-bezier(${LINE_LOADING_PULSE_EASE.join(", ")})`
+          ? `left ${X_AXIS_POSITION_TWEEN_MS}ms cubic-bezier(${LINE_LOADING_PULSE_EASE.join(', ')})`
           : undefined,
       }}
     >
       <span
-        className={cn("whitespace-nowrap text-chart-label text-xs")}
+        className={cn('whitespace-nowrap text-chart-label text-xs')}
         style={{
           opacity,
-          transition: "opacity 0.4s ease-in-out",
+          transition: 'opacity 0.4s ease-in-out',
         }}
       >
         {label}
       </span>
     </div>
-  );
+  )
 }
 
-const MAX_GAP_LAYOUTS = 400;
+const MAX_GAP_LAYOUTS = 400
 
 function binomial(n: number, k: number): number {
   if (k < 0 || k > n) {
-    return 0;
+    return 0
   }
-  let result = 1;
+  let result = 1
   for (let i = 0; i < k; i++) {
-    result = (result * (n - i)) / (i + 1);
+    result = (result * (n - i)) / (i + 1)
   }
-  return result;
+  return result
 }
 
 /** All ways to split `span` into `parts` positive integer gaps. */
 function composePositiveSum(sum: number, parts: number): number[][] {
   if (parts === 1) {
-    return sum >= 1 ? [[sum]] : [];
+    return sum >= 1 ? [[sum]] : []
   }
 
-  const layouts: number[][] = [];
+  const layouts: number[][] = []
   for (let gap = 1; gap <= sum - (parts - 1); gap++) {
     for (const tail of composePositiveSum(sum - gap, parts - 1)) {
-      layouts.push([gap, ...tail]);
+      layouts.push([gap, ...tail])
     }
   }
-  return layouts;
+  return layouts
 }
 
 function gapsToIndices(gaps: number[]): number[] {
-  const indices = [0];
-  let position = 0;
+  const indices = [0]
+  let position = 0
   for (const gap of gaps) {
-    position += gap;
-    indices.push(position);
+    position += gap
+    indices.push(position)
   }
-  return indices;
+  return indices
 }
 
 function indicesForTickCount(length: number, tickCount: number): number[] {
-  const span = length - 1;
+  const span = length - 1
   if (span <= 0) {
-    return [0];
+    return [0]
   }
 
   const rawIndices = Array.from({ length: tickCount }, (_, index) =>
     Math.round((index / (tickCount - 1)) * span)
-  );
+  )
 
-  const indices = [...new Set(rawIndices)].sort((a, b) => a - b);
+  const indices = [...new Set(rawIndices)].sort((a, b) => a - b)
   if (indices[0] !== 0) {
-    indices.unshift(0);
+    indices.unshift(0)
   }
   if (indices.at(-1) !== span) {
-    indices.push(span);
+    indices.push(span)
   }
 
-  return [...new Set(indices)].sort((a, b) => a - b);
+  return [...new Set(indices)].sort((a, b) => a - b)
 }
 
 function allIndexLayouts(length: number, tickCount: number): number[][] {
-  const span = length - 1;
+  const span = length - 1
   if (span <= 0) {
-    return [[0]];
+    return [[0]]
   }
 
-  const gapCount = tickCount - 1;
+  const gapCount = tickCount - 1
   if (gapCount <= 0) {
-    return [[0]];
+    return [[0]]
   }
 
-  const layoutCount = binomial(span - 1, gapCount - 1);
+  const layoutCount = binomial(span - 1, gapCount - 1)
   if (layoutCount > MAX_GAP_LAYOUTS) {
-    return [indicesForTickCount(length, tickCount)];
+    return [indicesForTickCount(length, tickCount)]
   }
 
-  return composePositiveSum(span, gapCount).map(gapsToIndices);
+  return composePositiveSum(span, gapCount).map(gapsToIndices)
 }
 
 function dedupeIndicesByLabel(
@@ -173,57 +173,57 @@ function dedupeIndicesByLabel(
   dateLabels: string[],
   xAccessor: (d: Record<string, unknown>) => Date
 ): number[] {
-  const seenLabels = new Set<string>();
-  const deduped: number[] = [];
+  const seenLabels = new Set<string>()
+  const deduped: number[] = []
 
   for (const index of indices) {
-    const point = data[index];
+    const point = data[index]
     if (!point) {
-      continue;
+      continue
     }
-    const label = dateLabels[index] ?? shortDateFmt.format(xAccessor(point));
+    const label = dateLabels[index] ?? shortDateFmt.format(xAccessor(point))
     if (seenLabels.has(label)) {
-      continue;
+      continue
     }
-    seenLabels.add(label);
-    deduped.push(index);
+    seenLabels.add(label)
+    deduped.push(index)
   }
 
-  return deduped;
+  return deduped
 }
 
 interface TickLayoutScore {
-  score: number;
-  symmetryPenalty: number;
-  countDistance: number;
+  score: number
+  symmetryPenalty: number
+  countDistance: number
   /** 0 = smallest gap at end, 1 = at start, 2 = in the middle */
-  edgePreference: number;
+  edgePreference: number
 }
 
 function indexGaps(indices: number[]): number[] {
-  const gaps: number[] = [];
+  const gaps: number[] = []
   for (let i = 1; i < indices.length; i++) {
-    const current = indices[i];
-    const previous = indices[i - 1];
+    const current = indices[i]
+    const previous = indices[i - 1]
     if (current == null || previous == null) {
-      continue;
+      continue
     }
-    gaps.push(current - previous);
+    gaps.push(current - previous)
   }
-  return gaps;
+  return gaps
 }
 
 function smallestGapEdgePreference(indices: number[]): number {
-  const gaps = indexGaps(indices);
-  const smallestGap = Math.min(...gaps);
-  const smallestGapIndex = gaps.indexOf(smallestGap);
+  const gaps = indexGaps(indices)
+  const smallestGap = Math.min(...gaps)
+  const smallestGapIndex = gaps.indexOf(smallestGap)
   if (smallestGapIndex === gaps.length - 1) {
-    return 0;
+    return 0
   }
   if (smallestGapIndex === 0) {
-    return 1;
+    return 1
   }
-  return 2;
+  return 2
 }
 
 function scoreTickLayout(
@@ -237,48 +237,41 @@ function scoreTickLayout(
       symmetryPenalty: Number.POSITIVE_INFINITY,
       countDistance: Number.POSITIVE_INFINITY,
       edgePreference: Number.POSITIVE_INFINITY,
-    };
-  }
-
-  const pixelGaps: number[] = [];
-  for (let i = 1; i < indices.length; i++) {
-    const current = indices[i];
-    const previous = indices[i - 1];
-    if (current == null || previous == null) {
-      continue;
     }
-    pixelGaps.push(resolveXPx(current) - resolveXPx(previous));
   }
 
-  const minGap = Math.min(...pixelGaps);
-  const maxGap = Math.max(...pixelGaps);
-  const meanGap =
-    pixelGaps.reduce((sum, gap) => sum + gap, 0) / pixelGaps.length;
-  const spreadRatio =
-    meanGap > 0 ? (maxGap - minGap) / meanGap : maxGap - minGap;
-  const countDistance = Math.abs(indices.length - targetCount);
+  const pixelGaps: number[] = []
+  for (let i = 1; i < indices.length; i++) {
+    const current = indices[i]
+    const previous = indices[i - 1]
+    if (current == null || previous == null) {
+      continue
+    }
+    pixelGaps.push(resolveXPx(current) - resolveXPx(previous))
+  }
 
-  const gaps = indexGaps(indices);
-  const smallestGap = Math.min(...gaps);
-  const smallestGapIndex = gaps.indexOf(smallestGap);
-  const interiorPenalty =
-    smallestGapIndex > 0 && smallestGapIndex < gaps.length - 1 ? 0.08 : 0;
+  const minGap = Math.min(...pixelGaps)
+  const maxGap = Math.max(...pixelGaps)
+  const meanGap = pixelGaps.reduce((sum, gap) => sum + gap, 0) / pixelGaps.length
+  const spreadRatio = meanGap > 0 ? (maxGap - minGap) / meanGap : maxGap - minGap
+  const countDistance = Math.abs(indices.length - targetCount)
+
+  const gaps = indexGaps(indices)
+  const smallestGap = Math.min(...gaps)
+  const smallestGapIndex = gaps.indexOf(smallestGap)
+  const interiorPenalty = smallestGapIndex > 0 && smallestGapIndex < gaps.length - 1 ? 0.08 : 0
 
   const symmetryPenalty =
     gaps.reduce((penalty, gap, index) => {
-      return penalty + Math.abs(gap - (gaps.at(-1 - index) ?? gap));
-    }, 0) / gaps.length;
+      return penalty + Math.abs(gap - (gaps.at(-1 - index) ?? gap))
+    }, 0) / gaps.length
 
   return {
-    score:
-      spreadRatio +
-      0.1 * countDistance +
-      interiorPenalty +
-      symmetryPenalty * 0.02,
+    score: spreadRatio + 0.1 * countDistance + interiorPenalty + symmetryPenalty * 0.02,
     symmetryPenalty,
     countDistance,
     edgePreference: smallestGapEdgePreference(indices),
-  };
+  }
 }
 
 function isBetterTickLayout(
@@ -288,24 +281,24 @@ function isBetterTickLayout(
   bestCountDistance: number
 ): boolean {
   if (next.score < best.score - 1e-6) {
-    return true;
+    return true
   }
   if (Math.abs(next.score - best.score) > 1e-6) {
-    return false;
+    return false
   }
   if (nextCountDistance < bestCountDistance) {
-    return true;
+    return true
   }
   if (nextCountDistance > bestCountDistance) {
-    return false;
+    return false
   }
   if (next.symmetryPenalty < best.symmetryPenalty - 1e-6) {
-    return true;
+    return true
   }
   if (next.symmetryPenalty > best.symmetryPenalty + 1e-6) {
-    return false;
+    return false
   }
-  return next.edgePreference < best.edgePreference;
+  return next.edgePreference < best.edgePreference
 }
 
 /**
@@ -316,66 +309,54 @@ export function selectEvenlySpacedIndices(
   length: number,
   targetCount: number,
   options?: {
-    data?: Record<string, unknown>[];
-    dateLabels?: string[];
-    xAccessor?: (d: Record<string, unknown>) => Date;
-    resolveXPx?: (index: number) => number;
+    data?: Record<string, unknown>[]
+    dateLabels?: string[]
+    xAccessor?: (d: Record<string, unknown>) => Date
+    resolveXPx?: (index: number) => number
   }
 ): number[] {
   if (length <= 0) {
-    return [];
+    return []
   }
   if (length === 1) {
-    return [0];
+    return [0]
   }
   if (length <= targetCount) {
-    return Array.from({ length }, (_, index) => index);
+    return Array.from({ length }, (_, index) => index)
   }
 
-  const resolveXPx = options?.resolveXPx ?? ((index: number) => index);
+  const resolveXPx = options?.resolveXPx ?? ((index: number) => index)
 
-  const minCount = Math.max(2, targetCount - 1);
-  const maxCount = Math.min(length, targetCount + 1);
+  const minCount = Math.max(2, targetCount - 1)
+  const maxCount = Math.min(length, targetCount + 1)
 
-  let bestIndices = indicesForTickCount(length, targetCount);
-  let bestScore = scoreTickLayout(bestIndices, resolveXPx, targetCount);
-  let bestCountDistance = bestScore.countDistance;
+  let bestIndices = indicesForTickCount(length, targetCount)
+  let bestScore = scoreTickLayout(bestIndices, resolveXPx, targetCount)
+  let bestCountDistance = bestScore.countDistance
 
   for (let tickCount = minCount; tickCount <= maxCount; tickCount++) {
     for (const rawIndices of allIndexLayouts(length, tickCount)) {
       const indices =
         options?.data && options.dateLabels && options.xAccessor
-          ? dedupeIndicesByLabel(
-              rawIndices,
-              options.data,
-              options.dateLabels,
-              options.xAccessor
-            )
-          : rawIndices;
+          ? dedupeIndicesByLabel(rawIndices, options.data, options.dateLabels, options.xAccessor)
+          : rawIndices
 
       if (indices.length < 2) {
-        continue;
+        continue
       }
 
-      const layoutScore = scoreTickLayout(indices, resolveXPx, targetCount);
-      const countDistance = Math.abs(indices.length - targetCount);
+      const layoutScore = scoreTickLayout(indices, resolveXPx, targetCount)
+      const countDistance = Math.abs(indices.length - targetCount)
 
-      if (
-        isBetterTickLayout(
-          layoutScore,
-          bestScore,
-          countDistance,
-          bestCountDistance
-        )
-      ) {
-        bestIndices = indices;
-        bestScore = layoutScore;
-        bestCountDistance = countDistance;
+      if (isBetterTickLayout(layoutScore, bestScore, countDistance, bestCountDistance)) {
+        bestIndices = indices
+        bestScore = layoutScore
+        bestCountDistance = countDistance
       }
     }
   }
 
-  return bestIndices;
+  return bestIndices
 }
 
 function buildDataAlignedTicks({
@@ -386,23 +367,23 @@ function buildDataAlignedTicks({
   xAccessor,
   xScale,
 }: {
-  data: Record<string, unknown>[];
-  dateLabels: string[];
-  marginLeft: number;
-  targetTickCount: number;
-  xAccessor: (d: Record<string, unknown>) => Date;
-  xScale: (date: Date) => number | undefined;
+  data: Record<string, unknown>[]
+  dateLabels: string[]
+  marginLeft: number
+  targetTickCount: number
+  xAccessor: (d: Record<string, unknown>) => Date
+  xScale: (date: Date) => number | undefined
 }): AxisTick[] {
-  const seenLabels = new Set<string>();
-  const ticks: AxisTick[] = [];
+  const seenLabels = new Set<string>()
+  const ticks: AxisTick[] = []
 
   const resolveXPx = (index: number) => {
-    const point = data[index];
+    const point = data[index]
     if (!point) {
-      return index;
+      return index
     }
-    return xScale(xAccessor(point)) ?? 0;
-  };
+    return xScale(xAccessor(point)) ?? 0
+  }
 
   for (const index of selectEvenlySpacedIndices(data.length, targetTickCount, {
     data,
@@ -410,24 +391,24 @@ function buildDataAlignedTicks({
     resolveXPx,
     xAccessor,
   })) {
-    const point = data[index];
+    const point = data[index]
     if (!point) {
-      continue;
+      continue
     }
-    const date = xAccessor(point);
-    const label = dateLabels[index] ?? shortDateFmt.format(date);
+    const date = xAccessor(point)
+    const label = dateLabels[index] ?? shortDateFmt.format(date)
     if (seenLabels.has(label)) {
-      continue;
+      continue
     }
-    seenLabels.add(label);
+    seenLabels.add(label)
     ticks.push({
       date,
       label,
       x: (xScale(date) ?? 0) + marginLeft,
-    });
+    })
   }
 
-  return ticks;
+  return ticks
 }
 
 function buildDomainTicks({
@@ -435,44 +416,44 @@ function buildDomainTicks({
   numTicks,
   xScale,
 }: {
-  marginLeft: number;
-  numTicks: number;
+  marginLeft: number
+  numTicks: number
   xScale: {
-    domain: () => Date[];
-    (date: Date): number | undefined;
-  };
+    domain: () => Date[]
+    (date: Date): number | undefined
+  }
 }): AxisTick[] {
-  const domain = xScale.domain();
-  const startDate = domain[0];
-  const endDate = domain[1];
+  const domain = xScale.domain()
+  const startDate = domain[0]
+  const endDate = domain[1]
 
   if (!(startDate && endDate)) {
-    return [];
+    return []
   }
 
-  const startTime = startDate.getTime();
-  const endTime = endDate.getTime();
-  const timeRange = endTime - startTime;
-  const tickCount = Math.max(2, numTicks);
-  const seenLabels = new Set<string>();
-  const ticks: AxisTick[] = [];
+  const startTime = startDate.getTime()
+  const endTime = endDate.getTime()
+  const timeRange = endTime - startTime
+  const tickCount = Math.max(2, numTicks)
+  const seenLabels = new Set<string>()
+  const ticks: AxisTick[] = []
 
   for (let i = 0; i < tickCount; i++) {
-    const t = i / (tickCount - 1);
-    const date = new Date(startTime + t * timeRange);
-    const label = shortDateFmt.format(date);
+    const t = i / (tickCount - 1)
+    const date = new Date(startTime + t * timeRange)
+    const label = shortDateFmt.format(date)
     if (seenLabels.has(label)) {
-      continue;
+      continue
     }
-    seenLabels.add(label);
+    seenLabels.add(label)
     ticks.push({
       date,
       label,
       x: (xScale(date) ?? 0) + marginLeft,
-    });
+    })
   }
 
-  return ticks;
+  return ticks
 }
 
 function domainExtendsPastData(
@@ -481,14 +462,14 @@ function domainExtendsPastData(
   xScale: { domain: () => Date[] }
 ): boolean {
   if (data.length === 0) {
-    return false;
+    return false
   }
-  const domainEnd = xScale.domain()[1];
-  const lastPoint = data.at(-1);
+  const domainEnd = xScale.domain()[1]
+  const lastPoint = data.at(-1)
   if (!(domainEnd && lastPoint)) {
-    return false;
+    return false
   }
-  return domainEnd.getTime() > xAccessor(lastPoint).getTime();
+  return domainEnd.getTime() > xAccessor(lastPoint).getTime()
 }
 
 /** Domain ticks for the projection tail when brush keeps data-aligned labels. */
@@ -497,100 +478,97 @@ function appendProjectionTailTicks(
   data: Record<string, unknown>[],
   xAccessor: (d: Record<string, unknown>) => Date,
   xScale: {
-    domain: () => Date[];
-    (date: Date): number | undefined;
+    domain: () => Date[]
+    (date: Date): number | undefined
   },
   marginLeft: number,
   maxExtraTicks: number
 ): AxisTick[] {
   if (data.length === 0 || maxExtraTicks <= 0) {
-    return ticks;
+    return ticks
   }
 
-  const lastPoint = data.at(-1);
-  const domainEnd = xScale.domain()[1];
+  const lastPoint = data.at(-1)
+  const domainEnd = xScale.domain()[1]
   if (!(lastPoint && domainEnd)) {
-    return ticks;
+    return ticks
   }
 
-  const lastDate = xAccessor(lastPoint);
-  const startTime = lastDate.getTime();
-  const endTime = domainEnd.getTime();
+  const lastDate = xAccessor(lastPoint)
+  const startTime = lastDate.getTime()
+  const endTime = domainEnd.getTime()
   if (endTime <= startTime) {
-    return ticks;
+    return ticks
   }
 
-  const seenLabels = new Set(ticks.map((tick) => tick.label));
-  const extras: AxisTick[] = [];
-  const extraCount = Math.min(maxExtraTicks, 3);
+  const seenLabels = new Set(ticks.map((tick) => tick.label))
+  const extras: AxisTick[] = []
+  const extraCount = Math.min(maxExtraTicks, 3)
 
   for (let i = 1; i <= extraCount; i++) {
-    const date = new Date(
-      startTime + (i / (extraCount + 1)) * (endTime - startTime)
-    );
-    const label = shortDateFmt.format(date);
+    const date = new Date(startTime + (i / (extraCount + 1)) * (endTime - startTime))
+    const label = shortDateFmt.format(date)
     if (seenLabels.has(label)) {
-      continue;
+      continue
     }
-    seenLabels.add(label);
+    seenLabels.add(label)
     extras.push({
       date,
       label,
       x: (xScale(date) ?? 0) + marginLeft,
-    });
+    })
   }
 
-  const endLabel = shortDateFmt.format(domainEnd);
+  const endLabel = shortDateFmt.format(domainEnd)
   if (!seenLabels.has(endLabel)) {
     extras.push({
       date: domainEnd,
       label: endLabel,
       x: (xScale(domainEnd) ?? 0) + marginLeft,
-    });
+    })
   }
 
   if (extras.length === 0) {
-    return ticks;
+    return ticks
   }
 
-  return [...ticks, ...extras].sort((a, b) => a.x - b.x);
+  return [...ticks, ...extras].sort((a, b) => a.x - b.x)
 }
 
 export function XAxis(props: XAxisProps) {
-  const { containerRef } = useChartStable();
-  const [mounted, setMounted] = useState(false);
+  const { containerRef } = useChartStable()
+  const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
-    setMounted(true);
-  }, []);
+    setMounted(true)
+  }, [])
 
-  const container = containerRef.current;
+  const container = containerRef.current
   if (!(mounted && container)) {
-    return null;
+    return null
   }
 
-  return <XAxisInner {...props} container={container} />;
+  return <XAxisInner {...props} container={container} />
 }
 
 const XAxisInner = memo(function XAxisInner({
   numTicks = 5,
   tickerHalfWidth = 50,
-  tickMode = "data",
+  tickMode = 'data',
   container,
 }: XAxisProps & { container: HTMLDivElement }) {
-  const { xScale, margin, tooltipData, data, xAccessor, dateLabels, xDomain } =
-    useChart();
+  const { xScale, margin, tooltipData, data, xAccessor, dateLabels, xDomain } = useChart()
 
   const labelsToShow = useMemo(() => {
     const projectionExtendsScale =
-      tickMode === "data" && domainExtendsPastData(data, xAccessor, xScale);
+      tickMode === 'data' && domainExtendsPastData(data, xAccessor, xScale)
 
-    if (tickMode === "domain") {
+    if (tickMode === 'domain') {
       return buildDomainTicks({
         marginLeft: margin.left,
         numTicks,
         xScale,
-      });
+      })
     }
 
     // No brush: evenly spaced ticks across the full domain (data + projection).
@@ -599,7 +577,7 @@ const XAxisInner = memo(function XAxisInner({
         marginLeft: margin.left,
         numTicks,
         xScale,
-      });
+      })
     }
 
     const dataTicks = buildDataAlignedTicks({
@@ -609,7 +587,7 @@ const XAxisInner = memo(function XAxisInner({
       targetTickCount: numTicks,
       xAccessor,
       xScale,
-    });
+    })
 
     // Brush: keep data-aligned ticks, add labels only in the projection tail.
     if (projectionExtendsScale && xDomain != null) {
@@ -620,28 +598,18 @@ const XAxisInner = memo(function XAxisInner({
         xScale,
         margin.left,
         Math.max(1, numTicks - dataTicks.length + 1)
-      );
+      )
     }
 
-    return dataTicks;
-  }, [
-    tickMode,
-    xDomain,
-    data,
-    dateLabels,
-    xAccessor,
-    xScale,
-    margin.left,
-    numTicks,
-  ]);
+    return dataTicks
+  }, [tickMode, xDomain, data, dateLabels, xAccessor, xScale, margin.left, numTicks])
 
-  const isHovering = tooltipData !== null;
-  const crosshairX = tooltipData ? tooltipData.x + margin.left : null;
+  const isHovering = tooltipData !== null
+  const crosshairX = tooltipData ? tooltipData.x + margin.left : null
   const hoveredLabel =
     isHovering && tooltipData
-      ? (dateLabels[tooltipData.index] ??
-        shortDateFmt.format(xAccessor(tooltipData.point)))
-      : null;
+      ? (dateLabels[tooltipData.index] ?? shortDateFmt.format(xAccessor(tooltipData.point)))
+      : null
 
   return createPortal(
     <div className="pointer-events-none absolute inset-0">
@@ -659,9 +627,9 @@ const XAxisInner = memo(function XAxisInner({
       ))}
     </div>,
     container
-  );
-});
+  )
+})
 
-XAxis.displayName = "XAxis";
+XAxis.displayName = 'XAxis'
 
-export default XAxis;
+export default XAxis

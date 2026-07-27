@@ -65,6 +65,7 @@ export function makeStoredEntry(overrides: Partial<StoredEntry> = {}): StoredEnt
   return {
     uuid: randomUUID(),
     batchId: randomUUID(),
+    application: 'default',
     type: EntryType.REQUEST,
     familyHash: null,
     content: {},
@@ -628,6 +629,47 @@ export function runStoreContractTests(driverName: string, createStore: StoreFact
 
       // A type with no entries may be omitted or reported as zero; both are conforming.
       assert.isNotOk(counts.log)
+    })
+
+    test('isolate application filters, summaries, counts, and scoped clear', async ({ assert }) => {
+      const alpha = makeStoredEntry({
+        application: 'alpha',
+        type: EntryType.REQUEST,
+        tags: ['alpha-only'],
+      })
+      const beta = makeStoredEntry({
+        application: 'beta',
+        type: EntryType.QUERY,
+        tags: ['beta-only'],
+      })
+      await store.save([alpha, beta])
+      const alphaPage = await store.list({ application: 'alpha' })
+      const applications = await store.applications()
+
+      assert.deepEqual(
+        alphaPage.data.map((entry) => entry.uuid),
+        [alpha.uuid]
+      )
+      assert.deepEqual(await store.counts('alpha'), { request: 1 })
+      assert.deepEqual(
+        applications.map((application) => ({
+          name: application.name,
+          entries: application.entries,
+        })),
+        [
+          { name: 'beta', entries: 1 },
+          { name: 'alpha', entries: 1 },
+        ]
+      )
+
+      await store.clear('alpha')
+      const alphaTags = await store.list({ tag: 'alpha-only' })
+      const betaTags = await store.list({ tag: 'beta-only' })
+
+      assert.isNull(await store.find(alpha.uuid))
+      assert.isNotNull(await store.find(beta.uuid))
+      assert.lengthOf(alphaTags.data, 0)
+      assert.lengthOf(betaTags.data, 1)
     })
 
     /*

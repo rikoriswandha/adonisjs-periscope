@@ -142,15 +142,16 @@ jobs:
       - name: Integration tests (playground, booted app)
         run: npm -w playground run test
 
-  lucid-compatibility:
-    # ModelWatcher is coupled to Lucid's hook and model contracts. Exercise the exact minimum
-    # peer version as well as the newest release so compatibility regressions cannot hide behind
-    # the lockfile's single resolved version.
-    name: Lucid compatibility (${{ matrix.lucid }})
+  compatibility:
+    # Prove the oldest supported and latest AdonisJS Core and Lucid releases still satisfy the
+    # watcher contracts. The Cartesian matrix catches incompatibilities hidden by the repository
+    # lockfile's single newest pair.
+    name: Compatibility (Core ${{ matrix.adonis }}, Lucid ${{ matrix.lucid }})
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
+        adonis: ['7.0.0', 'latest']
         lucid: ['22.0.0', 'latest']
 
     steps:
@@ -164,9 +165,11 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Install Lucid ${{ matrix.lucid }} in package and playground
+      - name: Install Core ${{ matrix.adonis }} and Lucid ${{ matrix.lucid }}
         shell: bash
         run: |
+          npm pkg set "devDependencies.@adonisjs/core=${{ matrix.adonis }}" -w periscope
+          npm pkg set "dependencies.@adonisjs/core=${{ matrix.adonis }}" -w playground
           npm pkg set "devDependencies.@adonisjs/lucid=${{ matrix.lucid }}" -w periscope
           npm pkg set "dependencies.@adonisjs/lucid=${{ matrix.lucid }}" -w playground
           npm install --package-lock=false
@@ -209,23 +212,11 @@ jobs:
       - name: Build package + dashboard
         run: npm run build
 
-      # Risk R6 / task P9.1: "dashboard assets missing from published tarball".
-      # packages/dashboard builds into packages/periscope/build/dashboard, and
-      # the package ships `files: ["build"]`. If the SPA build silently no-ops
-      # or retargets its outDir, the published package serves a 404 dashboard
-      # and nothing else in CI notices. This is the early, cheap version of the
-      # gate; P9.1 replaces it with a real `npm pack` + tarball inspection.
-      - name: Assert dashboard assets are in the build output
-        shell: bash
-        run: |
-          asset="packages/periscope/build/dashboard/index.html"
-          if [ ! -f "$asset" ]; then
-            echo "::error file=packages/dashboard/vite.config.ts::$asset is missing after 'npm run build'. The dashboard SPA did not emit into the published package (risk R6)."
-            echo "--- packages/periscope/build (top level) ---"
-            ls -la packages/periscope/build || echo "build/ does not exist"
-            exit 1
-          fi
-          echo "OK: $asset present ($(wc -c <"$asset") bytes)."
+      # Risk R6 / P9.1: inspect the artifact npm would publish, not merely the build directory.
+      # The script creates a real tarball and verifies the dashboard entry, hashed assets, package
+      # entrypoint and provider are all included by npm's files/ignore rules.
+      - name: Verify published tarball contents
+        run: npm run pack:test
 
   security:
     name: Security review

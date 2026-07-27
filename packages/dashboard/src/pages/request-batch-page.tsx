@@ -8,6 +8,7 @@ import {
   Database,
   DatabaseZap,
   FileJson,
+  Download,
   Globe2,
   Inbox,
   Mail,
@@ -15,6 +16,7 @@ import {
   ShieldCheck,
   SquareTerminal,
   UserRound,
+  TriangleAlert,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
@@ -24,11 +26,13 @@ import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
 import { EntryTagChips } from '@/components/tag-chip'
 import { JsonTree } from '@/components/json-tree'
 import { StatusBadge } from '@/components/status-badge'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsPanel, TabsTab } from '@/components/ui/tabs'
+import { useDashboard } from '@/dashboard-context'
 import { api } from '@/lib/api'
 import {
   asNumber,
@@ -38,6 +42,7 @@ import {
   sequenceCompareAscending,
   truncate,
 } from '@/lib/format'
+import { detectNPlusOneWarnings } from '@/lib/n-plus-one'
 import type {
   CacheContent,
   CommandContent,
@@ -178,6 +183,7 @@ export function RequestBatchPage() {
   const { batchId = '' } = useParams()
   const [searchParams] = useSearchParams()
   const tag = searchParams.get('tag')
+  const { status } = useDashboard()
   const [entries, setEntries] = useState<StoredEntry[]>([])
   const [selected, setSelected] = useState<StoredEntry | null>(null)
   const [loading, setLoading] = useState(true)
@@ -210,6 +216,10 @@ export function RequestBatchPage() {
     () =>
       [...entries].sort((left, right) => sequenceCompareAscending(left.sequence, right.sequence)),
     [entries]
+  )
+  const nPlusOneWarnings = useMemo(
+    () => detectNPlusOneWarnings(entries, status?.nPlusOneThreshold ?? 5),
+    [entries, status?.nPlusOneThreshold]
   )
   const requestEntry = entries.find((entry) => entry.type === 'request')
   const request = requestEntry?.content as RequestContent | undefined
@@ -389,12 +399,26 @@ export function RequestBatchPage() {
               {request.routePattern ?? 'Unmatched route'}
               {request.routeName ? ` · ${request.routeName}` : ''}
             </p>
+            {request.traceId && (
+              <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
+                Trace <span title={request.traceId}>{request.traceId}</span>
+              </p>
+            )}
           </div>
           <div className="shrink-0 text-left sm:text-right">
             <div className="text-xs text-muted-foreground">Recorded</div>
             <time className="text-sm font-medium" dateTime={requestEntry.createdAt}>
               {formatDateTime(requestEntry.createdAt)}
             </time>
+            <Button
+              className="mt-2"
+              render={<a download href={api.getBatchExportUrl(batchId)} />}
+              size="sm"
+              variant="outline"
+            >
+              <Download aria-hidden="true" />
+              Export JSON
+            </Button>
           </div>
         </div>
         {requestEntry.tags.length > 0 && (
@@ -436,6 +460,19 @@ export function RequestBatchPage() {
           </div>
         </dl>
       </section>
+
+      {nPlusOneWarnings.length > 0 && (
+        <Alert variant="warning">
+          <TriangleAlert />
+          <AlertTitle>Potential N+1 query pattern</AlertTitle>
+          <AlertDescription>
+            {nPlusOneWarnings.length === 1
+              ? `One query shape ran ${nPlusOneWarnings[0].count.toLocaleString()} times in this batch.`
+              : `${nPlusOneWarnings.length.toLocaleString()} query shapes crossed the warning threshold; the most repeated ran ${nPlusOneWarnings[0].count.toLocaleString()} times.`}{' '}
+            Inspect the query timeline before treating this as a defect.
+          </AlertDescription>
+        </Alert>
+      )}
 
       <Tabs defaultValue="timeline">
         <div className="overflow-x-auto border-b">

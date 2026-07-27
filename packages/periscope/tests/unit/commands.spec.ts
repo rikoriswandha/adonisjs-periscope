@@ -31,6 +31,7 @@ function makeStoredEntry(overrides: Partial<StoredEntry> = {}): StoredEntry {
   return {
     uuid: randomUUID(),
     batchId: randomUUID(),
+    application: 'default',
     type: EntryType.REQUEST,
     familyHash: null,
     content: {},

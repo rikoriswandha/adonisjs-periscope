@@ -114,6 +114,10 @@ class FakeStore implements PeriscopeStore {
     return {}
   }
 
+  async applications(): Promise<[]> {
+    return []
+  }
+
   async exceptionGroups(): Promise<Paginated<ExceptionGroup>> {
     return { data: [], nextCursor: null }
   }
@@ -221,6 +225,7 @@ function makeConfig(overrides: ConfigOverrides = {}): ResolvedPeriscopeConfig {
   }
 
   return {
+    applicationName: 'default',
     enabled: overrides.enabled ?? true,
     enabledIn: ['development', 'test'],
     storage: { driver: 'memory', maxEntries: 10_000 },
@@ -262,6 +267,9 @@ function makeConfig(overrides: ConfigOverrides = {}): ResolvedPeriscopeConfig {
       gate: { enabled: true, ignoreAbilities: [] },
       dump: { enabled: true },
       http_client: { enabled: true },
+      job_schedule: { enabled: false, adapters: [], capturePayload: false },
+      redis: { enabled: false, captureArguments: false },
+      session: { enabled: false, captureValues: false },
     },
     dashboard: { path: '/periscope', authorize: () => true, nPlusOneThreshold: 5 },
   }

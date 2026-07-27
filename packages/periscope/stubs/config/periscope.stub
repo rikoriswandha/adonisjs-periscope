@@ -16,6 +16,14 @@ export default defineConfig({
   enabled: true,
 
   /**
+   * Stable label stamped onto entries. Give every app a distinct value when multiple deployments
+   * share the same database driver.
+   *
+   * Default: 'default'
+   */
+  applicationName: 'default',
+
+  /**
    * The \`NODE_ENV\` values Periscope is allowed to record in. Production is opt-in on purpose.
    *
    * Default: ['development', 'test']
@@ -282,6 +290,34 @@ export default defineConfig({
        * Disable this when outbound HTTP traffic is already observed elsewhere.
        */
       enabled: true,
+    },
+
+    /**
+     * Queue infrastructure is adapter-based and opt-in. Import a QueueWatcherAdapter
+     * implementation (for example \`BullQueueAdapter\`) and add it to \`adapters\`.
+     */
+    job_schedule: {
+      enabled: false,
+      adapters: [],
+      capturePayload: false,
+    },
+
+    /**
+     * Redis commands are observed through @adonisjs/redis diagnostics channels. Arguments are
+     * excluded by default because positional values often contain secrets.
+     */
+    redis: {
+      enabled: false,
+      captureArguments: false,
+    },
+
+    /**
+     * Session identifiers are stored only as hashes. Values remain excluded unless explicitly
+     * enabled and still pass through Periscope's serializer and redactor.
+     */
+    session: {
+      enabled: false,
+      captureValues: false,
     },
   },
 

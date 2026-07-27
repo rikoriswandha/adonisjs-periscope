@@ -8,6 +8,7 @@ function entry(sequence: string, content: HttpClientContent): StoredEntry {
   return {
     uuid: `entry-${sequence}`,
     batchId: 'batch',
+    application: 'default',
     type: 'http_client',
     familyHash: null,
     content,

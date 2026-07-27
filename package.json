@@ -22,10 +22,15 @@
     "security:audit": "node --enable-source-maps packages/periscope/tests/security/dependency_audit.ts",
     "security:production": "npm -w periscope run build && npm -w playground run migrate && npm -w playground run security:production",
     "security": "npm run security:audit && npm run security:production",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "npm run build && npm run pack:test && changeset publish",
+    "pack:test": "node scripts/verify-pack.mjs"
   },
   "devDependencies": {
     "@adonisjs/prettier-config": "^1.5.0",
+    "@changesets/cli": "^2.29.7",
     "eslint": "^10.4.0",
     "prettier": "^3.8.3",
     "typescript": "~6.0.3"

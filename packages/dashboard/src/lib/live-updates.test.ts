@@ -14,6 +14,7 @@ const validEvent = {
   indexRow: {
     uuid: 'entry-1',
     batchId: 'batch-1',
+    application: 'default',
     type: 'query',
     familyHash: 'family-1',
     tags: ['Auth:42', 'slow'],

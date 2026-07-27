@@ -75,6 +75,7 @@ export class EntriesController {
     const tag = firstQueryString(qs.tag)
     const familyHash = firstQueryString(qs.family_hash)
     const batchId = firstQueryString(qs.batch_id)
+    const application = firstQueryString(qs.application)
     const cursor = firstQueryString(qs.cursor)
     const rawLimit = firstQueryString(qs.limit)
     const rawDisplayOnIndex = firstQueryString(qs.display_on_index)
@@ -84,6 +85,7 @@ export class EntriesController {
     if (tag !== undefined) query.tag = tag
     if (familyHash !== undefined) query.familyHash = familyHash
     if (batchId !== undefined) query.batchId = batchId
+    if (application !== undefined) query.application = application
     if (cursor !== undefined) query.cursor = cursor
     if (rawLimit !== undefined) query.limit = Number(rawLimit)
 
@@ -128,5 +130,36 @@ export class EntriesController {
     const entries = await this.store.batch(params.batchId)
 
     return { data: entries.map(serializeEntry) }
+  }
+
+  async exportBatch({ params, response }: HttpContext) {
+    const entries = await this.store.batch(params.batchId)
+    if (entries.length === 0) {
+      response.notFound()
+      return
+    }
+
+    const safeBatchId = String(params.batchId)
+      .replace(/[^A-Za-z0-9_-]/g, '-')
+      .slice(0, 128)
+    response.header('Content-Type', 'application/json; charset=utf-8')
+    response.header(
+      'Content-Disposition',
+      `attachment; filename="periscope-batch-${safeBatchId || 'export'}.json"`
+    )
+    response.send(
+      JSON.stringify(
+        {
+          format: 'periscope.batch',
+          version: 1,
+          batchId: params.batchId,
+          application: entries[0].application,
+          entries: entries.map(serializeEntry),
+        },
+        null,
+        2
+      ),
+      false
+    )
   }
 }

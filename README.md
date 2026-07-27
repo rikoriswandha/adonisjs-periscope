@@ -80,6 +80,8 @@ starts with safe local defaults:
 import { defineConfig } from 'periscope/periscope_config'
 
 export default defineConfig({
+  applicationName: 'billing-api',
+
   enabledIn: ['development', 'test'],
 
   storage: {
@@ -113,11 +115,20 @@ logger, process, model, or dashboard hooks.
 All drivers enforce `storage.maxEntries`. `sqlite-local` uses WAL mode and indexed, chunked
 operations; the database driver keeps the same storage contract across supported Lucid databases.
 
+Every stored entry carries `applicationName`. A shared database can therefore serve several
+applications without mixing counts, indexes, exception groups, or scoped clears. The dashboard
+application selector persists its choice in the URL.
+
 ## Dashboard security
 
 The dashboard and JSON/SSE API live below `dashboard.path`. Every dashboard request passes the
 environment gate and then `dashboard.authorize`. The default authorizer allows local development
 and denies production.
+
+Request details surface repeated query-family warnings at `dashboard.nPlusOneThreshold`, an active
+OpenTelemetry trace ID when `@opentelemetry/api` is installed, and a JSON batch export suitable for
+bug reports. Exports contain the application label and JSON-safe entries; they never initiate an
+outbound request.
 
 For a deliberately exposed non-development environment, require an application-specific identity:
 
@@ -206,26 +217,51 @@ Monitored tags and `recording.keepAlways` can retain a sampled-out batch.
 
 ## Watcher reference
 
-Every watcher is enabled by default and can be disabled under `watchers`. Disabling a watcher means
-it subscribes to nothing and adds no runtime hook.
+Core watchers are enabled by default. The infrastructure integrations `job_schedule`, `redis`, and
+`session` are off by default and subscribe to nothing until explicitly enabled.
 
-| Watcher       | Source                                          | Recorded content                                                                                                                                              |
-| ------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `request`     | Request middleware and `http:request_completed` | Method, URL, query, route, redacted headers and payload, status, duration, memory delta, client identity summary, optional response/session, disconnect state |
-| `query`       | Lucid `db:query`                                | SQL, serialized or hidden bindings, connection, model/method, duration, transaction/DDL flags, compact error                                                  |
-| `exception`   | Exception handler mixin and process observers   | Name, message, code/status, stack, parsed frames, application code frame, request summary, serialized context                                                 |
-| `log`         | AdonisJS/Pino destination                       | Level, message, context, and source timestamp; self-generated Periscope logs are excluded                                                                     |
-| `event`       | AdonisJS emitter                                | Event name, serialized payload, class-event identity, and listener count                                                                                      |
-| `command`     | Ace lifecycle                                   | Command, arguments, flags, main-command state, exit code, duration, optional output/error                                                                     |
-| `mail`        | AdonisJS Mail lifecycle                         | Lifecycle event, mailer, envelope, subject, optional rendered bodies/raw MIME, message ID, metadata, response/error                                           |
-| `cache`       | Bentocache events                               | Hit, miss, set, delete, or clear; store, key, cache layer/grace state, optional value                                                                         |
-| `model`       | Lucid model lifecycle                           | Create, update, or delete; model, primary key, optional attributes and dirty diff                                                                             |
-| `gate`        | Bouncer authorization events                    | Ability, decision, user ID, arguments, optional user/status/message                                                                                           |
-| `dump`        | `dump()` helper                                 | Safely serialized values and the application call site                                                                                                        |
-| `http_client` | Node diagnostics channel for Undici             | Method, URL, status, duration, redacted request/response headers, completion/error                                                                            |
+| Watcher        | Source                                                       | Recorded content                                                                                                                                              |
+| -------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `request`      | Request middleware and `http:request_completed`              | Method, URL, query, route, redacted headers and payload, status, duration, memory delta, client identity summary, optional response/session, disconnect state |
+| `query`        | Lucid `db:query`                                             | SQL, serialized or hidden bindings, connection, model/method, duration, transaction/DDL flags, compact error                                                  |
+| `exception`    | Exception handler mixin and process observers                | Name, message, code/status, stack, parsed frames, application code frame, request summary, serialized context                                                 |
+| `log`          | AdonisJS/Pino destination                                    | Level, message, context, and source timestamp; self-generated Periscope logs are excluded                                                                     |
+| `event`        | AdonisJS emitter                                             | Event name, serialized payload, class-event identity, and listener count                                                                                      |
+| `command`      | Ace lifecycle                                                | Command, arguments, flags, main-command state, exit code, duration, optional output/error                                                                     |
+| `mail`         | AdonisJS Mail lifecycle                                      | Lifecycle event, mailer, envelope, subject, optional rendered bodies/raw MIME, message ID, metadata, response/error                                           |
+| `cache`        | Bentocache events                                            | Hit, miss, set, delete, or clear; store, key, cache layer/grace state, optional value                                                                         |
+| `model`        | Lucid model lifecycle                                        | Create, update, or delete; model, primary key, optional attributes and dirty diff                                                                             |
+| `gate`         | Bouncer authorization events                                 | Ability, decision, user ID, arguments, optional user/status/message                                                                                           |
+| `dump`         | `dump()` helper                                              | Safely serialized values and the application call site                                                                                                        |
+| `http_client`  | Node diagnostics channel for Undici                          | Method, URL, status, duration, redacted request/response headers, completion/error                                                                            |
+| `job_schedule` | Pluggable queue adapters (BullMQ reference adapter included) | Scheduled job metadata plus completed/failed job status, attempts, duration, and opt-in payload/result                                                        |
+| `redis`        | `@adonisjs/redis` diagnostics channel                        | Command, argument count, duration, error, and opt-in arguments; `AUTH` arguments are always replaced                                                          |
+| `session`      | `@adonisjs/session` lifecycle events                         | Initiated, committed, or migrated state with hashed session IDs and opt-in redacted values                                                                    |
 
 Watcher-specific options in the generated config control sensitive or expensive captures. All
 application-owned values pass through bounded serialization and recursive redaction before storage.
+
+Queue integrations use the exported `QueueWatcherAdapter` contract. The BullMQ reference adapter
+observes queue events without replacing application workers:
+
+```ts
+import { BullQueueAdapter, defineConfig } from 'periscope'
+
+export default defineConfig({
+  watchers: {
+    job_schedule: {
+      enabled: true,
+      adapters: [
+        new BullQueueAdapter({
+          queues: [{ name: 'mail', connection: { host: '127.0.0.1', port: 6379 } }],
+        }),
+      ],
+    },
+    redis: { enabled: true, captureArguments: false },
+    session: { enabled: true, captureValues: false },
+  },
+})
+```
 
 ## Hooks and extensibility
 
@@ -376,6 +412,19 @@ npm run build
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for architecture invariants, focused test commands, security
 review requirements, and benchmark gates.
+
+## Release policy
+
+Releases use Changesets and publish the `periscope` package from GitHub Actions with npm
+provenance. CI builds a real tarball and rejects it unless the provider, package entry point,
+dashboard HTML, and hashed dashboard assets are present. The compatibility matrix covers the
+oldest supported and latest AdonisJS 7 and Lucid 22 releases.
+
+The stability sequence is intentionally gated: publish `0.1.x`, dogfood it in at least two real
+applications for at least two weeks, then advance through minor releases as integrations settle.
+Publish `1.0.0` only after that field window has no unresolved data-loss, boot, authorization, or
+packaging defects. Every user-facing change after the initial release requires `npm run changeset`;
+the release PR owns versioning, and merging it owns publication.
 
 ## License
 

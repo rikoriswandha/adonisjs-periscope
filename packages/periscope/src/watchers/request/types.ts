@@ -44,6 +44,7 @@ export type RequestEntryContent = Record<string, unknown> & {
   method: string
   url: string
   query: unknown
+  traceId?: string
   routePattern?: string
   routeName?: string
   headers: Record<string, unknown>

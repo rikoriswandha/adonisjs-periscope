@@ -27,6 +27,7 @@ export function serializeEntry(entry: StoredEntry): StoredEntryTransport {
   return {
     uuid: entry.uuid,
     batchId: entry.batchId,
+    application: entry.application,
     type: entry.type,
     familyHash: entry.familyHash,
     content: entry.content,

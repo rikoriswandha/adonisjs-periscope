@@ -5,6 +5,8 @@ import type { DashboardStatus, EntryCounts, FlushStreamEvent, LiveUpdateMode } f
 export type DashboardContextValue = {
   status: DashboardStatus | null
   counts: EntryCounts
+  selectedApplication: string
+  selectApplication: (application: string) => void
   statusError: Error | null
   mutating: boolean
   revision: number

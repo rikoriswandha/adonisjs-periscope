@@ -1,19 +1,19 @@
-"use client";
+'use client'
 
-import type { ReactNode } from "react";
-import { intFmt } from "../chart-formatters";
+import type { ReactNode } from 'react'
+import { intFmt } from '../chart-formatters'
 
 export interface TooltipRow {
-  color: string;
-  label: string;
-  value: string | number;
+  color: string
+  label: string
+  value: string | number
 }
 
 export interface TooltipContentProps {
-  title?: string;
-  rows: TooltipRow[];
+  title?: string
+  rows: TooltipRow[]
   /** Optional additional content (e.g., markers) */
-  children?: ReactNode;
+  children?: ReactNode
 }
 
 export function TooltipContent({ title, rows, children }: TooltipContentProps) {
@@ -36,27 +36,23 @@ export function TooltipContent({ title, rows, children }: TooltipContentProps) {
                   className="h-2.5 w-2.5 shrink-0 rounded-full"
                   style={{ backgroundColor: row.color }}
                 />
-                <span className="text-chart-tooltip-muted text-sm">
-                  {row.label}
-                </span>
+                <span className="text-chart-tooltip-muted text-sm">{row.label}</span>
               </div>
               <span className="font-medium text-chart-tooltip-foreground text-sm tabular-nums">
-                {typeof row.value === "number" ? intFmt(row.value) : row.value}
+                {typeof row.value === 'number' ? intFmt(row.value) : row.value}
               </span>
             </div>
           ))}
         </div>
 
         {children && (
-          <div className="mt-2 transition-opacity duration-200 ease-out">
-            {children}
-          </div>
+          <div className="mt-2 transition-opacity duration-200 ease-out">{children}</div>
         )}
       </div>
     </div>
-  );
+  )
 }
 
-TooltipContent.displayName = "TooltipContent";
+TooltipContent.displayName = 'TooltipContent'
 
-export default TooltipContent;
+export default TooltipContent

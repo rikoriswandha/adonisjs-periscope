@@ -49,6 +49,7 @@ import {
 } from './sql.ts'
 import type { EntryRow } from './sql.ts'
 import type {
+  ApplicationSummary,
   EntryQuery,
   ExceptionGroup,
   ExceptionGroupQuery,
@@ -156,6 +157,10 @@ export class DatabaseStore implements PeriscopeStore {
 
     if (query.batchId !== undefined) {
       builder.where('batch_id', query.batchId)
+    }
+
+    if (query.application !== undefined) {
+      builder.where('application', query.application)
     }
 
     if (query.displayOnIndex !== undefined) {
@@ -301,14 +306,19 @@ export class DatabaseStore implements PeriscopeStore {
     return rows.map(toStoredEntry)
   }
 
-  async counts(): Promise<EntryTypeCounts> {
-    const rows = await this.#client()
+  async counts(application?: string): Promise<EntryTypeCounts> {
+    const builder = this.#client()
       .query<CountRow>()
       .from(ENTRIES_TABLE)
       .select('type')
       .count('* as total')
       .groupBy('type')
 
+    if (application !== undefined) {
+      builder.where('application', application)
+    }
+
+    const rows = await builder
     const counts: EntryTypeCounts = {}
 
     for (const row of rows) {
@@ -316,6 +326,28 @@ export class DatabaseStore implements PeriscopeStore {
     }
 
     return counts
+  }
+
+  async applications(): Promise<ApplicationSummary[]> {
+    const rows = await this.#client()
+      .query<{
+        application: string
+        total: number | string
+        latest_at: number | string | null
+      }>()
+      .from(ENTRIES_TABLE)
+      .select('application')
+      .count('* as total')
+      .max('created_at as latest_at')
+      .groupBy('application')
+      .orderBy('latest_at', 'desc')
+      .orderBy('application', 'asc')
+
+    return rows.map((row) => ({
+      name: row.application,
+      entries: Number(row.total),
+      latestAt: row.latest_at === null ? null : new Date(Number(row.latest_at)),
+    }))
   }
 
   async exceptionGroups(query: ExceptionGroupQuery = {}): Promise<Paginated<ExceptionGroup>> {
@@ -407,18 +439,19 @@ export class DatabaseStore implements PeriscopeStore {
     })
   }
 
-  async clear(): Promise<void> {
+  async clear(application?: string): Promise<void> {
     /*
      * A delete rather than a truncate. `truncate` is DDL on some dialects (implicitly committing
      * an open transaction), needs `cascade` on postgres to get past the foreign key, and resets
-     * identity columns nobody asked it to touch. The tables are bounded by `maxEntries`, so the
-     * delete is cheap enough that none of that is worth buying.
-     *
-     * Monitored tags and flags are untouched on purpose: they are user intent, not recorded data.
+     * identity columns nobody asked it to touch. Monitored tags and flags remain user intent.
      */
     await this.#client().transaction(async (trx) => {
-      await trx.query().from(TAGS_TABLE).del()
-      await trx.query().from(ENTRIES_TABLE).del()
+      const select = (builder: DatabaseQueryBuilderContract<EntryRow>) => {
+        if (application !== undefined) {
+          builder.where('application', application)
+        }
+      }
+      await this.#deleteEntries(trx, select)
     })
   }
 

@@ -1,6 +1,6 @@
 {
   "name": "periscope",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "A Laravel-Telescope-style debug assistant for AdonisJS v7",
   "type": "module",
   "license": "MIT",
@@ -24,7 +24,8 @@
     "./commands": "./build/commands/main.js",
     "./types": "./build/src/types.js",
     "./periscope_config": "./build/src/define_config.js",
-    "./storage_schema": "./build/src/storage/database_schema.js"
+    "./storage_schema": "./build/src/storage/database_schema.js",
+    "./watchers/bull_queue": "./build/src/watchers/job_schedule/bull_queue_adapter.js"
   },
   "files": [
     "build",
@@ -53,7 +54,11 @@
     "@adonisjs/cache": "^2.0.0",
     "@adonisjs/core": "^7.0.0",
     "@adonisjs/lucid": ">=22.0.0",
-    "@adonisjs/mail": "^10.0.0"
+    "@adonisjs/mail": "^10.0.0",
+    "@adonisjs/redis": "^10.0.0",
+    "@adonisjs/session": "^8.0.0",
+    "@opentelemetry/api": ">=1.9.0",
+    "bullmq": "^5.0.0"
   },
   "peerDependenciesMeta": {
     "@adonisjs/bouncer": {
@@ -67,6 +72,18 @@
     },
     "@adonisjs/mail": {
       "optional": true
+    },
+    "@adonisjs/redis": {
+      "optional": true
+    },
+    "@adonisjs/session": {
+      "optional": true
+    },
+    "@opentelemetry/api": {
+      "optional": true
+    },
+    "bullmq": {
+      "optional": true
     }
   },
   "devDependencies": {
@@ -74,9 +91,12 @@
     "@adonisjs/bouncer": "^4.0.0",
     "@adonisjs/cache": "^2.1.0",
     "@adonisjs/core": "^7.3.5",
+    "@adonisjs/redis": "^10.0.0",
+    "@adonisjs/session": "^8.1.0",
     "@adonisjs/eslint-config": "^3.1.0",
     "@adonisjs/lucid": "^22.4.2",
     "@adonisjs/mail": "^10.4.0",
+    "@opentelemetry/api": "^1.9.0",
     "@adonisjs/prettier-config": "^1.5.0",
     "@adonisjs/tsconfig": "^2.0.0",
     "@japa/assert": "^4.2.0",
@@ -95,6 +115,7 @@
     "fast-check": "^4.9.0",
     "luxon": "^3.7.2",
     "mitata": "^1.0.34",
+    "bullmq": "^5.81.2",
     "pg": "^8.22.0",
     "typescript": "~6.0.3"
   },

@@ -9,6 +9,7 @@ import { EntryType } from '../types.ts'
 import { encodeCursor, parseCursor, resolvePageSize } from './pagination.ts'
 import { aggregateExceptionGroups } from './exception_groups.ts'
 import type {
+  ApplicationSummary,
   EntryQuery,
   ExceptionGroup,
   ExceptionGroupQuery,
@@ -90,6 +91,10 @@ function matchesQuery(entry: StoredEntry, query: EntryQuery, cursor: bigint | nu
   }
 
   if (query.batchId !== undefined && entry.batchId !== query.batchId) {
+    return false
+  }
+
+  if (query.application !== undefined && entry.application !== query.application) {
     return false
   }
 
@@ -177,6 +182,7 @@ export class MemoryStore implements PeriscopeStore {
     return {
       uuid: entry.uuid,
       batchId: entry.batchId,
+      application: entry.application,
       type: entry.type,
       familyHash: entry.familyHash,
       content: entry.content,
@@ -355,18 +361,48 @@ export class MemoryStore implements PeriscopeStore {
     return entries.map((entry) => this.#copy(entry))
   }
 
-  async counts(): Promise<EntryTypeCounts> {
+  async counts(application?: string): Promise<EntryTypeCounts> {
     const counts: EntryTypeCounts = {}
 
     for (const entry of this.#entries.values()) {
-      counts[entry.type] = (counts[entry.type] ?? 0) + 1
+      if (application === undefined || entry.application === application) {
+        counts[entry.type] = (counts[entry.type] ?? 0) + 1
+      }
     }
 
     return counts
   }
 
+  async applications(): Promise<ApplicationSummary[]> {
+    const summaries = new Map<string, ApplicationSummary>()
+
+    for (const entry of this.#entries.values()) {
+      const summary = summaries.get(entry.application)
+      if (summary === undefined) {
+        summaries.set(entry.application, {
+          name: entry.application,
+          entries: 1,
+          latestAt: new Date(entry.createdAt.getTime()),
+        })
+      } else {
+        summary.entries += 1
+        if (summary.latestAt === null || entry.createdAt > summary.latestAt) {
+          summary.latestAt = new Date(entry.createdAt.getTime())
+        }
+      }
+    }
+
+    return [...summaries.values()].sort((left, right) => {
+      const byLatest = (right.latestAt?.getTime() ?? 0) - (left.latestAt?.getTime() ?? 0)
+      return byLatest === 0 ? left.name.localeCompare(right.name) : byLatest
+    })
+  }
+
   async exceptionGroups(query: ExceptionGroupQuery = {}): Promise<Paginated<ExceptionGroup>> {
-    const page = aggregateExceptionGroups(this.#candidateEntries(query), query)
+    const entries = [...this.#candidateEntries(query)].filter(
+      (entry) => query.application === undefined || entry.application === query.application
+    )
+    const page = aggregateExceptionGroups(entries, query)
 
     return {
       data: page.data.map((group) => ({
@@ -423,10 +459,19 @@ export class MemoryStore implements PeriscopeStore {
     return doomed.length
   }
 
-  async clear(): Promise<void> {
-    this.#entries.clear()
-    this.#byTag.clear()
-    this.#byBatch.clear()
+  async clear(application?: string): Promise<void> {
+    if (application === undefined) {
+      this.#entries.clear()
+      this.#byTag.clear()
+      this.#byBatch.clear()
+      return
+    }
+
+    for (const entry of [...this.#entries.values()]) {
+      if (entry.application === application) {
+        this.#remove(entry.uuid)
+      }
+    }
   }
 
   async monitoredTags(): Promise<string[]> {

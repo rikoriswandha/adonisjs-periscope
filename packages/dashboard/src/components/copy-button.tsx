@@ -26,8 +26,7 @@ export function CopyButton({ value, label = 'Copy' }: { value: string; label?: s
     timeoutRef.current = window.setTimeout(() => setState('idle'), 1_800)
   }
 
-  const accessibleLabel =
-    state === 'copied' ? 'Copied' : state === 'error' ? 'Copy failed' : label
+  const accessibleLabel = state === 'copied' ? 'Copied' : state === 'error' ? 'Copy failed' : label
   const Icon = state === 'copied' ? Check : state === 'error' ? TriangleAlert : Clipboard
 
   return (

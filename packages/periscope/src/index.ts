@@ -115,8 +115,18 @@ export type { DumpEntryContent } from './watchers/dump/types.ts'
 export { HttpClientWatcher } from './watchers/http_client/watcher.ts'
 export type { HttpClientEntryContent } from './watchers/http_client/types.ts'
 
+export { JobScheduleWatcher } from './watchers/job_schedule/watcher.ts'
+export type { JobEntryContent, ScheduleEntryContent } from './watchers/job_schedule/types.ts'
+
+export { RedisWatcher } from './watchers/redis/watcher.ts'
+export type { RedisEntryContent } from './watchers/redis/types.ts'
+
+export { SessionWatcher } from './watchers/session/watcher.ts'
+export type { SessionEntryContent, SessionOperation } from './watchers/session/types.ts'
+
 export { ENTRY_TYPES, EntryType, Flag, WATCHER_NAMES, WatcherName } from './types.ts'
 export type {
+  ApplicationSummary,
   BatchContext,
   BatchEntryView,
   BatchKind,
@@ -141,6 +151,10 @@ export type {
   PeriscopeConfig,
   PeriscopeStore,
   PruneOptions,
+  QueueJobEvent,
+  QueueJobResult,
+  QueueWatcherAdapter,
+  QueueWatcherObserver,
   ResolvedPeriscopeConfig,
   ResolvedDashboardConfig,
   ResolvedWatchersConfig,

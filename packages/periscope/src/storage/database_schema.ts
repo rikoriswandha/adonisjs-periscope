@@ -79,6 +79,7 @@ export function createPeriscopeTables(schema: PeriscopeSchemaBuilder): Periscope
   schema.createTable(ENTRIES_TABLE, (table) => {
     table.string('uuid', 36).notNullable().primary()
     table.string('batch_id', 36).notNullable()
+    table.string('application', 191).notNullable().defaultTo('default')
     table.string('type', 32).notNullable()
     table.string('family_hash', 64).nullable()
 
@@ -116,6 +117,11 @@ export function createPeriscopeTables(schema: PeriscopeSchemaBuilder): Periscope
       ['type', 'should_display_on_index', 'sequence'],
       'periscope_entries_type_display_index'
     )
+    table.index(
+      ['application', 'type', 'should_display_on_index', 'sequence'],
+      'periscope_entries_application_type_display_index'
+    )
+    table.index(['application', 'sequence'], 'periscope_entries_application_sequence_index')
 
     table.index(['batch_id', 'sequence'], 'periscope_entries_batch_id_index')
     table.index(['family_hash'], 'periscope_entries_family_hash_index')

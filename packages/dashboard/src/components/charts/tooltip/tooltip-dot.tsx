@@ -1,37 +1,34 @@
-"use client";
+'use client'
 
-import { motion, useSpring, useTransform } from "motion/react";
-import { type SpringConfig, useChartConfig } from "../chart-config-context";
-import { chartCssVars } from "../chart-context";
+import { motion, useSpring, useTransform } from 'motion/react'
+import { type SpringConfig, useChartConfig } from '../chart-config-context'
+import { chartCssVars } from '../chart-context'
 
 export interface TooltipDotProps {
-  x: number;
-  y: number;
-  visible: boolean;
-  color: string;
+  x: number
+  y: number
+  visible: boolean
+  color: string
   /** Half of width/height for dots; half-extent for ring squares. Default: 5 */
-  size?: number;
-  strokeColor?: string;
-  strokeWidth?: number;
+  size?: number
+  strokeColor?: string
+  strokeWidth?: number
   /** Dot fill or transparent ring around the hovered mark. Default: "dot" */
-  variant?: "dot" | "ring";
+  variant?: 'dot' | 'ring'
   /**
    * Ring corner radius as a fraction of side length (0 = square, 0.5 = circle).
    * Same semantics as bar square radius.
    */
-  cornerRadiusFraction?: number;
+  cornerRadiusFraction?: number
   /** Per-chart override; falls back to `ChartConfigProvider.tooltipSpring`. */
-  springConfig?: SpringConfig;
+  springConfig?: SpringConfig
   /** Animate position with a spring. Default: true */
-  animate?: boolean;
+  animate?: boolean
 }
 
-function ringCornerRadius(
-  halfExtent: number,
-  cornerRadiusFraction: number
-): number {
-  const side = halfExtent * 2;
-  return side * Math.max(0, Math.min(0.5, cornerRadiusFraction));
+function ringCornerRadius(halfExtent: number, cornerRadiusFraction: number): number {
+  const side = halfExtent * 2
+  return side * Math.max(0, Math.min(0.5, cornerRadiusFraction))
 }
 
 function AnimatedRingDot({
@@ -44,26 +41,26 @@ function AnimatedRingDot({
   strokeWidth,
   springConfig,
 }: {
-  x: number;
-  y: number;
-  halfExtent: number;
-  cornerRadiusFraction: number;
-  fill: string;
-  stroke: string;
-  strokeWidth: number;
-  springConfig?: SpringConfig;
+  x: number
+  y: number
+  halfExtent: number
+  cornerRadiusFraction: number
+  fill: string
+  stroke: string
+  strokeWidth: number
+  springConfig?: SpringConfig
 }) {
-  const { tooltipSpring } = useChartConfig();
-  const effectiveSpring = springConfig ?? tooltipSpring;
-  const animatedX = useSpring(x, effectiveSpring);
-  const animatedY = useSpring(y, effectiveSpring);
-  const side = halfExtent * 2;
-  const rx = ringCornerRadius(halfExtent, cornerRadiusFraction);
-  const rectX = useTransform(animatedX, (value) => value - halfExtent);
-  const rectY = useTransform(animatedY, (value) => value - halfExtent);
+  const { tooltipSpring } = useChartConfig()
+  const effectiveSpring = springConfig ?? tooltipSpring
+  const animatedX = useSpring(x, effectiveSpring)
+  const animatedY = useSpring(y, effectiveSpring)
+  const side = halfExtent * 2
+  const rx = ringCornerRadius(halfExtent, cornerRadiusFraction)
+  const rectX = useTransform(animatedX, (value) => value - halfExtent)
+  const rectY = useTransform(animatedY, (value) => value - halfExtent)
 
-  animatedX.set(x);
-  animatedY.set(y);
+  animatedX.set(x)
+  animatedY.set(y)
 
   return (
     <motion.rect
@@ -77,7 +74,7 @@ function AnimatedRingDot({
       x={rectX}
       y={rectY}
     />
-  );
+  )
 }
 
 export function TooltipDot({
@@ -88,28 +85,28 @@ export function TooltipDot({
   size = 5,
   strokeColor = chartCssVars.background,
   strokeWidth = 2,
-  variant = "dot",
+  variant = 'dot',
   cornerRadiusFraction = 0.25,
   springConfig,
   animate = true,
 }: TooltipDotProps) {
-  const { tooltipSpring } = useChartConfig();
-  const effectiveSpring = springConfig ?? tooltipSpring;
-  const animatedX = useSpring(x, effectiveSpring);
-  const animatedY = useSpring(y, effectiveSpring);
+  const { tooltipSpring } = useChartConfig()
+  const effectiveSpring = springConfig ?? tooltipSpring
+  const animatedX = useSpring(x, effectiveSpring)
+  const animatedY = useSpring(y, effectiveSpring)
 
-  const isRing = variant === "ring";
-  const fill = isRing ? "transparent" : color;
-  const stroke = isRing ? color : strokeColor;
-  const effectiveStrokeWidth = isRing ? (strokeWidth ?? 1.5) : strokeWidth;
+  const isRing = variant === 'ring'
+  const fill = isRing ? 'transparent' : color
+  const stroke = isRing ? color : strokeColor
+  const effectiveStrokeWidth = isRing ? (strokeWidth ?? 1.5) : strokeWidth
 
   if (animate && !isRing) {
-    animatedX.set(x);
-    animatedY.set(y);
+    animatedX.set(x)
+    animatedY.set(y)
   }
 
   if (!visible) {
-    return null;
+    return null
   }
 
   if (isRing) {
@@ -125,11 +122,11 @@ export function TooltipDot({
           x={x}
           y={y}
         />
-      );
+      )
     }
 
-    const side = size * 2;
-    const rx = ringCornerRadius(size, cornerRadiusFraction);
+    const side = size * 2
+    const rx = ringCornerRadius(size, cornerRadiusFraction)
 
     return (
       <rect
@@ -143,7 +140,7 @@ export function TooltipDot({
         x={x - size}
         y={y - size}
       />
-    );
+    )
   }
 
   if (!animate) {
@@ -156,7 +153,7 @@ export function TooltipDot({
         stroke={stroke}
         strokeWidth={effectiveStrokeWidth}
       />
-    );
+    )
   }
 
   return (
@@ -168,9 +165,9 @@ export function TooltipDot({
       stroke={stroke}
       strokeWidth={effectiveStrokeWidth}
     />
-  );
+  )
 }
 
-TooltipDot.displayName = "TooltipDot";
+TooltipDot.displayName = 'TooltipDot'
 
-export default TooltipDot;
+export default TooltipDot

@@ -1,7 +1,7 @@
-"use client";
+'use client'
 
-import type { MotionValue } from "motion/react";
-import { useEffect, useState } from "react";
+import type { MotionValue } from 'motion/react'
+import { useEffect, useState } from 'react'
 
 /**
  * Returns true once a mount-progress MotionValue reaches 1.
@@ -9,20 +9,20 @@ import { useEffect, useState } from "react";
  * enter completes — drops per-frame subscriptions during pan/hover.
  */
 export function useEnterComplete(mountProgress: MotionValue<number>): boolean {
-  const [complete, setComplete] = useState(() => mountProgress.get() >= 1);
+  const [complete, setComplete] = useState(() => mountProgress.get() >= 1)
 
   useEffect(() => {
     if (mountProgress.get() >= 1) {
-      setComplete(true);
-      return;
+      setComplete(true)
+      return
     }
 
-    return mountProgress.on("change", (value) => {
+    return mountProgress.on('change', (value) => {
       if (value >= 1) {
-        setComplete(true);
+        setComplete(true)
       }
-    });
-  }, [mountProgress]);
+    })
+  }, [mountProgress])
 
-  return complete;
+  return complete
 }

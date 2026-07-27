@@ -25,6 +25,7 @@ import type { PeriscopeConfig, ResolvedPeriscopeConfig } from '../../src/types.t
  */
 const DEFAULTS: ResolvedPeriscopeConfig = {
   enabled: true,
+  applicationName: 'default',
   enabledIn: ['development', 'test'],
   storage: {
     driver: 'sqlite-local',
@@ -115,6 +116,9 @@ const DEFAULTS: ResolvedPeriscopeConfig = {
     http_client: {
       enabled: true,
     },
+    job_schedule: { enabled: false, adapters: [], capturePayload: false },
+    redis: { enabled: false, captureArguments: false },
+    session: { enabled: false, captureValues: false },
   },
   dashboard: {
     path: '/periscope',

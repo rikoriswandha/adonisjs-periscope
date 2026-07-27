@@ -1,21 +1,21 @@
-"use client";
+'use client'
 
-import { motion } from "motion/react";
-import type { ReactNode } from "react";
-import { useChartHover } from "./chart-context";
-import { useChartLegendHover } from "./chart-legend-hover";
+import { motion } from 'motion/react'
+import type { ReactNode } from 'react'
+import { useChartHover } from './chart-context'
+import { useChartLegendHover } from './chart-legend-hover'
 
 interface SeriesHoverDimProps {
   /** Skip the dim entirely. */
-  enabled?: boolean;
+  enabled?: boolean
   /** Opacity to fade to while the chart is being hovered. */
-  dimOpacity?: number;
+  dimOpacity?: number
   /** Tween duration in seconds. */
-  durationSec?: number;
+  durationSec?: number
   /** Series index for multi-series legend hover dimming. */
-  seriesIndex?: number;
+  seriesIndex?: number
   /** Stable chart visuals — area fill, stroke line, dashed tail, etc. */
-  children: ReactNode;
+  children: ReactNode
 }
 
 /**
@@ -35,26 +35,23 @@ export function SeriesHoverDim({
   seriesIndex,
   children,
 }: SeriesHoverDimProps) {
-  const { tooltipData, selection } = useChartHover();
-  const { hoveredIndex: legendHoveredIndex } = useChartLegendHover();
-  const isChartHovering = tooltipData !== null || selection?.active === true;
+  const { tooltipData, selection } = useChartHover()
+  const { hoveredIndex: legendHoveredIndex } = useChartLegendHover()
+  const isChartHovering = tooltipData !== null || selection?.active === true
   const isLegendDimmed =
-    legendHoveredIndex !== null &&
-    seriesIndex !== undefined &&
-    legendHoveredIndex !== seriesIndex;
-  const opacity =
-    enabled && (isChartHovering || isLegendDimmed) ? dimOpacity : 1;
+    legendHoveredIndex !== null && seriesIndex !== undefined && legendHoveredIndex !== seriesIndex
+  const opacity = enabled && (isChartHovering || isLegendDimmed) ? dimOpacity : 1
   return (
     <motion.g
       animate={{ opacity }}
       initial={{ opacity: 1 }}
-      transition={{ duration: durationSec, ease: "easeInOut" }}
+      transition={{ duration: durationSec, ease: 'easeInOut' }}
     >
       {children}
     </motion.g>
-  );
+  )
 }
 
-SeriesHoverDim.displayName = "SeriesHoverDim";
+SeriesHoverDim.displayName = 'SeriesHoverDim'
 
-export default SeriesHoverDim;
+export default SeriesHoverDim

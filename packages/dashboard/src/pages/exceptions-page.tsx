@@ -35,7 +35,8 @@ function exceptionContent(entry: StoredEntry): ExceptionContent {
 
 export function ExceptionsPage() {
   const [searchParams] = useSearchParams()
-  const { status, revision, liveUpdateMode, flushEvent, flushRevision } = useDashboard()
+  const { status, revision, liveUpdateMode, flushEvent, flushRevision, selectedApplication } =
+    useDashboard()
   const tag = searchParams.get('tag')?.trim() || undefined
   const [groups, setGroups] = useState<ExceptionGroup[]>([])
   const [pendingGroups, setPendingGroups] = useState<ExceptionGroup[]>([])
@@ -56,7 +57,7 @@ export function ExceptionsPage() {
   const pollingGenerationRef = useRef(0)
   const listControllerRef = useRef<AbortController | null>(null)
   const pollingControllerRef = useRef<AbortController | null>(null)
-  const scopeKey = `${revision}:${tag ?? ''}`
+  const scopeKey = `${revision}:${selectedApplication}:${tag ?? ''}`
   const scopeKeyRef = useRef(scopeKey)
   const scopeChanged = scopeKeyRef.current !== scopeKey
   groupsRef.current = groups
@@ -83,7 +84,10 @@ export function ExceptionsPage() {
     setLoading(true)
     setError(null)
     try {
-      const page = await api.getExceptionGroups({ limit: 50, tag }, controller.signal)
+      const page = await api.getExceptionGroups(
+        { limit: 50, tag, application: selectedApplication },
+        controller.signal
+      )
       if (controller.signal.aborted || generation !== requestGenerationRef.current) return
       groupsRef.current = page.data
       pendingGroupsRef.current = []
@@ -99,7 +103,7 @@ export function ExceptionsPage() {
         setLoading(false)
       }
     }
-  }, [tag])
+  }, [selectedApplication, tag])
 
   useEffect(() => {
     groupsRef.current = []
@@ -128,7 +132,11 @@ export function ExceptionsPage() {
 
     try {
       const fresh = await walkCursorPages(
-        (cursor) => api.getExceptionGroups({ cursor, limit: 50, tag }, controller.signal),
+        (cursor) =>
+          api.getExceptionGroups(
+            { cursor, limit: 50, tag, application: selectedApplication },
+            controller.signal
+          ),
         (group) => {
           const previous = known.get(group.familyHash)
           if (!previous) {
@@ -160,7 +168,7 @@ export function ExceptionsPage() {
     } finally {
       if (pollingControllerRef.current === controller) pollingControllerRef.current = null
     }
-  }, [tag])
+  }, [selectedApplication, tag])
 
   useEffect(() => {
     if (
@@ -192,7 +200,12 @@ export function ExceptionsPage() {
     setOccurrencesError(null)
     api
       .listEntries(
-        { type: 'exception', familyHash: selectedGroup.familyHash, limit: 50 },
+        {
+          type: 'exception',
+          familyHash: selectedGroup.familyHash,
+          application: selectedApplication,
+          limit: 50,
+        },
         controller.signal
       )
       .then((page) => {
@@ -213,7 +226,7 @@ export function ExceptionsPage() {
         if (!controller.signal.aborted) setOccurrencesLoading(false)
       })
     return () => controller.abort()
-  }, [selectedGroup])
+  }, [selectedApplication, selectedGroup])
 
   const visibleGroups = scopeChanged ? [] : groups
   const visiblePendingGroups = scopeChanged ? [] : pendingGroups
@@ -231,7 +244,7 @@ export function ExceptionsPage() {
     setError(null)
     try {
       const page = await api.getExceptionGroups(
-        { cursor: nextCursor, limit: 50, tag },
+        { cursor: nextCursor, limit: 50, tag, application: selectedApplication },
         controller.signal
       )
       if (controller.signal.aborted || generation !== requestGenerationRef.current) return
@@ -258,6 +271,7 @@ export function ExceptionsPage() {
         type: 'exception',
         familyHash: selectedGroup.familyHash,
         cursor: occurrencesNextCursor,
+        application: selectedApplication,
         limit: 50,
       })
       setOccurrences((currentEntries) => {

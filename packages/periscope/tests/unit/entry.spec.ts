@@ -164,6 +164,7 @@ test.group('IncomingEntry | toStored', () => {
     const stored = entry.toStored()
 
     assert.deepEqual(Object.keys(stored).sort(), [
+      'application',
       'batchId',
       'content',
       'createdAt',
@@ -178,6 +179,7 @@ test.group('IncomingEntry | toStored', () => {
     assert.deepEqual(stored, {
       uuid: entry.uuid,
       batchId: 'batch-1',
+      application: 'default',
       type: EntryType.LOG,
       familyHash: 'family-1',
       content,
