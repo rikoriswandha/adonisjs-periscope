@@ -43,12 +43,18 @@ function record(): IncomingEntry {
   return entry
 }
 
-test.group('BatchScope | contexts', () => {
+test.group('BatchScope | contexts', (group) => {
+  group.each.setup(() => {
+    BatchScope.configureSampling(1)
+  })
+
   test('create a context of the requested kind with empty bookkeeping', ({ assert }) => {
     const context = BatchScope.createContext('command')
 
     assert.equal(context.kind, 'command')
     assert.isFalse(context.muted)
+    assert.isTrue(context.sampled)
+    assert.equal(context.retention, 'pending')
     assert.isEmpty(context.buffer)
     assert.deepEqual(context.counters, {})
     assert.deepEqual(context.truncated, {})

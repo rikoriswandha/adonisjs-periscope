@@ -21,6 +21,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom'
 
 import { DurationBadge } from '@/components/duration-badge'
 import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
+import { EntryTagChips } from '@/components/tag-chip'
 import { JsonTree } from '@/components/json-tree'
 import { StatusBadge } from '@/components/status-badge'
 import { Badge } from '@/components/ui/badge'
@@ -354,6 +355,7 @@ export function RequestBatchPage() {
           }
           onOpenChange={(open) => !open && setSelected(null)}
           open={selected !== null}
+          tags={selected?.tags}
           title={selected ? entrySummary(selected) : 'Timeline entry'}
         >
           {selected && <JsonTree label="Entry content" value={selected.content} />}
@@ -395,6 +397,11 @@ export function RequestBatchPage() {
             </time>
           </div>
         </div>
+        {requestEntry.tags.length > 0 && (
+          <div className="border-b p-4 sm:px-5">
+            <EntryTagChips tags={requestEntry.tags} />
+          </div>
+        )}
         <dl className="grid divide-y bg-muted/25 sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-4">
           <div className="p-4">
             <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -492,6 +499,7 @@ export function RequestBatchPage() {
         }
         onOpenChange={(open) => !open && setSelected(null)}
         open={selected !== null}
+        tags={selected?.tags}
         title={selected ? entrySummary(selected) : 'Timeline entry'}
       >
         {selected && <JsonTree label="Entry content" value={selected.content} />}

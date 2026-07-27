@@ -1,11 +1,4 @@
-import {
-  ArrowDown,
-  ArrowUpRight,
-  CircleAlert,
-  Inbox,
-  RefreshCw,
-  Route,
-} from 'lucide-react'
+import { ArrowDown, ArrowUpRight, CircleAlert, Inbox, RefreshCw, Route } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 
@@ -13,15 +6,10 @@ import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
 import { JsonTree } from '@/components/json-tree'
 import { StackTrace } from '@/components/stack-trace'
 import { StatusBadge } from '@/components/status-badge'
+import { TagChip } from '@/components/tag-chip'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from '@/components/ui/empty'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -37,6 +25,7 @@ import { usePolling } from '@/hooks/use-polling'
 import { walkCursorPages } from '@/hooks/walk-cursor-pages'
 import { api } from '@/lib/api'
 import { isNewExceptionGroup, mergeExceptionGroups } from '@/lib/exception-groups'
+import { shouldPollForUpdates } from '@/lib/live-updates'
 import { formatDateTime, formatRelativeTime, truncate } from '@/lib/format'
 import type { ExceptionContent, ExceptionGroup, StoredEntry } from '@/types'
 
@@ -46,7 +35,7 @@ function exceptionContent(entry: StoredEntry): ExceptionContent {
 
 export function ExceptionsPage() {
   const [searchParams] = useSearchParams()
-  const { status, revision } = useDashboard()
+  const { status, revision, liveUpdateMode, flushEvent, flushRevision } = useDashboard()
   const tag = searchParams.get('tag')?.trim() || undefined
   const [groups, setGroups] = useState<ExceptionGroup[]>([])
   const [pendingGroups, setPendingGroups] = useState<ExceptionGroup[]>([])
@@ -128,56 +117,68 @@ export function ExceptionsPage() {
     }
   }, [loadInitial, revision])
 
-  usePolling(
-    async () => {
-      const generation = pollingGenerationRef.current
-      const controller = new AbortController()
-      pollingControllerRef.current = controller
-      const known = new Map(
+  const scanForNewGroups = useCallback(async () => {
+    const generation = pollingGenerationRef.current
+    pollingControllerRef.current?.abort()
+    const controller = new AbortController()
+    pollingControllerRef.current = controller
+    const known = new Map(
+      [...groupsRef.current, ...pendingGroupsRef.current].map((group) => [group.familyHash, group])
+    )
+
+    try {
+      const fresh = await walkCursorPages(
+        (cursor) => api.getExceptionGroups({ cursor, limit: 50, tag }, controller.signal),
+        (group) => {
+          const previous = known.get(group.familyHash)
+          if (!previous) {
+            known.set(group.familyHash, group)
+            return 'collect'
+          }
+          if (!isNewExceptionGroup(previous, group)) return 'overlap'
+          known.set(group.familyHash, group)
+          return 'collect'
+        }
+      )
+      if (controller.signal.aborted || generation !== pollingGenerationRef.current) return
+
+      const current = new Map(
         [...groupsRef.current, ...pendingGroupsRef.current].map((group) => [
           group.familyHash,
           group,
         ])
       )
+      const additions = fresh.filter((group) => {
+        const previous = current.get(group.familyHash)
+        return isNewExceptionGroup(previous, group)
+      })
+      if (additions.length === 0) return
 
-      try {
-        const fresh = await walkCursorPages(
-          (cursor) =>
-            api.getExceptionGroups({ cursor, limit: 50, tag }, controller.signal),
-          (group) => {
-            const previous = known.get(group.familyHash)
-            if (!previous) {
-              known.set(group.familyHash, group)
-              return 'collect'
-            }
-            if (!isNewExceptionGroup(previous, group)) return 'overlap'
-            known.set(group.familyHash, group)
-            return 'collect'
-          }
-        )
-        if (controller.signal.aborted || generation !== pollingGenerationRef.current) return
+      const next = mergeExceptionGroups(pendingGroupsRef.current, additions)
+      pendingGroupsRef.current = next
+      setPendingGroups(next)
+    } finally {
+      if (pollingControllerRef.current === controller) pollingControllerRef.current = null
+    }
+  }, [tag])
 
-        const current = new Map(
-          [...groupsRef.current, ...pendingGroupsRef.current].map((group) => [
-            group.familyHash,
-            group,
-          ])
-        )
-        const additions = fresh.filter((group) => {
-          const previous = current.get(group.familyHash)
-          return isNewExceptionGroup(previous, group)
-        })
-        if (additions.length === 0) return
+  useEffect(() => {
+    if (
+      loading ||
+      status?.paused !== false ||
+      liveUpdateMode !== 'live' ||
+      flushEvent?.type !== 'exception' ||
+      (tag && !flushEvent.indexRow.tags.includes(tag))
+    ) {
+      return
+    }
+    void scanForNewGroups().catch(() => undefined)
+  }, [flushEvent, flushRevision, liveUpdateMode, loading, scanForNewGroups, status?.paused, tag])
 
-        const next = mergeExceptionGroups(pendingGroupsRef.current, additions)
-        pendingGroupsRef.current = next
-        setPendingGroups(next)
-      } finally {
-        if (pollingControllerRef.current === controller) pollingControllerRef.current = null
-      }
-    },
-    { enabled: status?.paused === false && !loading }
-  )
+  usePolling(scanForNewGroups, {
+    enabled: !loading && shouldPollForUpdates(liveUpdateMode, status?.paused ?? true),
+    immediate: true,
+  })
   useEffect(() => {
     if (!selectedGroup) {
       setOccurrences([])
@@ -296,14 +297,15 @@ export function ExceptionsPage() {
         <div className="max-w-2xl">
           <h2 className="text-lg font-semibold tracking-tight">Exception families</h2>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            Recurring failures are grouped by stack signature so frequency and the latest occurrence stay visible together.
+            Recurring failures are grouped by stack signature so frequency and the latest occurrence
+            stay visible together.
           </p>
         </div>
         {tag && (
-          <Badge variant="info">
-            <Route aria-hidden="true" />
-            tag:{tag}
-          </Badge>
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Route aria-hidden="true" className="size-3.5" />
+            <TagChip tag={tag} />
+          </span>
         )}
       </section>
 
@@ -326,17 +328,27 @@ export function ExceptionsPage() {
                 <TableHead className="w-28">Status</TableHead>
                 <TableHead className="w-28 text-right">Occurrences</TableHead>
                 <TableHead className="w-36">Last seen</TableHead>
-                <TableHead className="w-10"><span className="sr-only">Open details</span></TableHead>
+                <TableHead className="w-10">
+                  <span className="sr-only">Open details</span>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {indexLoading &&
                 Array.from({ length: 7 }, (_, index) => (
                   <TableRow key={index}>
-                    <TableCell><Skeleton className="h-8 w-full max-w-xl" /></TableCell>
-                    <TableCell><Skeleton className="h-5 w-14" /></TableCell>
-                    <TableCell><Skeleton className="ms-auto h-5 w-10" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-24" /></TableCell>
+                    <TableCell>
+                      <Skeleton className="h-8 w-full max-w-xl" />
+                    </TableCell>
+                    <TableCell>
+                      <Skeleton className="h-5 w-14" />
+                    </TableCell>
+                    <TableCell>
+                      <Skeleton className="ms-auto h-5 w-10" />
+                    </TableCell>
+                    <TableCell>
+                      <Skeleton className="h-4 w-24" />
+                    </TableCell>
                     <TableCell />
                   </TableRow>
                 ))}
@@ -358,7 +370,9 @@ export function ExceptionsPage() {
                             Inspect {content.name}: {content.message}.{' '}
                           </span>
                           <span className="block max-w-2xl">
-                            <span className="block truncate text-sm font-medium">{content.message}</span>
+                            <span className="block truncate text-sm font-medium">
+                              {content.message}
+                            </span>
                             <span className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                               <span>{content.name}</span>
                               {content.code && <span className="font-mono">{content.code}</span>}
@@ -366,7 +380,9 @@ export function ExceptionsPage() {
                           </span>
                         </button>
                       </TableCell>
-                      <TableCell><StatusBadge status={content.status} /></TableCell>
+                      <TableCell>
+                        <StatusBadge status={content.status} />
+                      </TableCell>
                       <TableCell className="text-right font-mono text-sm font-semibold tabular-nums">
                         {group.count.toLocaleString()}
                       </TableCell>
@@ -386,19 +402,27 @@ export function ExceptionsPage() {
         {!indexLoading && error && visibleGroups.length === 0 && (
           <Empty className="border-0 py-16">
             <EmptyHeader>
-              <EmptyMedia variant="icon"><CircleAlert aria-hidden="true" /></EmptyMedia>
+              <EmptyMedia variant="icon">
+                <CircleAlert aria-hidden="true" />
+              </EmptyMedia>
               <EmptyTitle>Exception groups could not be loaded</EmptyTitle>
               <EmptyDescription>{error.message}</EmptyDescription>
             </EmptyHeader>
-            <Button onClick={() => void loadInitial()} variant="outline">Try again</Button>
+            <Button onClick={() => void loadInitial()} variant="outline">
+              Try again
+            </Button>
           </Empty>
         )}
 
         {!indexLoading && !error && visibleGroups.length === 0 && (
           <Empty className="border-0 py-16">
             <EmptyHeader>
-              <EmptyMedia variant="icon"><Inbox aria-hidden="true" /></EmptyMedia>
-              <EmptyTitle>{tag ? 'No matching exception families' : 'No exceptions recorded'}</EmptyTitle>
+              <EmptyMedia variant="icon">
+                <Inbox aria-hidden="true" />
+              </EmptyMedia>
+              <EmptyTitle>
+                {tag ? 'No matching exception families' : 'No exceptions recorded'}
+              </EmptyTitle>
               <EmptyDescription>
                 {tag
                   ? `No exception occurrence carries the exact tag “${tag}”.`
@@ -410,9 +434,16 @@ export function ExceptionsPage() {
 
         {visibleGroups.length > 0 && (
           <div className="flex items-center justify-between border-t px-3 py-2">
-            <span className="text-xs text-muted-foreground">{visibleGroups.length.toLocaleString()} groups loaded</span>
+            <span className="text-xs text-muted-foreground">
+              {visibleGroups.length.toLocaleString()} groups loaded
+            </span>
             {nextCursor && (
-              <Button loading={loadingMore} onClick={() => void loadMore()} size="sm" variant="ghost">
+              <Button
+                loading={loadingMore}
+                onClick={() => void loadMore()}
+                size="sm"
+                variant="ghost"
+              >
                 <ArrowDown aria-hidden="true" /> Load older
               </Button>
             )}
@@ -423,12 +454,16 @@ export function ExceptionsPage() {
       {error && visibleGroups.length > 0 && (
         <div className="flex items-center justify-between rounded-lg border bg-destructive/5 px-3 py-2 text-sm text-destructive-foreground">
           <span>{error.message}</span>
-          <Button onClick={() => void loadInitial()} size="sm" variant="ghost">Retry</Button>
+          <Button onClick={() => void loadInitial()} size="sm" variant="ghost">
+            Retry
+          </Button>
         </div>
       )}
 
       <EntryDetailDrawer
-        description={selectedOccurrence ? formatDateTime(selectedOccurrence.createdAt) : 'Exception occurrence'}
+        description={
+          selectedOccurrence ? formatDateTime(selectedOccurrence.createdAt) : 'Exception occurrence'
+        }
         meta={
           current && (
             <>
@@ -439,6 +474,7 @@ export function ExceptionsPage() {
         }
         onOpenChange={(open) => !open && setSelectedGroup(null)}
         open={selectedGroup !== null}
+        tags={selectedOccurrence?.tags}
         title={current ? `${current.name}: ${truncate(current.message, 100)}` : 'Exception detail'}
       >
         {selectedGroup && (
@@ -466,7 +502,11 @@ export function ExceptionsPage() {
                   </section>
                 )}
 
-                <StackTrace codeFrame={current.codeFrame} fallback={current.stack} frames={current.frames ?? []} />
+                <StackTrace
+                  codeFrame={current.codeFrame}
+                  fallback={current.stack}
+                  frames={current.frames ?? []}
+                />
 
                 {current.context !== undefined && (
                   <JsonTree label="Exception context" value={current.context} />
@@ -482,13 +522,18 @@ export function ExceptionsPage() {
                       const occurrence = exceptionContent(entry)
                       const active = selectedOccurrence.uuid === entry.uuid
                       return (
-                        <div className={`flex items-center gap-2 p-2 ${active ? 'bg-accent/55' : ''}`} key={entry.uuid}>
+                        <div
+                          className={`flex items-center gap-2 p-2 ${active ? 'bg-accent/55' : ''}`}
+                          key={entry.uuid}
+                        >
                           <button
                             className="min-w-0 flex-1 rounded-md px-2 py-1.5 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
                             onClick={() => setSelectedOccurrence(entry)}
                             type="button"
                           >
-                            <span className="block truncate text-xs font-medium">{occurrence.message}</span>
+                            <span className="block truncate text-xs font-medium">
+                              {occurrence.message}
+                            </span>
                             <span className="mt-0.5 block text-2xs text-muted-foreground">
                               {formatDateTime(entry.createdAt)}
                             </span>
@@ -523,13 +568,18 @@ export function ExceptionsPage() {
                 <dl className="grid gap-3 rounded-lg border p-4 sm:grid-cols-2">
                   <div>
                     <dt className="text-xs text-muted-foreground">Family hash</dt>
-                    <dd className="mt-1 truncate font-mono text-xs" title={selectedGroup.familyHash}>
+                    <dd
+                      className="mt-1 truncate font-mono text-xs"
+                      title={selectedGroup.familyHash}
+                    >
                       {selectedGroup.familyHash}
                     </dd>
                   </div>
                   <div>
                     <dt className="text-xs text-muted-foreground">Sequence</dt>
-                    <dd className="mt-1 truncate font-mono text-xs">{selectedOccurrence.sequence}</dd>
+                    <dd className="mt-1 truncate font-mono text-xs">
+                      {selectedOccurrence.sequence}
+                    </dd>
                   </div>
                 </dl>
               </>

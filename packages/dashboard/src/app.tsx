@@ -4,30 +4,11 @@ import { HashRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from '@/components/app-shell'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Skeleton } from '@/components/ui/skeleton'
+import { RegisteredEntryPage } from '@/entry-type-registry'
+import { wave2EntryTypes } from '@/wave2-entry-types'
 
-const CachePage = lazy(() =>
-  import('@/pages/cache-page').then((module) => ({ default: module.CachePage }))
-)
-const CommandsPage = lazy(() =>
-  import('@/pages/commands-page').then((module) => ({ default: module.CommandsPage }))
-)
-const DumpsPage = lazy(() =>
-  import('@/pages/dumps-page').then((module) => ({ default: module.DumpsPage }))
-)
 const ExceptionsPage = lazy(() =>
   import('@/pages/exceptions-page').then((module) => ({ default: module.ExceptionsPage }))
-)
-const GatesPage = lazy(() =>
-  import('@/pages/gates-page').then((module) => ({ default: module.GatesPage }))
-)
-const HttpClientPage = lazy(() =>
-  import('@/pages/http-client-page').then((module) => ({ default: module.HttpClientPage }))
-)
-const MailPage = lazy(() =>
-  import('@/pages/mail-page').then((module) => ({ default: module.MailPage }))
-)
-const ModelsPage = lazy(() =>
-  import('@/pages/models-page').then((module) => ({ default: module.ModelsPage }))
 )
 const QueriesPage = lazy(() =>
   import('@/pages/queries-page').then((module) => ({ default: module.QueriesPage }))
@@ -38,6 +19,21 @@ const RequestBatchPage = lazy(() =>
 const RequestsPage = lazy(() =>
   import('@/pages/requests-page').then((module) => ({ default: module.RequestsPage }))
 )
+const SearchPage = lazy(() =>
+  import('@/pages/search-page').then((module) => ({ default: module.SearchPage }))
+)
+
+const wave2Routes = wave2EntryTypes.map((registration) => ({
+  registration,
+  Page: lazy(async () => {
+    const implementation = await registration.load()
+    return {
+      default: function Wave2EntryPage() {
+        return <RegisteredEntryPage registration={registration} implementation={implementation} />
+      },
+    }
+  }),
+}))
 
 export function App() {
   return (
@@ -58,13 +54,10 @@ export function App() {
               <Route element={<RequestBatchPage />} path="requests/:batchId" />
               <Route element={<QueriesPage />} path="queries" />
               <Route element={<ExceptionsPage />} path="exceptions" />
-              <Route element={<CommandsPage />} path="commands" />
-              <Route element={<MailPage />} path="mail" />
-              <Route element={<CachePage />} path="cache" />
-              <Route element={<ModelsPage />} path="models" />
-              <Route element={<GatesPage />} path="gates" />
-              <Route element={<DumpsPage />} path="dumps" />
-              <Route element={<HttpClientPage />} path="http-client" />
+              <Route element={<SearchPage />} path="search" />
+              {wave2Routes.map(({ registration, Page }) => (
+                <Route element={<Page />} key={registration.type} path={registration.path} />
+              ))}
               <Route element={<Navigate replace to="/requests" />} path="*" />
             </Route>
           </Routes>

@@ -14,6 +14,7 @@ import { BatchScope } from '../../../src/recorder/context.ts'
 import { Recorder } from '../../../src/recorder/recorder.ts'
 import { MemoryStore } from '../../../src/storage/memory_store.ts'
 import { EntryType } from '../../../src/types.ts'
+import type { KeepAlwaysHook } from '../../../src/types.ts'
 import { findRequestBatch, isIgnoredRequest } from '../../../src/watchers/http_batch.ts'
 import { RequestWatcherMiddleware } from '../../../src/watchers/request/middleware.ts'
 import { RequestWatcher } from '../../../src/watchers/request/watcher.ts'
@@ -92,11 +93,18 @@ type WatcherOptions = {
   captureResponse?: boolean
   responseSizeLimitKb?: number
   captureSession?: boolean
+  sampleRate?: number
+  keepAlways?: KeepAlwaysHook
+  monitoredTags?: string[]
 }
 
 async function makeWatcher(options: WatcherOptions = {}) {
   const { app, emitter } = await createApp()
   const config = defineConfig({
+    recording: {
+      sampleRate: options.sampleRate,
+      keepAlways: options.keepAlways,
+    },
     storage: { driver: 'memory' },
     dashboard: { path: options.dashboardPath ?? '/periscope' },
     watchers: {
@@ -109,6 +117,9 @@ async function makeWatcher(options: WatcherOptions = {}) {
     },
   })
   const store = new MemoryStore({ maxEntries: 100 })
+  for (const tag of options.monitoredTags ?? []) {
+    await store.monitorTag(tag)
+  }
   const recorder = new Recorder({ config, store })
   const watcher = new RequestWatcher({ app, emitter, recorder, config, dev: true })
   const middleware = new RequestWatcherMiddleware()
@@ -288,6 +299,64 @@ test.group('RequestWatcher', () => {
       entries.some(
         (entry) => entry.type === EntryType.QUERY && entry.content.sql === 'select after abort'
       )
+    )
+  })
+
+  test('retain both abort fragments when keepAlways matches the completion fragment', async ({
+    assert,
+  }) => {
+    const { emitter, middleware, recorder, store } = await makeWatcher({
+      sampleRate: 0,
+      keepAlways: (batch) => batch.hasEntryOfType(EntryType.REQUEST),
+    })
+    const ctx = makeHttpContext({ headersSent: false, finished: false })
+    let requestBatchId: string | undefined
+
+    await middleware.handle(ctx, async () => {
+      requestBatchId = BatchScope.current()?.batchId
+      await emitter.emit('http:request_completed', { ctx, duration: [0, 93_000_000] })
+      recorder.record(IncomingEntry.make(EntryType.QUERY, { fragment: 'straggler' }))
+    })
+
+    if (requestBatchId === undefined) {
+      throw new Error('Expected the middleware to expose the request batch id')
+    }
+
+    const entries = await store.batch(requestBatchId)
+    assert.lengthOf(entries, 2)
+    assert.includeMembers(
+      entries.map((entry) => entry.type),
+      [EntryType.REQUEST, EntryType.QUERY]
+    )
+  })
+
+  test('retain both abort fragments when a monitored tag arrives on the straggler', async ({
+    assert,
+  }) => {
+    const { emitter, middleware, recorder, store } = await makeWatcher({
+      sampleRate: 0,
+      monitoredTags: ['tenant:42'],
+    })
+    const ctx = makeHttpContext({ headersSent: false, finished: false })
+    let requestBatchId: string | undefined
+
+    await middleware.handle(ctx, async () => {
+      requestBatchId = BatchScope.current()?.batchId
+      await emitter.emit('http:request_completed', { ctx, duration: [0, 93_000_000] })
+      recorder.record(
+        IncomingEntry.make(EntryType.QUERY, { fragment: 'straggler' }).withTags('tenant:42')
+      )
+    })
+
+    if (requestBatchId === undefined) {
+      throw new Error('Expected the middleware to expose the request batch id')
+    }
+
+    const entries = await store.batch(requestBatchId)
+    assert.lengthOf(entries, 2)
+    assert.includeMembers(
+      entries.map((entry) => entry.type),
+      [EntryType.REQUEST, EntryType.QUERY]
     )
   })
 

@@ -17,12 +17,13 @@ function mergeUnique(
   })
 }
 
-export function useCursorPagination(filters: EntryFilters) {
+export function useCursorPagination(filters: EntryFilters, options: { enabled?: boolean } = {}) {
   const filterKey = useMemo(() => JSON.stringify(filters), [filters])
   const stableFilters = useMemo<EntryFilters>(
     () => JSON.parse(filterKey) as EntryFilters,
     [filterKey]
   )
+  const enabled = options.enabled ?? true
   const [entries, setEntries] = useState<StoredEntry[]>([])
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -37,6 +38,10 @@ export function useCursorPagination(filters: EntryFilters) {
     setLoadingMore(false)
     setLoading(true)
     setError(null)
+    if (!enabled) {
+      setLoading(false)
+      return
+    }
     try {
       const page = await api.listEntries(stableFilters)
       if (generation !== requestGeneration.current) return
@@ -48,7 +53,7 @@ export function useCursorPagination(filters: EntryFilters) {
     } finally {
       if (generation === requestGeneration.current) setLoading(false)
     }
-  }, [stableFilters])
+  }, [enabled, stableFilters])
 
   useEffect(() => {
     setEntries([])
@@ -60,7 +65,7 @@ export function useCursorPagination(filters: EntryFilters) {
   }, [loadInitial])
 
   const loadMore = useCallback(async () => {
-    if (!nextCursor || loadingMoreRef.current) return
+    if (!enabled || !nextCursor || loadingMoreRef.current) return
     const generation = requestGeneration.current
     loadingMoreRef.current = true
     setLoadingMore(true)
@@ -82,7 +87,7 @@ export function useCursorPagination(filters: EntryFilters) {
         setLoadingMore(false)
       }
     }
-  }, [nextCursor, stableFilters])
+  }, [enabled, nextCursor, stableFilters])
 
   const prepend = useCallback((incoming: StoredEntry[]) => {
     setEntries((current) => mergeUnique(current, incoming, 'start'))

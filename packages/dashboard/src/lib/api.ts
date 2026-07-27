@@ -98,6 +98,24 @@ export const api = {
     return request<DashboardStatus>('status', { signal })
   },
 
+  getStreamUrl(): string {
+    return endpoint('stream').toString()
+  },
+
+  getMonitoredTags(signal?: AbortSignal): Promise<string[]> {
+    return request<{ data: string[] }>('monitored-tags', { signal }).then(
+      (response) => response.data
+    )
+  },
+
+  monitorTag(tag: string): Promise<void> {
+    return request<void>(`monitored-tags/${encodeURIComponent(tag)}`, { method: 'PUT' })
+  },
+
+  unmonitorTag(tag: string): Promise<void> {
+    return request<void>(`monitored-tags/${encodeURIComponent(tag)}`, { method: 'DELETE' })
+  },
+
   setFlag(name: string, value = 1): Promise<void> {
     return request<void>(`flags/${encodeURIComponent(name)}`, {
       method: 'PUT',

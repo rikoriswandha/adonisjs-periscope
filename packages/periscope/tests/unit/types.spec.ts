@@ -337,6 +337,8 @@ test.group('Types | BatchContext', () => {
       batchId: 'batch-1',
       kind: 'request',
       startedAt: process.hrtime.bigint(),
+      sampled: true,
+      retention: 'kept',
       buffer: [entry],
       counters: { log: 1 },
       truncated: {},
@@ -346,15 +348,27 @@ test.group('Types | BatchContext', () => {
     assert.equal(typeof context.startedAt, 'bigint')
     assert.deepEqual(context.buffer, [entry])
     assert.deepEqual(context.counters, { log: 1 })
+    assert.isTrue(context.sampled)
+    assert.equal(context.retention, 'kept')
     assert.isFalse(context.muted)
 
     expectTypeOf<keyof BatchContext>().toEqualTypeOf<
-      'batchId' | 'kind' | 'startedAt' | 'buffer' | 'counters' | 'truncated' | 'muted'
+      | 'batchId'
+      | 'kind'
+      | 'startedAt'
+      | 'sampled'
+      | 'retention'
+      | 'buffer'
+      | 'counters'
+      | 'truncated'
+      | 'muted'
     >()
     expectTypeOf<Required<BatchContext>>().toEqualTypeOf<BatchContext>()
     expectTypeOf<BatchContext['batchId']>().toBeString()
     expectTypeOf<BatchContext['kind']>().toEqualTypeOf<BatchKind>()
     expectTypeOf<BatchContext['startedAt']>().toEqualTypeOf<bigint>()
+    expectTypeOf<BatchContext['sampled']>().toBeBoolean()
+    expectTypeOf<BatchContext['retention']>().toEqualTypeOf<'pending' | 'kept' | 'dropped'>()
     expectTypeOf<BatchContext['buffer']>().toEqualTypeOf<IncomingEntry[]>()
     expectTypeOf<BatchContext['counters']>().toEqualTypeOf<EntryTypeCounts>()
     expectTypeOf<BatchContext['truncated']>().toEqualTypeOf<EntryTypeCounts>()
@@ -443,6 +457,8 @@ test.group('Types | configuration', () => {
           redis: 100,
           session: 100,
         },
+        sampleRate: 1,
+        keepAlways: () => false,
         ambientRotationMs: 10_000,
         pausedFlagTtlMs: 5_000,
       },

@@ -79,10 +79,10 @@ function isPeriscopeTraffic(driver: StorageDriverName, sql: string): boolean {
  * Observe Lucid query reports and turn them into independently searchable query entries.
  *
  * Lucid only emits `db:query` when the connection's top-level `debug` option is true. The public
- * counters intentionally measure events observed here rather than entries eventually persisted:
- * the P7.4 doctor can therefore identify "requests happened but zero queries recorded" as the
- * signature of `debug: false`, without mistaking recorder caps or a paused store for missing
- * Lucid instrumentation.
+ * counters intentionally measure events observed here rather than entries eventually persisted,
+ * so tests and host diagnostics can distinguish missing Lucid instrumentation from recorder caps
+ * or a paused store. The P7.4 init hook performs the actionable boot-time check directly against
+ * each resolved Lucid connection's `debug` flag.
  *
  * **No call site is recorded, and cannot be.** The plan (P3.3) asks for a dev-only capture of the
  * application frame that issued the query, via `Error.captureStackTrace` at record time. That

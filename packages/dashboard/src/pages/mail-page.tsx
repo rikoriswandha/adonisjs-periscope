@@ -1,20 +1,16 @@
-import { ArrowUpRight, Download, Route } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { ArrowUpRight, Download } from 'lucide-react'
 
 import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
-import { EntryIndexTable, type EntryColumn } from '@/components/entry-index-table'
+import type { EntryColumn } from '@/components/entry-index-table'
 import { JsonTree } from '@/components/json-tree'
 import { MailPreview } from '@/components/mail-preview'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsPanel, TabsTab } from '@/components/ui/tabs'
-import { useDashboard } from '@/dashboard-context'
-import { useCursorPagination } from '@/hooks/use-cursor-pagination'
-import { useNewEntryPolling } from '@/hooks/use-polling'
+import type { EntryTypeImplementation, RegisteredEntryDetailProps } from '@/entry-type-registry'
 import { api } from '@/lib/api'
 import { formatDateTime, formatRelativeTime, truncate } from '@/lib/format'
-import type { EntryFilters, MailContent, StoredEntry } from '@/types'
+import type { MailContent, StoredEntry } from '@/types'
 
 function mailContent(entry: StoredEntry): MailContent {
   return entry.content as MailContent
@@ -53,7 +49,6 @@ function PlainTextBody({ text }: { text?: string }) {
       </p>
     )
   }
-
   return (
     <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-muted/25 p-4 font-sans text-sm leading-6 text-foreground">
       {text}
@@ -118,154 +113,96 @@ const columns: EntryColumn[] = [
   },
 ]
 
-export function MailPage() {
-  const [searchParams] = useSearchParams()
-  const { status, revision } = useDashboard()
-  const [selected, setSelected] = useState<StoredEntry | null>(null)
-  const tag = searchParams.get('tag')?.trim() || undefined
-  const filters = useMemo<EntryFilters>(
-    () => ({ type: 'mail', tag, displayOnIndex: true, limit: 50 }),
-    [tag]
-  )
-  const pagination = useCursorPagination(filters)
-  const reload = pagination.reload
-  const polling = useNewEntryPolling(pagination.entries, filters, status?.paused ?? true, revision)
-
-  useEffect(() => {
-    if (revision > 0) void reload()
-  }, [reload, revision])
-
-  const content = selected ? mailContent(selected) : null
-  const hasRaw = typeof content?.raw === 'string' && content.raw.length > 0
-  const acceptNew = () => pagination.prepend(polling.accept())
-
+function MailDetail({ entry, onClose }: RegisteredEntryDetailProps) {
+  const content = mailContent(entry)
+  const hasRaw = typeof content.raw === 'string' && content.raw.length > 0
   return (
-    <div className="space-y-5">
-      <section className="flex flex-wrap items-end justify-between gap-3">
-        <div className="max-w-2xl">
-          <h2 className="text-lg font-semibold tracking-tight">Mail activity</h2>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            Inspect delivery lifecycle events, rendered bodies, envelopes, and transport metadata.
-          </p>
+    <EntryDetailDrawer
+      description={`${content.mailer} · ${formatDateTime(entry.createdAt)}`}
+      meta={
+        <>
+          <Badge variant={eventVariant(content.event)}>{eventLabel(content.event)}</Badge>
+          {content.truncated && <Badge variant="warning">truncated</Badge>}
+        </>
+      }
+      onOpenChange={(open) => !open && onClose()}
+      open
+      tags={entry.tags}
+      title={mailSubject(content)}
+    >
+      <dl className="grid gap-3 rounded-lg border p-4 sm:grid-cols-2">
+        <div>
+          <dt className="text-xs text-muted-foreground">Mailer</dt>
+          <dd className="mt-1 font-mono text-sm">{content.mailer}</dd>
         </div>
-        {tag && (
-          <Badge variant="info">
-            <Route aria-hidden="true" />
-            tag:{tag}
-          </Badge>
-        )}
-      </section>
-
-      <EntryIndexTable
-        caption="Recorded mail activity"
-        columns={columns}
-        emptyDescription={
-          tag
-            ? `No mail entry carries the exact tag “${tag}”. Try another tag or clear the filter.`
-            : 'Send or queue a message while mail events are enabled. It will appear here automatically.'
-        }
-        emptyTitle={tag ? 'No matching mail activity' : 'Waiting for mail activity'}
-        error={pagination.error}
-        hasMore={pagination.hasMore}
-        loading={pagination.loading}
-        loadingMore={pagination.loadingMore}
-        newCount={polling.pending.length}
-        onAcceptNew={acceptNew}
-        onLoadMore={() => void pagination.loadMore()}
-        onRetry={() => void pagination.reload()}
-        onRowOpen={setSelected}
-        rowLabel={(entry) => `Inspect mail: ${truncate(mailSubject(mailContent(entry)), 80)}`}
-        rows={pagination.entries}
-      />
-
-      <EntryDetailDrawer
-        description={
-          selected && content
-            ? `${content.mailer} · ${formatDateTime(selected.createdAt)}`
-            : 'Mail detail'
-        }
-        meta={
-          content && (
-            <>
-              <Badge variant={eventVariant(content.event)}>{eventLabel(content.event)}</Badge>
-              {content.truncated && <Badge variant="warning">truncated</Badge>}
-            </>
-          )
-        }
-        onOpenChange={(open) => !open && setSelected(null)}
-        open={selected !== null}
-        title={content ? mailSubject(content) : 'Mail detail'}
-      >
-        {selected && content && (
-          <>
-            <dl className="grid gap-3 rounded-lg border p-4 sm:grid-cols-2">
-              <div>
-                <dt className="text-xs text-muted-foreground">Mailer</dt>
-                <dd className="mt-1 font-mono text-sm">{content.mailer}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">Lifecycle event</dt>
-                <dd className="mt-1 text-sm">{eventLabel(content.event)}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">Message ID</dt>
-                <dd className="mt-1 break-all font-mono text-xs">
-                  {content.messageId ?? 'Unavailable'}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">Capture state</dt>
-                <dd className="mt-1 text-sm">
-                  {content.truncated ? 'Truncated at the configured limit' : 'Not truncated'}
-                </dd>
-              </div>
-            </dl>
-
-            {hasRaw && (
-              <div className="flex justify-end">
-                <Button
-                  render={<a download href={api.getEntryEmlUrl(selected.uuid)} />}
-                  variant="outline"
-                >
-                  <Download aria-hidden="true" />
-                  Download EML
-                </Button>
-              </div>
-            )}
-
-            <Tabs defaultValue="preview">
-              <div className="border-b">
-                <TabsList variant="underline">
-                  <TabsTab value="preview">Preview</TabsTab>
-                  <TabsTab value="text">Text</TabsTab>
-                  <TabsTab value="envelope">Envelope</TabsTab>
-                </TabsList>
-              </div>
-              <TabsPanel value="preview">
-                <MailPreview
-                  html={content.html}
-                  text={content.text}
-                  title={`Preview of ${mailSubject(content)}`}
-                />
-              </TabsPanel>
-              <TabsPanel value="text">
-                <PlainTextBody text={content.text} />
-              </TabsPanel>
-              <TabsPanel value="envelope">
-                <div className="space-y-3">
-                  <JsonTree label="Envelope" value={content.envelope ?? {}} />
-                  <JsonTree label="Metadata" value={content.metadata ?? {}} />
-                </div>
-              </TabsPanel>
-            </Tabs>
-
-            {content.response !== undefined && (
-              <JsonTree label="Transport response" value={content.response} />
-            )}
-            {content.error !== undefined && <JsonTree label="Mail error" value={content.error} />}
-          </>
-        )}
-      </EntryDetailDrawer>
-    </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Lifecycle event</dt>
+          <dd className="mt-1 text-sm">{eventLabel(content.event)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Message ID</dt>
+          <dd className="mt-1 break-all font-mono text-xs">{content.messageId ?? 'Unavailable'}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Capture state</dt>
+          <dd className="mt-1 text-sm">
+            {content.truncated ? 'Truncated at the configured limit' : 'Not truncated'}
+          </dd>
+        </div>
+      </dl>
+      {hasRaw && (
+        <div className="flex justify-end">
+          <Button render={<a download href={api.getEntryEmlUrl(entry.uuid)} />} variant="outline">
+            <Download aria-hidden="true" />
+            Download EML
+          </Button>
+        </div>
+      )}
+      <Tabs defaultValue="preview">
+        <div className="border-b">
+          <TabsList variant="underline">
+            <TabsTab value="preview">Preview</TabsTab>
+            <TabsTab value="text">Text</TabsTab>
+            <TabsTab value="envelope">Envelope</TabsTab>
+          </TabsList>
+        </div>
+        <TabsPanel value="preview">
+          <MailPreview
+            html={content.html}
+            text={content.text}
+            title={`Preview of ${mailSubject(content)}`}
+          />
+        </TabsPanel>
+        <TabsPanel value="text">
+          <PlainTextBody text={content.text} />
+        </TabsPanel>
+        <TabsPanel value="envelope">
+          <div className="space-y-3">
+            <JsonTree label="Envelope" value={content.envelope ?? {}} />
+            <JsonTree label="Metadata" value={content.metadata ?? {}} />
+          </div>
+        </TabsPanel>
+      </Tabs>
+      {content.response !== undefined && (
+        <JsonTree label="Transport response" value={content.response} />
+      )}
+      {content.error !== undefined && <JsonTree label="Mail error" value={content.error} />}
+    </EntryDetailDrawer>
   )
+}
+
+export const mailEntryTypeImplementation: EntryTypeImplementation = {
+  heading: 'Mail activity',
+  description:
+    'Inspect delivery lifecycle events, rendered bodies, envelopes, and transport metadata.',
+  caption: 'Recorded mail activity',
+  columns,
+  emptyTitle: (tag?: string) => (tag ? 'No matching mail activity' : 'Waiting for mail activity'),
+  emptyDescription: (tag?: string) =>
+    tag
+      ? `No mail entry carries the exact tag “${tag}”. Try another tag or clear the filter.`
+      : 'Send or queue a message while mail events are enabled. It will appear here automatically.',
+  rowLabel: (entry: StoredEntry) =>
+    `Inspect mail: ${truncate(mailSubject(mailContent(entry)), 80)}`,
+  detailComponent: MailDetail,
 }

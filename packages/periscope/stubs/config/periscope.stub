@@ -70,6 +70,25 @@ export default defineConfig({
     },
 
     /**
+     * Fraction of batches retained. The decision is made once when each batch opens; monitored
+     * tags and \`keepAlways\` may still retain a sampled-out batch at flush time.
+     *
+     * Default: 1
+     */
+    sampleRate: 1,
+
+    /**
+     * Inspect a completed batch before a sampling drop. The facade avoids exposing the mutable
+     * recorder buffer and supports type, tag, and custom entry predicates.
+     *
+     * Default: () => false
+     */
+    // keepAlways: (batch) =>
+    //   batch.hasEntryOfType('exception') ||
+    //   batch.hasTag('important') ||
+    //   batch.hasEntryWhere((entry) => Number(entry.content.durationMs) > 1_000),
+
+    /**
      * How often the ambient batch — everything recorded outside a request, command or job — is
      * rotated and flushed, in milliseconds.
      *

@@ -33,9 +33,10 @@ import { PeriscopeConfigError } from './errors.ts'
 import { DEFAULT_REDACT_HEADERS, DEFAULT_REDACT_KEYS } from './recorder/redactor.ts'
 import { ENTRY_TYPES, EntryType } from './types.ts'
 import type {
-  DashboardAuthorize,
   CaptureMode,
+  DashboardAuthorize,
   FilterHook,
+  KeepAlwaysHook,
   LogLevelName,
   PeriscopeConfig,
   ResolvedPeriscopeConfig,
@@ -95,6 +96,8 @@ const DEFAULT_ENABLED_IN: readonly string[] = ['development', 'test']
 const DEFAULT_MAX_ENTRIES = 10_000
 const DEFAULT_AMBIENT_ROTATION_MS = 10_000
 const DEFAULT_PAUSED_FLAG_TTL_MS = 5_000
+const DEFAULT_SAMPLE_RATE = 1
+export const DEFAULT_KEEP_ALWAYS: KeepAlwaysHook = () => false
 
 /**
  * Per-batch cap applied to every entry type without one of its own. Queries get a higher one:
@@ -270,6 +273,19 @@ function readInteger(
 
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum) {
     issues.push(`${path}: must be an integer >= ${minimum}; got ${describe(value)}`)
+    return undefined
+  }
+
+  return value
+}
+
+function readFraction(path: string, value: unknown, issues: string[]): number | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+    issues.push(`${path}: must be a finite number between 0 and 1; got ${describe(value)}`)
     return undefined
   }
 
@@ -648,10 +664,16 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
   const recording = readBlock(
     input,
     'recording',
-    ['caps', 'ambientRotationMs', 'pausedFlagTtlMs'],
+    ['caps', 'sampleRate', 'keepAlways', 'ambientRotationMs', 'pausedFlagTtlMs'],
     issues
   )
   const caps = resolveCaps(recording.caps, issues)
+  const sampleRate = readFraction('recording.sampleRate', recording.sampleRate, issues)
+  const keepAlways = readFunction<KeepAlwaysHook>(
+    'recording.keepAlways',
+    recording.keepAlways,
+    issues
+  )
   const ambientRotationMs = readInteger(
     'recording.ambientRotationMs',
     recording.ambientRotationMs,
@@ -723,6 +745,8 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
     storage: resolvedStorage,
     recording: {
       caps,
+      sampleRate: sampleRate ?? DEFAULT_SAMPLE_RATE,
+      keepAlways: keepAlways ?? DEFAULT_KEEP_ALWAYS,
       ambientRotationMs: ambientRotationMs ?? DEFAULT_AMBIENT_ROTATION_MS,
       pausedFlagTtlMs: pausedFlagTtlMs ?? DEFAULT_PAUSED_FLAG_TTL_MS,
     },

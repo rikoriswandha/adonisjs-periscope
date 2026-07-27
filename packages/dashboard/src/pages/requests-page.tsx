@@ -6,6 +6,7 @@ import { DurationBadge } from '@/components/duration-badge'
 import { EntryIndexTable, type EntryColumn } from '@/components/entry-index-table'
 import { RequestActivityChart } from '@/components/request-activity-chart'
 import { StatusBadge } from '@/components/status-badge'
+import { TagChip } from '@/components/tag-chip'
 import { Badge } from '@/components/ui/badge'
 import { useDashboard } from '@/dashboard-context'
 import { useCursorPagination } from '@/hooks/use-cursor-pagination'
@@ -72,7 +73,9 @@ const columns: EntryColumn[] = [
     key: 'open',
     header: '',
     className: 'w-10 text-right',
-    cell: () => <ArrowUpRight aria-hidden="true" className="ms-auto size-4 text-muted-foreground" />,
+    cell: () => (
+      <ArrowUpRight aria-hidden="true" className="ms-auto size-4 text-muted-foreground" />
+    ),
   },
 ]
 
@@ -87,12 +90,7 @@ export function RequestsPage() {
   )
   const pagination = useCursorPagination(filters)
   const reload = pagination.reload
-  const polling = useNewEntryPolling(
-    pagination.entries,
-    filters,
-    status?.paused ?? true,
-    revision
-  )
+  const polling = useNewEntryPolling(pagination.entries, filters, status?.paused ?? true, revision)
 
   useEffect(() => {
     if (revision > 0) void reload()
@@ -110,10 +108,10 @@ export function RequestsPage() {
           </p>
         </div>
         {tag && (
-          <Badge variant="info">
-            <Route aria-hidden="true" />
-            tag:{tag}
-          </Badge>
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Route aria-hidden="true" className="size-3.5" />
+            <TagChip tag={tag} />
+          </span>
         )}
       </section>
 
@@ -137,7 +135,9 @@ export function RequestsPage() {
         onLoadMore={() => void pagination.loadMore()}
         onRetry={() => void pagination.reload()}
         onRowOpen={(entry) =>
-          navigate(`/requests/${encodeURIComponent(entry.batchId)}${tag ? `?tag=${encodeURIComponent(tag)}` : ''}`)
+          navigate(
+            `/requests/${encodeURIComponent(entry.batchId)}${tag ? `?tag=${encodeURIComponent(tag)}` : ''}`
+          )
         }
         rowLabel={(entry) => {
           const content = requestContent(entry)

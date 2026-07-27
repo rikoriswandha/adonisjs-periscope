@@ -58,6 +58,18 @@ export type DashboardStatus = {
 
 export type EntryCounts = Partial<Record<EntryType, number>>
 
+export type FlushedIndexRow = Omit<StoredEntry, 'content' | 'shouldDisplayOnIndex'> & {
+  shouldDisplayOnIndex: true
+}
+
+export type FlushStreamEvent = {
+  type: EntryType
+  uuid: string
+  indexRow: FlushedIndexRow
+}
+
+export type LiveUpdateMode = 'connecting' | 'live' | 'polling' | 'off'
+
 export type ExceptionGroup = {
   familyHash: string
   latest: StoredEntry

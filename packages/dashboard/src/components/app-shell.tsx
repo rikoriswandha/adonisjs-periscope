@@ -1,26 +1,23 @@
-import {
-  Box,
-  Braces,
-  Bug,
-  CirclePause,
-  Database,
-  DatabaseZap,
-  Gauge,
-  Globe2,
-  Mail,
-  Search,
-  ShieldCheck,
-  SquareTerminal,
-  Trash2,
-  TriangleAlert,
-} from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { Bug, CirclePause, Database, Gauge, Search, Trash2, TriangleAlert } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { FormEvent } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 
 import { DashboardContext } from '@/dashboard-context'
 import { usePolling } from '@/hooks/use-polling'
 import { api } from '@/lib/api'
-import type { DashboardStatus, EntryCounts } from '@/types'
+import { globalSearchTarget } from '@/lib/global-search'
+import { liveUpdateLabel, parseFlushStreamEvent } from '@/lib/live-updates'
+import { normalizeMonitoredTags, setMonitoredTag } from '@/lib/monitored-tags'
+import type {
+  DashboardStatus,
+  EntryCounts,
+  EntryType,
+  FlushStreamEvent,
+  LiveUpdateMode,
+} from '@/types'
+import { wave2EntryTypes } from '@/wave2-entry-types'
 import {
   AlertDialog,
   AlertDialogClose,
@@ -36,7 +33,14 @@ import { Button } from '@/components/ui/button'
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group'
 import { Switch } from '@/components/ui/switch'
 
-const navigationGroups = [
+type NavigationItem = {
+  to: string
+  label: string
+  type: EntryType
+  icon: LucideIcon
+}
+
+const navigationGroups: { label: string; items: NavigationItem[] }[] = [
   {
     label: 'Core',
     items: [
@@ -45,49 +49,86 @@ const navigationGroups = [
       { to: '/exceptions', label: 'Exceptions', type: 'exception', icon: Bug },
     ],
   },
-  {
-    label: 'Application',
-    items: [
-      { to: '/commands', label: 'Commands', type: 'command', icon: SquareTerminal },
-      { to: '/mail', label: 'Mail', type: 'mail', icon: Mail },
-      { to: '/cache', label: 'Cache', type: 'cache', icon: DatabaseZap },
-      { to: '/models', label: 'Models', type: 'model', icon: Box },
-      { to: '/gates', label: 'Gates', type: 'gate', icon: ShieldCheck },
-    ],
-  },
-  {
-    label: 'Diagnostics',
-    items: [
-      { to: '/dumps', label: 'Dumps', type: 'dump', icon: Braces },
-      { to: '/http-client', label: 'HTTP client', type: 'http_client', icon: Globe2 },
-    ],
-  },
-] as const
+  ...(['Application', 'Diagnostics'] as const).map((label) => ({
+    label,
+    items: wave2EntryTypes
+      .filter((registration) => registration.group === label)
+      .map((registration) => ({
+        to: `/${registration.path}`,
+        label: registration.label,
+        type: registration.type,
+        icon: registration.icon,
+      })),
+  })),
+]
 
 const titleByPath: Record<string, string> = {
-  'requests': 'Requests',
-  'queries': 'Queries',
-  'exceptions': 'Exceptions',
-  'commands': 'Commands',
-  'mail': 'Mail',
-  'cache': 'Cache',
-  'models': 'Models',
-  'gates': 'Gates',
-  'dumps': 'Dumps',
-  'http-client': 'HTTP client',
+  requests: 'Requests',
+  queries: 'Queries',
+  exceptions: 'Exceptions',
+  search: 'Search',
+  ...Object.fromEntries(
+    wave2EntryTypes.map((registration) => [registration.path, registration.label])
+  ),
 }
 
 export function AppShell() {
   const navigate = useNavigate()
   const location = useLocation()
-  const [searchParams, setSearchParams] = useSearchParams()
+  const [searchParams] = useSearchParams()
   const [status, setStatus] = useState<DashboardStatus | null>(null)
   const [counts, setCounts] = useState<EntryCounts>({})
   const [statusError, setStatusError] = useState<Error | null>(null)
   const [mutating, setMutating] = useState(false)
   const [revision, setRevision] = useState(0)
+  const [liveUpdateMode, setLiveUpdateMode] = useState<LiveUpdateMode>('off')
+  const [flushEvent, setFlushEvent] = useState<FlushStreamEvent | null>(null)
+  const [flushRevision, setFlushRevision] = useState(0)
+  const [monitoredTags, setMonitoredTags] = useState<string[]>([])
+  const [monitoringTags, setMonitoringTags] = useState<string[]>([])
+  const [monitoredTagsReady, setMonitoredTagsReady] = useState(false)
   const refreshGenerationRef = useRef(0)
+  const monitoredTagsRef = useRef<string[]>([])
+  const monitoredTagMutationGenerationRef = useRef(0)
+  const monitoredTagMutationsRef = useRef(new Set<string>())
+  const monitoredTagsRequestRef = useRef<AbortController | null>(null)
+  const commitMonitoredTags = useCallback((update: (current: string[]) => string[]) => {
+    const next = update(monitoredTagsRef.current)
+    monitoredTagsRef.current = next
+    setMonitoredTags(next)
+  }, [])
   const activeNavigationRef = useRef<HTMLAnchorElement>(null)
+
+  const refreshMonitoredTags = useCallback(async () => {
+    if (monitoredTagMutationsRef.current.size > 0) return
+
+    const generation = monitoredTagMutationGenerationRef.current
+    const controller = new AbortController()
+    monitoredTagsRequestRef.current = controller
+    try {
+      const tags = await api.getMonitoredTags(controller.signal)
+      if (
+        controller.signal.aborted ||
+        generation !== monitoredTagMutationGenerationRef.current ||
+        monitoredTagMutationsRef.current.size > 0
+      ) {
+        return
+      }
+      const next = normalizeMonitoredTags(tags)
+      monitoredTagsRef.current = next
+      setMonitoredTags(next)
+    } catch (cause) {
+      if (controller.signal.aborted || generation !== monitoredTagMutationGenerationRef.current) {
+        return
+      }
+      setStatusError(cause instanceof Error ? cause : new Error('Unable to load monitored tags'))
+    } finally {
+      if (monitoredTagsRequestRef.current === controller) {
+        monitoredTagsRequestRef.current = null
+      }
+      if (!controller.signal.aborted) setMonitoredTagsReady(true)
+    }
+  }, [])
 
   const refreshCounts = useCallback(async () => {
     const generation = refreshGenerationRef.current
@@ -120,6 +161,47 @@ export function AppShell() {
     enabled: status === null || (status.enabled && !status.paused),
     immediate: true,
   })
+
+  usePolling(refreshMonitoredTags, {
+    enabled: true,
+    immediate: true,
+  })
+
+  useEffect(
+    () => () => {
+      monitoredTagsRequestRef.current?.abort()
+    },
+    []
+  )
+
+  useEffect(() => {
+    if (!status?.enabled || status.paused) {
+      setLiveUpdateMode('off')
+      return
+    }
+    if (typeof EventSource === 'undefined') {
+      setLiveUpdateMode('polling')
+      return
+    }
+
+    setLiveUpdateMode('connecting')
+    const source = new EventSource(api.getStreamUrl())
+    source.onopen = () => setLiveUpdateMode('live')
+    source.onerror = () => setLiveUpdateMode('polling')
+    const receiveFlush = (event: Event) => {
+      const parsed = parseFlushStreamEvent((event as MessageEvent<string>).data)
+      if (!parsed) return
+      setFlushEvent(parsed)
+      setFlushRevision((value) => value + 1)
+    }
+    source.addEventListener('flush', receiveFlush)
+    return () => {
+      source.onopen = null
+      source.onerror = null
+      source.removeEventListener('flush', receiveFlush)
+      source.close()
+    }
+  }, [status?.enabled, status?.paused])
 
   const togglePaused = useCallback(
     async (paused: boolean) => {
@@ -156,6 +238,37 @@ export function AppShell() {
     }
   }, [mutating])
 
+  const toggleTagMonitoring = useCallback(
+    async (value: string) => {
+      const tag = value.trim()
+      if (!tag || monitoredTagMutationsRef.current.has(tag)) return
+
+      const monitored = monitoredTagsRef.current.includes(tag)
+      monitoredTagMutationsRef.current.add(tag)
+      monitoredTagMutationGenerationRef.current += 1
+      monitoredTagsRequestRef.current?.abort()
+      setMonitoringTags((current) => [...current, tag])
+      setStatusError(null)
+      commitMonitoredTags((current) => setMonitoredTag(current, tag, !monitored))
+
+      try {
+        if (monitored) await api.unmonitorTag(tag)
+        else await api.monitorTag(tag)
+      } catch (cause) {
+        commitMonitoredTags((current) => setMonitoredTag(current, tag, monitored))
+        setStatusError(
+          cause instanceof Error
+            ? cause
+            : new Error(monitored ? 'Unable to stop monitoring tag' : 'Unable to monitor tag')
+        )
+      } finally {
+        monitoredTagMutationsRef.current.delete(tag)
+        setMonitoringTags((current) => current.filter((item) => item !== tag))
+      }
+    },
+    [commitMonitoredTags]
+  )
+
   const contextValue = useMemo(
     () => ({
       status,
@@ -163,27 +276,45 @@ export function AppShell() {
       statusError,
       mutating,
       revision,
+      liveUpdateMode,
+      flushEvent,
+      flushRevision,
+      monitoredTags,
+      monitoringTags,
+      monitoredTagsReady,
       togglePaused,
       clearEntries,
       refreshCounts,
+      toggleTagMonitoring,
     }),
-    [clearEntries, counts, mutating, refreshCounts, revision, status, statusError, togglePaused]
+    [
+      clearEntries,
+      counts,
+      flushEvent,
+      flushRevision,
+      liveUpdateMode,
+      monitoredTags,
+      monitoringTags,
+      monitoredTagsReady,
+      mutating,
+      refreshCounts,
+      revision,
+      status,
+      statusError,
+      togglePaused,
+      toggleTagMonitoring,
+    ]
   )
 
   const submitSearch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const next = new URLSearchParams(searchParams)
     const form = new FormData(event.currentTarget)
-    const tag = String(form.get('tag') ?? '').trim()
-    if (tag) next.set('tag', tag)
-    else next.delete('tag')
-    const target = `/${pageSegment}${next.size ? `?${next.toString()}` : ''}`
-    if (location.pathname === `/${pageSegment}`) setSearchParams(next, { replace: true })
-    else navigate(target, { replace: true })
+    navigate(globalSearchTarget(String(form.get('tag') ?? '')))
   }
 
   const pageSegment = location.pathname.split('/').filter(Boolean)[0] ?? 'requests'
   const pageTitle = titleByPath[pageSegment] ?? 'Periscope'
+  const searchTag = pageSegment === 'search' ? (searchParams.get('tag') ?? '') : ''
 
   useEffect(() => {
     activeNavigationRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
@@ -201,14 +332,30 @@ export function AppShell() {
               <div className="text-sm font-semibold tracking-tight">Periscope</div>
               <div className="text-2xs text-muted-foreground">Runtime recorder</div>
             </div>
-            <Badge className="ms-auto" size="sm" variant={status?.paused ? 'warning' : 'secondary'}>
-              {!status
-                ? 'checking'
-                : status.paused
-                  ? 'paused'
-                  : status.enabled
-                    ? 'live'
-                    : 'offline'}
+            <Badge
+              aria-live="polite"
+              className="ms-auto"
+              role="status"
+              size="sm"
+              variant={
+                liveUpdateMode === 'live'
+                  ? 'success'
+                  : liveUpdateMode === 'polling'
+                    ? 'warning'
+                    : 'secondary'
+              }
+            >
+              <span
+                aria-hidden="true"
+                className={`size-1.5 rounded-full ${
+                  liveUpdateMode === 'live'
+                    ? 'bg-success'
+                    : liveUpdateMode === 'polling'
+                      ? 'bg-warning'
+                      : 'bg-muted-foreground'
+                }`}
+              />
+              {status ? liveUpdateLabel(liveUpdateMode, status.enabled) : 'Checking updates'}
             </Badge>
           </div>
 
@@ -241,7 +388,7 @@ export function AppShell() {
                       }
                       key={item.to}
                       ref={isCurrent ? activeNavigationRef : undefined}
-                      to={`${item.to}${searchParams.get('tag') ? `?tag=${encodeURIComponent(searchParams.get('tag')!)}` : ''}`}
+                      to={item.to}
                     >
                       <Icon aria-hidden="true" className="size-4" />
                       <span>{item.label}</span>
@@ -274,11 +421,11 @@ export function AppShell() {
               >
                 <InputGroup>
                   <InputGroupInput
-                    aria-label="Filter by exact tag"
-                    defaultValue={searchParams.get('tag') ?? ''}
-                    key={searchParams.get('tag') ?? ''}
+                    aria-label="Search all entries by exact tag"
+                    defaultValue={searchTag}
+                    key={searchTag}
                     name="tag"
-                    placeholder="Exact tag, e.g. status:500"
+                    placeholder="Search exact tag, e.g. Auth:42"
                     type="search"
                   />
                   <InputGroupAddon>

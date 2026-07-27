@@ -34,7 +34,7 @@ export { BatchScope } from './recorder/context.ts'
 export { AmbientBatch } from './recorder/ambient.ts'
 export type { AmbientBatchOptions } from './recorder/ambient.ts'
 export { Recorder } from './recorder/recorder.ts'
-export type { RecorderOptions } from './recorder/recorder.ts'
+export type { FlushMode, RecorderOptions } from './recorder/recorder.ts'
 export { Redactor } from './recorder/redactor.ts'
 export { nextSequence } from './recorder/sequence.ts'
 export { SERIALIZER_DEFAULTS, safeSerialize } from './recorder/serializer.ts'
@@ -118,8 +118,10 @@ export type { HttpClientEntryContent } from './watchers/http_client/types.ts'
 export { ENTRY_TYPES, EntryType, Flag, WATCHER_NAMES, WatcherName } from './types.ts'
 export type {
   BatchContext,
+  BatchEntryView,
   BatchKind,
   CaptureMode,
+  BatchView,
   DashboardAuthorize,
   DashboardConfig,
   EntryCapsConfig,
@@ -129,8 +131,12 @@ export type {
   ExceptionGroupQuery,
   EntryTypeCounts,
   FilterHook,
+  FlushedEvent,
+  FlushedIndexRow,
+  FlushedListener,
   FlagOptions,
   LogLevelName,
+  KeepAlwaysHook,
   Paginated,
   PeriscopeConfig,
   PeriscopeStore,

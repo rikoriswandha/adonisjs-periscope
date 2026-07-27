@@ -508,10 +508,11 @@ export class HttpClientWatcher implements Watcher {
     })
 
     /**
-     * An outbound response may finish after its originating request batch was drained. Flushing
-     * the captured context is safe even when the host request is still active: Recorder drains
-     * synchronously and concurrent/empty flushes neither duplicate nor lose entries.
+     * An outbound response may finish while its originating request is still active or after an
+     * earlier fragment streamed. Marking this boundary intermediate preserves sampled-in
+     * streaming while an undecided sampled-out context defers the entry to its request's final
+     * retention decision.
      */
-    void this.#context.recorder.flush(state.context)
+    void this.#context.recorder.flush(state.context, 'intermediate')
   }
 }

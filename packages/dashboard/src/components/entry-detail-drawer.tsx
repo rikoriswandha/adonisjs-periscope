@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
 
+import { EntryTagChips } from '@/components/tag-chip'
+
 import {
   Sheet,
   SheetDescription,
@@ -15,6 +17,7 @@ export function EntryDetailDrawer({
   title,
   description,
   meta,
+  tags,
   children,
 }: {
   open: boolean
@@ -22,6 +25,7 @@ export function EntryDetailDrawer({
   title: string
   description: string
   meta?: ReactNode
+  tags?: readonly string[]
   children: ReactNode
 }) {
   return (
@@ -34,7 +38,10 @@ export function EntryDetailDrawer({
           </div>
           {meta && <div className="flex flex-wrap items-center gap-2">{meta}</div>}
         </SheetHeader>
-        <SheetPanel className="space-y-5">{children}</SheetPanel>
+        <SheetPanel className="space-y-5">
+          {tags && <EntryTagChips tags={tags} />}
+          {children}
+        </SheetPanel>
       </SheetPopup>
     </Sheet>
   )

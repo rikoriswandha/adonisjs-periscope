@@ -748,7 +748,11 @@ function printChecklist(
   }
 
   command.logger.log(
-    "[ ] Optional: register periscopeDoctor() from 'periscope/hooks' in adonisrc.ts hooks.init (the hook is reserved for future doctor checks)"
+    '[ ] Set debug: true on every Lucid connection whose application queries Periscope should record'
+  )
+
+  command.logger.log(
+    "[ ] Optional: register periscopeDoctor() from 'periscope/hooks' in adonisrc.ts hooks.init to check Node, migrations, Lucid debug, dashboard routes, and middleware ordering"
   )
 }
 

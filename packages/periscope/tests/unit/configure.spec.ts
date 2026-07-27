@@ -179,6 +179,15 @@ test.group('Configure', () => {
     assert.isTrue(
       first.ui.logger.getLogs().some((log) => log.message.includes('--- app/exceptions/handler.ts'))
     )
+    assert.isTrue(
+      first.ui.logger
+        .getLogs()
+        .some((log) =>
+          log.message.includes(
+            'debug: true on every Lucid connection whose application queries Periscope should record'
+          )
+        )
+    )
 
     const second = await makeCommand(fs, { storageAnswer: 'database', confirmException: false })
     await configure(second.command)

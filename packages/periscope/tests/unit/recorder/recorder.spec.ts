@@ -5,11 +5,17 @@
  * file that was distributed with this source code.
  */
 
+import { runInNewContext } from 'node:vm'
+
 import { test } from '@japa/runner'
 
 import { IncomingEntry } from '../../../src/entry.ts'
 import { BatchScope } from '../../../src/recorder/context.ts'
-import { Recorder, TRIM_EVERY_FLUSHES } from '../../../src/recorder/recorder.ts'
+import {
+  MONITORED_TAGS_CACHE_TTL_MS,
+  Recorder,
+  TRIM_EVERY_FLUSHES,
+} from '../../../src/recorder/recorder.ts'
 import { DEFAULT_REDACT_HEADERS, DEFAULT_REDACT_KEYS } from '../../../src/recorder/redactor.ts'
 import { setInternalLogger } from '../../../src/safeguard.ts'
 import { ENTRY_TYPES, EntryType, Flag } from '../../../src/types.ts'
@@ -17,6 +23,8 @@ import type {
   ExceptionGroup,
   EntryContent,
   EntryTypeCounts,
+  FlushedEvent,
+  KeepAlwaysHook,
   FilterHook,
   Paginated,
   PeriscopeStore,
@@ -46,11 +54,14 @@ class FakeStore implements PeriscopeStore {
   readonly trims: number[] = []
 
   readonly #flags = new Map<string, string>()
+  readonly monitored = new Set<string>()
 
   getFlagCalls = 0
+  monitoredTagsCalls = 0
   saveFailure: Error | null = null
   trimFailure: Error | null = null
   getFlagFailure: Error | null = null
+  monitoredTagsFailure: Error | null = null
 
   /**
    * Runs at the top of `save()`. Lets a test observe the world *during* a store write — which is
@@ -64,6 +75,12 @@ class FakeStore implements PeriscopeStore {
    * happens under.
    */
   onGetFlag: (() => void) | null = null
+
+  /**
+   * Runs during the monitored-tag read so sampling tests can reproduce a fragment arriving while
+   * the final decision is awaiting storage.
+   */
+  onMonitoredTags: (() => void) | null = null
 
   /**
    * Runs at the top of `trim()`, so a test can inspect the batch context the maintenance delete
@@ -120,12 +137,23 @@ class FakeStore implements PeriscopeStore {
   async clear(): Promise<void> {}
 
   async monitoredTags(): Promise<string[]> {
-    return []
+    this.onMonitoredTags?.()
+    this.monitoredTagsCalls++
+
+    if (this.monitoredTagsFailure !== null) {
+      throw this.monitoredTagsFailure
+    }
+
+    return [...this.monitored]
   }
 
-  async monitorTag(): Promise<void> {}
+  async monitorTag(tag: string): Promise<void> {
+    this.monitored.add(tag)
+  }
 
-  async unmonitorTag(): Promise<void> {}
+  async unmonitorTag(tag: string): Promise<void> {
+    this.monitored.delete(tag)
+  }
 
   async getFlag(name: string): Promise<string | null> {
     this.onGetFlag?.()
@@ -163,6 +191,8 @@ class FakeStore implements PeriscopeStore {
 type ConfigOverrides = {
   enabled?: boolean
   caps?: Partial<Record<EntryType, number>>
+  sampleRate?: number
+  keepAlways?: KeepAlwaysHook
   ambientRotationMs?: number
   pausedFlagTtlMs?: number
   filter?: FilterHook[]
@@ -196,6 +226,8 @@ function makeConfig(overrides: ConfigOverrides = {}): ResolvedPeriscopeConfig {
     storage: { driver: 'memory', maxEntries: 10_000 },
     recording: {
       caps,
+      sampleRate: overrides.sampleRate ?? 1,
+      keepAlways: overrides.keepAlways ?? (() => false),
       ambientRotationMs: overrides.ambientRotationMs ?? 10_000,
       pausedFlagTtlMs: overrides.pausedFlagTtlMs ?? 5_000,
     },
@@ -929,6 +961,372 @@ test.group('Recorder | flush', (group) => {
       url: '/checkout',
       truncated: { query: 1 },
     })
+  })
+})
+
+test.group('Recorder | sampling and flush subscriptions', (group) => {
+  group.each.teardown(() => {
+    setInternalLogger(null)
+  })
+
+  test('decide sampling on every context creation path and retain it while muted', ({ assert }) => {
+    const sampledOut = new Recorder({
+      config: makeConfig({ sampleRate: 0 }),
+      store: new FakeStore(),
+    })
+
+    assert.isFalse(BatchScope.createContext('request').sampled)
+    assert.isFalse(BatchScope.run('command', () => BatchScope.current()!.sampled))
+    assert.isFalse(sampledOut.captureContext().sampled)
+    assert.isFalse(sampledOut.mute(() => BatchScope.current()!.sampled))
+
+    new Recorder({ config: makeConfig({ sampleRate: 1 }), store: new FakeStore() })
+    assert.isTrue(BatchScope.createContext('request').sampled)
+  })
+
+  test('drop a sampled-out batch before persistence', async ({ assert }) => {
+    const store = new FakeStore()
+    const recorder = new Recorder({ config: makeConfig({ sampleRate: 0 }), store })
+    const context = BatchScope.createContext('request')
+
+    BatchScope.runWith(context, () => {
+      recorder.record(IncomingEntry.make(EntryType.REQUEST, { path: '/sampled-out' }))
+    })
+
+    await recorder.flush(context)
+
+    assert.lengthOf(store.saves, 0)
+    assert.equal(store.monitoredTagsCalls, 1)
+  })
+
+  test('defer sampled-out fragments until final and persist a keepAlways override', async ({
+    assert,
+  }) => {
+    const store = new FakeStore()
+    let keepAlwaysCalls = 0
+    const recorder = new Recorder({
+      config: makeConfig({
+        sampleRate: 0,
+        keepAlways: (batch) => {
+          keepAlwaysCalls++
+          return batch.hasTag('keep')
+        },
+      }),
+      store,
+    })
+    const context = BatchScope.createContext('request')
+
+    BatchScope.runWith(context, () => {
+      recorder.record(IncomingEntry.make(EntryType.QUERY, { fragment: 'first' }))
+    })
+    await recorder.flush(context, 'intermediate')
+
+    assert.lengthOf(store.saves, 0)
+    assert.lengthOf(context.buffer, 1)
+    assert.equal(keepAlwaysCalls, 0)
+
+    BatchScope.runWith(context, () => {
+      recorder.record(
+        IncomingEntry.make(EntryType.REQUEST, { fragment: 'deciding' }).withTags('keep')
+      )
+    })
+    await recorder.flush(context, 'final')
+
+    assert.deepEqual(
+      store.saves[0].map((entry) => entry.content.fragment),
+      ['first', 'deciding']
+    )
+    assert.equal(context.retention, 'kept')
+    assert.equal(keepAlwaysCalls, 1)
+
+    BatchScope.runWith(context, () => {
+      recorder.record(IncomingEntry.make(EntryType.LOG, { fragment: 'late' }))
+    })
+    await recorder.flush(context, 'intermediate')
+
+    assert.equal(store.saves[1][0].content.fragment, 'late')
+    assert.equal(keepAlwaysCalls, 1, 'later fragments reuse the successful decision')
+    assert.equal(store.monitoredTagsCalls, 0)
+  })
+
+  test('apply a monitored tag across either sampled-out fragment order', async ({ assert }) => {
+    const store = new FakeStore()
+    store.monitored.add('tenant:42')
+    const recorder = new Recorder({ config: makeConfig({ sampleRate: 0 }), store })
+
+    for (const monitoredFragment of ['first', 'second'] as const) {
+      const context = BatchScope.createContext('request')
+
+      BatchScope.runWith(context, () => {
+        const entry = IncomingEntry.make(EntryType.REQUEST, { fragment: 'first' })
+        recorder.record(monitoredFragment === 'first' ? entry.withTags('tenant:42') : entry)
+      })
+      await recorder.flush(context, 'intermediate')
+
+      BatchScope.runWith(context, () => {
+        const entry = IncomingEntry.make(EntryType.QUERY, { fragment: 'second' })
+        recorder.record(monitoredFragment === 'second' ? entry.withTags('tenant:42') : entry)
+      })
+      await recorder.flush(context, 'final')
+
+      assert.deepEqual(
+        store.saves.at(-1)!.map((entry) => entry.content.fragment),
+        ['first', 'second']
+      )
+      assert.equal(context.retention, 'kept')
+    }
+
+    assert.lengthOf(store.saves, 2)
+    assert.equal(store.monitoredTagsCalls, 1)
+  })
+
+  test('include entries recorded while the final retention decision is in flight', async ({
+    assert,
+  }) => {
+    const store = new FakeStore()
+    const recorder = new Recorder({
+      config: makeConfig({
+        sampleRate: 0,
+        keepAlways: (batch) => batch.hasTag('keep'),
+      }),
+      store,
+    })
+    const context = BatchScope.createContext('request')
+
+    BatchScope.runWith(context, () => {
+      recorder.record(IncomingEntry.make(EntryType.REQUEST, { fragment: 'first' }))
+    })
+    store.onMonitoredTags = () => {
+      BatchScope.runWith(context, () => {
+        recorder.record(
+          IncomingEntry.make(EntryType.QUERY, { fragment: 'during-decision' }).withTags('keep')
+        )
+      })
+    }
+
+    await recorder.flush(context, 'final')
+
+    assert.equal(context.retention, 'kept')
+    assert.deepEqual(
+      store.saves[0].map((entry) => entry.content.fragment),
+      ['first', 'during-decision']
+    )
+    assert.lengthOf(context.buffer, 0)
+  })
+
+  test('clear deferred and later buffers after a final sampling drop', async ({ assert }) => {
+    const store = new FakeStore()
+    const recorder = new Recorder({ config: makeConfig({ sampleRate: 0 }), store })
+    const context = BatchScope.createContext('request')
+
+    BatchScope.runWith(context, () => {
+      recorder.record(IncomingEntry.make(EntryType.REQUEST, { fragment: 'deferred' }))
+    })
+    await recorder.flush(context, 'intermediate')
+    assert.lengthOf(context.buffer, 1)
+
+    store.onMonitoredTags = () => {
+      BatchScope.runWith(context, () => {
+        recorder.record(IncomingEntry.make(EntryType.QUERY, { fragment: 'during-decision' }))
+      })
+    }
+    await recorder.flush(context, 'final')
+
+    assert.equal(context.retention, 'dropped')
+    assert.lengthOf(context.buffer, 0)
+    assert.equal(store.monitoredTagsCalls, 1)
+
+    BatchScope.runWith(context, () => {
+      recorder.record(IncomingEntry.make(EntryType.QUERY, { fragment: 'late' }))
+    })
+    await recorder.flush(context, 'intermediate')
+
+    assert.lengthOf(context.buffer, 0)
+    assert.lengthOf(store.saves, 0)
+    assert.equal(store.monitoredTagsCalls, 1, 'the final drop is not reconsidered')
+  })
+
+  test('evaluate every BatchView predicate at flush and keep the whole batch', async ({
+    assert,
+  }) => {
+    const store = new FakeStore()
+    const observations: boolean[] = []
+    const recorder = new Recorder({
+      config: makeConfig({
+        sampleRate: 0,
+        keepAlways: (batch) => {
+          observations.push(
+            batch.kind === 'request',
+            batch.size === 2,
+            batch.hasEntryOfType(EntryType.EXCEPTION),
+            batch.hasTag('important'),
+            batch.hasEntryWhere((entry) => Number(entry.content.status) >= 500)
+          )
+          return observations.every(Boolean)
+        },
+      }),
+      store,
+    })
+    const context = BatchScope.createContext('request')
+
+    BatchScope.runWith(context, () => {
+      recorder.record(
+        IncomingEntry.make(EntryType.EXCEPTION, { message: 'failure' }).hiddenFromIndex()
+      )
+      recorder.record(IncomingEntry.make(EntryType.REQUEST, { status: 503 }).withTags('important'))
+    })
+
+    await recorder.flush(context)
+
+    assert.deepEqual(observations, [true, true, true, true, true])
+    assert.lengthOf(store.saves, 1)
+    assert.equal(store.monitoredTagsCalls, 0, 'keepAlways avoids a needless monitored-tag read')
+  })
+
+  test('expire monitored tags by monotonic time despite wall-clock rollback', async ({
+    assert,
+  }) => {
+    const originalHrtime = process.hrtime.bigint
+    const originalNow = Date.now
+    let monotonic = 1_000_000_000n
+    let wallClock = 10_000
+    Object.defineProperty(process.hrtime, 'bigint', { value: () => monotonic })
+    Date.now = () => wallClock
+
+    try {
+      const store = new FakeStore()
+      store.monitored.add('tenant:42')
+      const recorder = new Recorder({ config: makeConfig({ sampleRate: 0 }), store })
+
+      const flushTaggedBatch = async () => {
+        const context = BatchScope.createContext('request')
+        BatchScope.runWith(context, () => {
+          recorder.record(IncomingEntry.make(EntryType.REQUEST).withTags('tenant:42'))
+        })
+        await recorder.flush(context)
+      }
+
+      await flushTaggedBatch()
+      store.monitored.clear()
+      wallClock -= 60_000
+      monotonic += BigInt(MONITORED_TAGS_CACHE_TTL_MS - 1) * 1_000_000n
+      await flushTaggedBatch()
+
+      assert.lengthOf(store.saves, 2)
+      assert.equal(store.monitoredTagsCalls, 1)
+
+      wallClock -= 60_000
+      monotonic += 2_000_000n
+      await flushTaggedBatch()
+
+      assert.lengthOf(store.saves, 2, 'the refreshed empty set no longer bypasses sampling')
+      assert.equal(store.monitoredTagsCalls, 2)
+    } finally {
+      Object.defineProperty(process.hrtime, 'bigint', { value: originalHrtime })
+      Date.now = originalNow
+    }
+  })
+
+  test('fail open when monitored-tag state cannot be read', async ({ assert }) => {
+    const store = new FakeStore()
+    store.monitoredTagsFailure = new Error('tags unavailable')
+    const recorder = new Recorder({ config: makeConfig({ sampleRate: 0 }), store })
+    const context = BatchScope.createContext('request')
+
+    BatchScope.runWith(context, () => {
+      recorder.record(IncomingEntry.make(EntryType.REQUEST).withTags('possibly-monitored'))
+    })
+
+    await recorder.flush(context)
+
+    assert.lengthOf(store.saves, 1)
+  })
+
+  test('publish frozen content-free rows only after save and unsubscribe idempotently', async ({
+    assert,
+  }) => {
+    const store = new FakeStore()
+    const recorder = new Recorder({ config: makeConfig(), store })
+    const events: FlushedEvent[] = []
+    store.onSave = () => assert.lengthOf(events, 0, 'notifications must follow persistence')
+    const unsubscribe = recorder.subscribeFlushed((event) => {
+      events.push(event)
+    })
+    const context = BatchScope.createContext('request')
+
+    BatchScope.runWith(context, () => {
+      recorder.record(
+        IncomingEntry.make(EntryType.REQUEST, { password: 'never-stream-this' }).withTags(
+          'status:200'
+        )
+      )
+      recorder.record(IncomingEntry.make(EntryType.QUERY, { sql: 'select 1' }).hiddenFromIndex())
+    })
+
+    await recorder.flush(context)
+
+    assert.lengthOf(events, 1)
+    assert.equal(events[0].type, EntryType.REQUEST)
+    assert.equal(events[0].uuid, events[0].indexRow.uuid)
+    assert.equal(events[0].indexRow.batchId, context.batchId)
+    assert.deepEqual(events[0].indexRow.tags, ['status:200'])
+    assert.isTrue(events[0].indexRow.shouldDisplayOnIndex)
+    assert.notProperty(events[0].indexRow, 'content')
+    assert.isTrue(Object.isFrozen(events[0]))
+    assert.isTrue(Object.isFrozen(events[0].indexRow))
+    assert.isTrue(Object.isFrozen(events[0].indexRow.tags))
+
+    unsubscribe()
+    unsubscribe()
+    await flushBatches(recorder, 1)
+    assert.lengthOf(events, 1)
+  })
+
+  test('isolate sync, async, and cross-realm subscribers and publish nothing on failure', async ({
+    assert,
+  }) => {
+    const store = new FakeStore()
+    const recorder = new Recorder({ config: makeConfig(), store })
+    const events: FlushedEvent[] = []
+    const labels: string[] = []
+    setInternalLogger((label) => labels.push(label))
+
+    recorder.subscribeFlushed(() => {
+      throw new Error('listener failed')
+    })
+    recorder.subscribeFlushed(async () => {
+      throw new Error('async listener failed')
+    })
+    recorder.subscribeFlushed(
+      () =>
+        runInNewContext("Promise.reject(new Error('cross-realm listener failed'))") as Promise<void>
+    )
+    recorder.subscribeFlushed((event) => {
+      events.push(event)
+    })
+
+    const successful = BatchScope.createContext('request')
+    BatchScope.runWith(successful, () => {
+      recorder.record(IncomingEntry.make(EntryType.REQUEST))
+    })
+    await recorder.flush(successful)
+    await tick()
+
+    assert.lengthOf(events, 1)
+    assert.deepEqual(labels, [
+      'periscope.recorder.flushed',
+      'periscope.recorder.flushed',
+      'periscope.recorder.flushed',
+    ])
+
+    store.saveFailure = new Error('store failed')
+    const failed = BatchScope.createContext('request')
+    BatchScope.runWith(failed, () => {
+      recorder.record(IncomingEntry.make(EntryType.REQUEST))
+    })
+    await recorder.flush(failed)
+
+    assert.lengthOf(events, 1)
   })
 })
 

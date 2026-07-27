@@ -14,7 +14,7 @@ import type { Redactor } from '../../recorder/redactor.ts'
 import { safeSerialize } from '../../recorder/serializer.ts'
 import { safeguard, safeguardAsync } from '../../safeguard.ts'
 import { EntryType, WatcherName } from '../../types.ts'
-import type { Watcher } from '../../types.ts'
+import type { BatchContext, Watcher } from '../../types.ts'
 import { getActiveWatcher, setActiveWatcher } from '../active.ts'
 import type { WatcherContext } from '../context.ts'
 import {
@@ -328,6 +328,21 @@ export class RequestWatcher implements Watcher {
   readonly #context: WatcherContext
   #unsubscribe: (() => void) | null = null
 
+  /**
+   * Whether the middleware that owns a request context is still running. The socket completion
+   * event may arrive first on an aborted request; in that case its flush is intermediate and the
+   * middleware performs the final sampling decision after downstream work settles.
+   */
+  readonly #openContexts = new WeakSet<BatchContext>()
+
+  /**
+   * Completion work already in flight for a context taken from the request map. An aborted
+   * request can leave the middleware at the same time as the completion listener is building the
+   * request entry; awaiting this barrier makes the final straggler flush observe either fragment
+   * order as one batch.
+   */
+  readonly #completionFlushes = new WeakMap<BatchContext, Promise<void>>()
+
   constructor(context: WatcherContext) {
     this.#context = context
   }
@@ -342,6 +357,13 @@ export class RequestWatcher implements Watcher {
 
             if (batch === undefined) {
               return
+            }
+
+            const intermediate = this.#openContexts.has(batch.context)
+            const completion = intermediate ? Promise.withResolvers<void>() : null
+
+            if (completion !== null) {
+              this.#completionFlushes.set(batch.context, completion.promise)
             }
 
             try {
@@ -366,12 +388,23 @@ export class RequestWatcher implements Watcher {
                 }
               })
             } finally {
-              /**
-               * A failed optional accessor or hostile application value must not strand entries
-               * already recorded inside this request. The batch owns one flush, even when its
-               * primary request entry could not be built.
-               */
-              await this.#context.recorder.flush(batch.context)
+              try {
+                /**
+                 * While the middleware remains open this is only a streaming boundary. A failed
+                 * optional accessor or hostile application value still cannot strand entries:
+                 * the middleware's final flush follows this one on aborts, while normally this
+                 * completion event is itself final.
+                 */
+                await this.#context.recorder.flush(
+                  batch.context,
+                  intermediate ? 'intermediate' : 'final'
+                )
+              } finally {
+                if (completion !== null) {
+                  completion.resolve()
+                  this.#completionFlushes.delete(batch.context)
+                }
+              }
             }
           })
       )
@@ -419,6 +452,7 @@ export class RequestWatcher implements Watcher {
           context: requestContext,
           startedHeapUsed: process.memoryUsage().heapUsed,
         })
+        this.#openContexts.add(requestContext)
 
         return requestContext
       },
@@ -467,17 +501,20 @@ export class RequestWatcher implements Watcher {
       safeguard('periscope.watcher.request.detach', () => takeRequestBatch(ctx))
       return next()
     } finally {
+      this.#openContexts.delete(context)
       if (nextStarted && findRequestBatch(ctx) === undefined) {
         /**
-         * Risk R1's straggler insert path covers client aborts, where the completion event can
-         * take and flush the batch while the handler is still running. The ALS context remains
-         * installed until `next()` settles, so work after that first flush accumulates in the
-         * same buffer. A second flush is needed only after ownership was already taken; in the
-         * normal response ordering this costs one WeakMap lookup and leaves the completion
-         * listener responsible for the batch's only flush.
+         * Risk R1's straggler path covers client aborts, where the completion event can take the
+         * batch while the handler is still running. Wait for that listener to finish recording
+         * and performing its intermediate flush before making the one final retention decision
+         * over both fragments.
          */
+        const completionFlush = this.#completionFlushes.get(context)
+        if (completionFlush !== undefined) {
+          await completionFlush
+        }
         await safeguardAsync('periscope.watcher.request.stragglers', () =>
-          this.#context.recorder.flush(context)
+          this.#context.recorder.flush(context, 'final')
         )
       }
     }

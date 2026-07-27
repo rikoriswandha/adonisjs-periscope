@@ -15,6 +15,7 @@ import { BatchScope } from '../../../src/recorder/context.ts'
 import { Recorder } from '../../../src/recorder/recorder.ts'
 import { MemoryStore } from '../../../src/storage/memory_store.ts'
 import { EntryType } from '../../../src/types.ts'
+import type { KeepAlwaysHook } from '../../../src/types.ts'
 import { HttpClientWatcher } from '../../../src/watchers/http_client/watcher.ts'
 import { createApp } from '../../helpers/app_factory.ts'
 
@@ -23,9 +24,15 @@ const headersChannel = channel('undici:request:headers')
 const trailersChannel = channel('undici:request:trailers')
 const errorChannel = channel('undici:request:error')
 
-async function makeWatcher(selfAddress?: { host: string; port: number }) {
+async function makeWatcher(
+  selfAddress?: { host: string; port: number },
+  recording: { sampleRate?: number; keepAlways?: KeepAlwaysHook } = {}
+) {
   const { app, emitter } = await createApp()
-  const config = defineConfig({ storage: { driver: 'memory' } })
+  const config = defineConfig({
+    recording,
+    storage: { driver: 'memory' },
+  })
   const store = new MemoryStore({ maxEntries: 100 })
   const recorder = new Recorder({ config, store })
   const context = { app, emitter, recorder, config, dev: true }
@@ -130,6 +137,37 @@ test.group('HttpClientWatcher', () => {
     })
     assert.deepEqual(entry.tags, ['method:POST', 'status:201'])
     assert.notProperty(entry.content, 'error')
+  })
+
+  test('defer a sampled-out response until its request context makes a final decision', async ({
+    assert,
+  }) => {
+    const { recorder, store } = await makeWatcher(undefined, {
+      sampleRate: 0,
+      keepAlways: (batch) => batch.hasEntryOfType(EntryType.HTTP_CLIENT),
+    })
+    const request = {
+      origin: 'https://api.example.test',
+      path: '/orders',
+      method: 'GET',
+    }
+    const source = BatchScope.createContext('request')
+
+    BatchScope.runWith(source, () => {
+      publishCompletedRequest(request)
+    })
+    await letFlushSettle()
+
+    const beforeFinal = await store.list()
+    assert.lengthOf(beforeFinal.data, 0)
+    assert.lengthOf(source.buffer, 1)
+
+    await recorder.flush(source, 'final')
+
+    const page = await store.list({ type: EntryType.HTTP_CLIENT })
+    assert.lengthOf(page.data, 1)
+    assert.equal(page.data[0].batchId, source.batchId)
+    assert.lengthOf(source.buffer, 0)
   })
 
   test('finalize an error exactly once and unsubscribe idempotently', async ({ assert }) => {

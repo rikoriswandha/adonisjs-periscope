@@ -1,8 +1,9 @@
 # Periscope
 
 Periscope is a Laravel-Telescope-style debug assistant for AdonisJS v7. It records what an
-application actually did — HTTP requests, database queries, exceptions, logs, events, mail, jobs —
-correlates each one into the batch that produced it, and serves the result from a local dashboard
+application actually did — HTTP requests, database queries, exceptions, logs, events, commands,
+mail, cache, model changes, authorization checks, dumps, and outbound HTTP calls — correlates each
+one into the batch that produced it, and serves the result from a local dashboard
 SPA mounted inside the app. It is a development and staging tool, not an APM: everything stays on
 the machine, and the package makes no outbound network calls.
 
@@ -36,34 +37,48 @@ Run from the repository root.
 
 ## Status
 
-**Phases 0–3 complete — the engine works, the dashboard does not exist yet.** See
-`docs/IMPLEMENTATION_PLAN.md` for the full plan.
+**Phases 0–7 complete.** The recorder, storage drivers, watcher set, dashboard API and SPA,
+installer, Ace commands, live stream, monitoring, sampling, and doctor hook run end to end. See
+`docs/IMPLEMENTATION_PLAN.md` for the remaining hardening and release work.
 
-What runs today, end to end in the playground:
+The dashboard provides dedicated request, query, and exception workflows plus registry-driven
+screens for command, mail, cache, model, gate, dump, and outbound HTTP entries. Live mode uses an
+authenticated server-sent event stream with polling fallback. Tag chips can be monitored so a
+matching batch survives sampling.
 
-- **Recorder** — batch correlation across async boundaries, per-type caps, deep redaction, filter
-  and tag hooks, a rotating ambient batch for everything outside a request.
-- **Storage** — `memory`, `sqlite-local` (the zero-config default) and `database` (your own Lucid
-  connection), all against one shared contract suite, with pruning and cap trimming.
-- **Watchers, wave 1** — request, query, exception, log and event. Hit a route and the batch holds
-  the request, its SQL, anything it logged at `warn` or above, the application events it emitted,
-  and the exception it threw, all sharing one batch id.
+The request middleware must remain **first** in `start/kernel.ts`'s `server.use([...])`; it opens
+the batch every other watcher records into. Queries additionally need `debug: true` on the Lucid
+connection so Lucid emits `db:query`. Add `periscopeDoctor()` to `adonisrc.ts` `hooks.init` to
+check both settings, migrations, dashboard route collisions, and the Node.js version during
+development.
 
-Not yet: the dashboard API and SPA (phase 4), `node ace add periscope` and the ace commands
-(phase 5), and the wave-2 watchers — command, mail, cache, model, gate, dump, http-client
-(phase 6).
+## Production sampling
 
-Two things an application has to do for wave 1 to see anything, both of which
-`node ace add periscope` will do for you once phase 5 lands:
+Production recording is opt-in. A useful baseline samples 1% of batches while always retaining
+exceptions, slow work, and 5xx responses:
 
-1. Register the request middleware **first** in `start/kernel.ts`'s `server.use([...])`. It opens
-   the batch every other watcher records into.
-2. Wrap the exception handler: `export default class HttpExceptionHandler extends
-withPeriscope(ExceptionHandler) {}`, importing `withPeriscope` from
-   `periscope/exception_reporter`.
+```ts
+import { defineConfig } from 'periscope/periscope_config'
 
-Queries additionally need `debug: true` on the Lucid connection — that flag is what makes Lucid
-emit the `db:query` event at all.
+export default defineConfig({
+  enabledIn: ['development', 'test', 'production'],
+  recording: {
+    sampleRate: 0.01,
+    keepAlways: (batch) =>
+      batch.hasEntryOfType('exception') ||
+      batch.hasTag('slow') ||
+      batch.hasEntryWhere(
+        (entry) =>
+          entry.type === 'request' &&
+          typeof entry.content.status === 'number' &&
+          entry.content.status >= 500
+      ),
+  },
+})
+```
+
+Monitoring a tag in the dashboard also retains every matching batch, independently of
+`sampleRate`. Recorded content remains local; Periscope makes no outbound network calls.
 
 ## License
 

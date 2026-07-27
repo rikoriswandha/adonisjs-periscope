@@ -25,6 +25,13 @@ import type { BatchContext, BatchKind } from '../types.ts'
 const storage = new AsyncLocalStorage<BatchContext>()
 
 /**
+ * Sampling is process-wide for the same reason the async batch store is: an application has one
+ * recorder singleton, while the request and command boundaries create contexts without carrying
+ * that singleton through every watcher.
+ */
+let sampleRate = 1
+
+/**
  * Entry point to the active batch.
  *
  * Everything Periscope records is attributed to exactly one {@link BatchContext}. Scopes are
@@ -32,11 +39,18 @@ const storage = new AsyncLocalStorage<BatchContext>()
  * queue worker, the test hooks — and everything recorded outside one of them belongs to the
  * rotating ambient batch instead (see `./ambient.ts`).
  *
- * The class is a namespace of statics on purpose: there is nothing to configure and nothing to
- * inject, and watchers must be able to reach the current batch from anywhere without being handed
- * a dependency.
+ * The class is a namespace of statics on purpose: watchers must be able to reach the current
+ * batch from anywhere without being handed a dependency. The recorder configures its one
+ * process-wide sampling rate at construction.
  */
 export class BatchScope {
+  /**
+   * Install the resolved sampling rate used by every subsequent context creation path.
+   */
+  static configureSampling(rate: number): void {
+    sampleRate = rate
+  }
+
   /**
    * Build a fresh, empty batch of `kind`.
    *
@@ -52,6 +66,8 @@ export class BatchScope {
       batchId: randomUUID(),
       kind,
       startedAt: process.hrtime.bigint(),
+      sampled: sampleRate >= 1 || (sampleRate > 0 && Math.random() < sampleRate),
+      retention: 'pending',
       buffer: [],
       counters: {},
       truncated: {},

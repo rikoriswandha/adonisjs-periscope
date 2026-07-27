@@ -12,7 +12,9 @@ import type { ResolvedPeriscopeConfig } from '../types.ts'
 import { DashboardController } from './controllers/dashboard_controller.ts'
 import { EntriesController } from './controllers/entries_controller.ts'
 import { ExceptionGroupsController } from './controllers/exception_groups_controller.ts'
+import { MonitoredTagsController } from './controllers/monitored_tags_controller.ts'
 import { StaticController } from './controllers/static_controller.ts'
+import { StreamController } from './controllers/stream_controller.ts'
 import { createDashboardAuthorize } from './middleware/authorize.ts'
 import type { DashboardEnvironment } from './middleware/authorize.ts'
 
@@ -33,6 +35,8 @@ export function registerDashboardRoutes(options: RegisterDashboardRoutesOptions)
   const entries = new EntriesController(recorder.store)
   const dashboard = new DashboardController(recorder.store, config, environment)
   const exceptionGroups = new ExceptionGroupsController(recorder.store)
+  const monitoredTags = new MonitoredTagsController(recorder.store)
+  const stream = new StreamController(recorder)
   const staticFiles = new StaticController({
     dashboardPath: config.dashboard.path,
     dashboardRoot: options.dashboardRoot,
@@ -50,6 +54,10 @@ export function registerDashboardRoutes(options: RegisterDashboardRoutesOptions)
     router.delete('/api/flags/:name', dashboard.deleteFlag.bind(dashboard))
     router.post('/api/clear', dashboard.clear.bind(dashboard))
     router.get('/api/exception-groups', exceptionGroups.index.bind(exceptionGroups))
+    router.route('/api/stream', ['GET'], stream.stream.bind(stream))
+    router.get('/api/monitored-tags', monitoredTags.index.bind(monitoredTags))
+    router.put('/api/monitored-tags/:tag', monitoredTags.set.bind(monitoredTags))
+    router.delete('/api/monitored-tags/:tag', monitoredTags.delete.bind(monitoredTags))
 
     router.any('/api', ({ response }) => response.notFound())
     router.any('/api/*', ({ response }) => response.notFound())

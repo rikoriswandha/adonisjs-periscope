@@ -9,6 +9,7 @@ import { test } from '@japa/runner'
 
 import {
   DEFAULT_DASHBOARD_AUTHORIZE,
+  DEFAULT_KEEP_ALWAYS,
   defineConfig,
   isRecordingEnabled,
 } from '../../src/define_config.ts'
@@ -49,6 +50,8 @@ const DEFAULTS: ResolvedPeriscopeConfig = {
       redis: 100,
       session: 100,
     },
+    sampleRate: 1,
+    keepAlways: DEFAULT_KEEP_ALWAYS,
     ambientRotationMs: 10_000,
     pausedFlagTtlMs: 5_000,
   },
@@ -273,6 +276,16 @@ test.group('defineConfig | merging', () => {
     assert.equal(config.storage.maxEntries, 10_000)
   })
 
+  test('merge sampling overrides without disturbing recording siblings', ({ assert }) => {
+    const keepAlways = () => true
+    const config = defineConfig({ recording: { sampleRate: 0.25, keepAlways } })
+
+    assert.equal(config.recording.sampleRate, 0.25)
+    assert.strictEqual(config.recording.keepAlways, keepAlways)
+    assert.equal(config.recording.ambientRotationMs, 10_000)
+    assert.equal(config.recording.pausedFlagTtlMs, 5_000)
+  })
+
   test('replace redaction arrays instead of concatenating them', ({ assert }) => {
     const config = defineConfig({ redact: { keys: ['internal_reference'] } })
 
@@ -476,6 +489,16 @@ test.group('defineConfig | validation', () => {
 
     assert.include(paths, 'serialization')
     assert.include(issues[0], 'unknown option')
+  })
+
+  test('reject sampling rates outside the inclusive zero-to-one range', ({ assert }) => {
+    for (const sampleRate of [-0.1, 1.1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assert.include(rejectionOf({ recording: { sampleRate } }).paths, 'recording.sampleRate')
+    }
+  })
+
+  test('reject a keepAlways value that is not a function', ({ assert }) => {
+    assert.include(rejectionOf({ recording: { keepAlways: true } }).paths, 'recording.keepAlways')
   })
 
   test('reject a hook that is not a function', ({ assert }) => {

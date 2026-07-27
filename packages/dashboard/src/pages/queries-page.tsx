@@ -7,6 +7,7 @@ import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
 import { EntryIndexTable, type EntryColumn } from '@/components/entry-index-table'
 import { JsonTree } from '@/components/json-tree'
 import { SqlBlock } from '@/components/sql-block'
+import { TagChip } from '@/components/tag-chip'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -68,10 +69,7 @@ const columns: EntryColumn[] = [
     header: 'Duration',
     className: 'w-28',
     cell: (entry) => (
-      <DurationBadge
-        slow={entry.tags.includes('slow')}
-        value={queryContent(entry).durationMs}
-      />
+      <DurationBadge slow={entry.tags.includes('slow')} value={queryContent(entry).durationMs} />
     ),
   },
   {
@@ -88,7 +86,9 @@ const columns: EntryColumn[] = [
     key: 'open',
     header: '',
     className: 'w-10 text-right',
-    cell: () => <ArrowUpRight aria-hidden="true" className="ms-auto size-4 text-muted-foreground" />,
+    cell: () => (
+      <ArrowUpRight aria-hidden="true" className="ms-auto size-4 text-muted-foreground" />
+    ),
   },
 ]
 
@@ -107,12 +107,7 @@ export function QueriesPage() {
   )
   const pagination = useCursorPagination(filters)
   const reload = pagination.reload
-  const polling = useNewEntryPolling(
-    pagination.entries,
-    filters,
-    status?.paused ?? true,
-    revision
-  )
+  const polling = useNewEntryPolling(pagination.entries, filters, status?.paused ?? true, revision)
   const visibleEntries = slowOnly
     ? pagination.entries.filter((entry) => entry.tags.includes('slow'))
     : pagination.entries
@@ -174,15 +169,16 @@ export function QueriesPage() {
         <div className="max-w-2xl">
           <h2 className="text-lg font-semibold tracking-tight">Database queries</h2>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            Inspect normalized query shapes, bindings, connection context, and repetition within a request.
+            Inspect normalized query shapes, bindings, connection context, and repetition within a
+            request.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {tag && (
-            <Badge variant="info">
-              <Route aria-hidden="true" />
-              tag:{tag}
-            </Badge>
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Route aria-hidden="true" className="size-3.5" />
+              <TagChip tag={tag} />
+            </span>
           )}
           <label className="flex min-h-9 items-center gap-2 rounded-md border bg-background px-3 text-sm font-medium">
             Slow only
@@ -205,7 +201,9 @@ export function QueriesPage() {
               ? `No query carries the exact tag “${tag}”. Try another tag or clear the filter.`
               : 'Run a Lucid query while debug events are enabled. It will appear here automatically.'
         }
-        emptyTitle={slowOnly ? 'No slow queries loaded' : tag ? 'No matching queries' : 'Waiting for queries'}
+        emptyTitle={
+          slowOnly ? 'No slow queries loaded' : tag ? 'No matching queries' : 'Waiting for queries'
+        }
         error={pagination.error}
         hasMore={pagination.hasMore}
         loading={pagination.loading}
@@ -220,9 +218,14 @@ export function QueriesPage() {
       />
 
       <EntryDetailDrawer
-        description={selected ? `${queryContent(selected).connection} · ${formatDateTime(selected.createdAt)}` : 'Query detail'}
+        description={
+          selected
+            ? `${queryContent(selected).connection} · ${formatDateTime(selected.createdAt)}`
+            : 'Query detail'
+        }
         meta={
-          selected && content && (
+          selected &&
+          content && (
             <>
               <DurationBadge slow={selected.tags.includes('slow')} value={content.durationMs} />
               {isNPlusOne && <Badge variant="warning">possible n+1</Badge>}
@@ -232,6 +235,7 @@ export function QueriesPage() {
         }
         onOpenChange={(open) => !open && setSelected(null)}
         open={selected !== null}
+        tags={selected?.tags}
         title={content ? truncate(content.sql.replace(/\s+/g, ' '), 96) : 'Query detail'}
       >
         {content && selected && (
@@ -257,7 +261,8 @@ export function QueriesPage() {
               {isNPlusOne && (
                 <p className="mt-3 flex items-start gap-2 text-sm text-warning-foreground">
                   <TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-                  This meets the configured n+1 hint threshold of {threshold}. Check whether the query runs once per record.
+                  This meets the configured n+1 hint threshold of {threshold}. Check whether the
+                  query runs once per record.
                 </p>
               )}
               {detailError && (
@@ -280,25 +285,36 @@ export function QueriesPage() {
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">Family hash</dt>
-                <dd className="mt-1 truncate font-mono text-xs" title={selected.familyHash ?? undefined}>
+                <dd
+                  className="mt-1 truncate font-mono text-xs"
+                  title={selected.familyHash ?? undefined}
+                >
                   {selected.familyHash ?? 'Unavailable'}
                 </dd>
               </div>
             </dl>
 
             <section className="flex items-start gap-3 rounded-lg border bg-muted/25 p-4">
-              <MapPinOff aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+              <MapPinOff
+                aria-hidden="true"
+                className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+              />
               <div>
                 <h3 className="text-sm font-semibold">Call location unavailable</h3>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  Lucid query events do not expose a reliable application call site. Use the batch timeline and route tags to trace the code path without recording a misleading stack.
+                  Lucid query events do not expose a reliable application call site. Use the batch
+                  timeline and route tags to trace the code path without recording a misleading
+                  stack.
                 </p>
               </div>
             </section>
 
             {content.error && <JsonTree label="Database error" value={content.error} />}
 
-            <Button render={<Link to={`/requests/${encodeURIComponent(selected.batchId)}`} />} variant="outline">
+            <Button
+              render={<Link to={`/requests/${encodeURIComponent(selected.batchId)}`} />}
+              variant="outline"
+            >
               <Database aria-hidden="true" />
               Open request batch
             </Button>

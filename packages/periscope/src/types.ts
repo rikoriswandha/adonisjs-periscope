@@ -91,6 +91,20 @@ export type BatchContext = {
   startedAt: bigint
 
   /**
+   * Sampling decision made once, when the batch opens. A false value may still be overridden at
+   * flush time by `recording.keepAlways` or by a monitored tag.
+   */
+  sampled: boolean
+
+  /**
+   * Retention decision for a sampled-out batch. Intermediate flushes leave `pending` batches
+   * buffered so the final flush can evaluate `recording.keepAlways` and monitored tags against
+   * the whole batch. A final decision is sticky because asynchronous work may produce a later
+   * fragment after the request itself has closed.
+   */
+  retention: 'pending' | 'kept' | 'dropped'
+
+  /**
    * Entries recorded but not yet flushed.
    */
   buffer: IncomingEntry[]
@@ -130,6 +144,35 @@ export type EntryContent = Record<string, unknown>
 export type EntryTypeCounts = Partial<Record<EntryType, number>>
 
 /**
+ * Read-only entry metadata exposed to a sampling `keepAlways` hook.
+ */
+export type BatchEntryView = {
+  readonly uuid: string
+  readonly type: EntryType
+  readonly content: Readonly<EntryContent>
+  readonly tags: readonly string[]
+  readonly familyHash: string | null
+  readonly displayOnIndex: boolean
+}
+
+/**
+ * Cheap flush-time facade over one batch. It deliberately exposes predicates rather than the
+ * mutable entry buffer itself.
+ */
+export interface BatchView {
+  readonly kind: BatchKind
+  readonly size: number
+  hasEntryOfType(type: EntryType): boolean
+  hasTag(tag: string): boolean
+  hasEntryWhere(predicate: (entry: BatchEntryView) => boolean): boolean
+}
+
+/**
+ * Flush-time sampling override. Returning true keeps the entire batch.
+ */
+export type KeepAlwaysHook = (batch: BatchView) => boolean
+
+/**
  * An entry as persisted by a storage driver and served to the dashboard.
  *
  * `sequence` is a nanosecond-resolution, wall-clock-anchored, strictly increasing stamp taken
@@ -148,6 +191,28 @@ export type StoredEntry = {
   sequence: bigint
   createdAt: Date
 }
+
+/**
+ * JSON-safe, content-free metadata sent to live flush subscribers.
+ */
+export type FlushedIndexRow = {
+  readonly uuid: string
+  readonly batchId: string
+  readonly type: EntryType
+  readonly familyHash: string | null
+  readonly tags: readonly string[]
+  readonly shouldDisplayOnIndex: true
+  readonly sequence: string
+  readonly createdAt: string
+}
+
+export type FlushedEvent = {
+  readonly type: EntryType
+  readonly uuid: string
+  readonly indexRow: FlushedIndexRow
+}
+
+export type FlushedListener = (event: FlushedEvent) => void | Promise<void>
 
 /**
  * Filters accepted by {@link PeriscopeStore.list}. Every field is optional and they combine
@@ -725,6 +790,17 @@ export type PeriscopeConfig = {
     caps?: EntryCapsConfig
 
     /**
+     * Fraction of batches retained before flush-time overrides. Decided once when a batch opens.
+     * Defaults to 1.
+     */
+    sampleRate?: number
+
+    /**
+     * Keep a sampled-out batch based on its completed entries.
+     */
+    keepAlways?: KeepAlwaysHook
+
+    /**
      * How often the ambient batch — everything recorded outside a request, command or job — is
      * rotated and flushed, in milliseconds. Defaults to 10 000.
      */
@@ -799,6 +875,8 @@ export type ResolvedPeriscopeConfig = {
      * and their `default`.
      */
     caps: Record<EntryType, number>
+    sampleRate: number
+    keepAlways: KeepAlwaysHook
     ambientRotationMs: number
     pausedFlagTtlMs: number
   }

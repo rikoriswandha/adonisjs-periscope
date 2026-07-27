@@ -12,10 +12,15 @@ import { safeguard, safeguardAsync } from '../safeguard.ts'
 import { EntryType, Flag } from '../types.ts'
 import type {
   BatchContext,
+  BatchEntryView,
   BatchKind,
+  BatchView,
   FilterHook,
+  FlushedEvent,
+  FlushedListener,
   PeriscopeStore,
   ResolvedPeriscopeConfig,
+  StoredEntry,
   TagHook,
 } from '../types.ts'
 import { AmbientBatch } from './ambient.ts'
@@ -75,6 +80,18 @@ const TRUNCATION_MESSAGE = 'Periscope dropped entries in this batch after a per-
  * the suite that proves the interval can assert against the number instead of duplicating it.
  */
 export const TRIM_EVERY_FLUSHES = 25
+
+/**
+ * A monitored-tag read may be reused for at most ten seconds.
+ */
+export const MONITORED_TAGS_CACHE_TTL_MS = 10_000
+const MONITORED_TAGS_CACHE_TTL_NS = BigInt(MONITORED_TAGS_CACHE_TTL_MS) * 1_000_000n
+
+/**
+ * Intermediate flushes may stream sampled-in batches, but sampled-out batches need their whole
+ * context intact until a final flush can make one sticky retention decision.
+ */
+export type FlushMode = 'intermediate' | 'final'
 
 export type RecorderOptions = {
   config: ResolvedPeriscopeConfig
@@ -143,6 +160,32 @@ function applyTagHooks(hooks: readonly TagHook[], entry: IncomingEntry): void {
   }
 }
 
+class FlushingBatchView implements BatchView {
+  readonly kind: BatchKind
+  readonly #entries: readonly IncomingEntry[]
+
+  constructor(kind: BatchKind, entries: readonly IncomingEntry[]) {
+    this.kind = kind
+    this.#entries = entries
+  }
+
+  get size(): number {
+    return this.#entries.length
+  }
+
+  hasEntryOfType(type: EntryType): boolean {
+    return this.#entries.some((entry) => entry.type === type)
+  }
+
+  hasTag(tag: string): boolean {
+    return this.#entries.some((entry) => entry.tags.includes(tag))
+  }
+
+  hasEntryWhere(predicate: (entry: BatchEntryView) => boolean): boolean {
+    return this.#entries.some(predicate)
+  }
+}
+
 /**
  * The recorder: the single point every watcher hands entries to, and the only thing that writes
  * to the store.
@@ -192,6 +235,16 @@ export class Recorder {
   readonly #filterHooks: FilterHook[] = []
   readonly #tagHooks: TagHook[] = []
 
+  readonly #flushedListeners: FlushedListener[] = []
+
+  /**
+   * Monitored tags are cold-path storage state. The set and in-flight promise make concurrent
+   * sampled-out flushes share one muted read.
+   */
+  #monitoredTags = new Set<string>()
+  #monitoredTagsExpiresAt = 0n
+  #monitoredTagsRefresh: Promise<ReadonlySet<string> | null> | null = null
+
   /**
    * Cached value of the `paused` flag. The lifecycle poll refreshes it independently of entries,
    * so the first entry after an idle period observes a value no older than the configured window.
@@ -225,6 +278,7 @@ export class Recorder {
     this.#config = options.config
     this.#enabled = options.enabled ?? options.config.enabled
     this.redactor = new Redactor(options.config.redact)
+    BatchScope.configureSampling(options.config.recording.sampleRate)
     this.#ambient = new AmbientBatch({
       rotationMs: options.config.recording.ambientRotationMs,
       flush: (context) => this.flush(context),
@@ -256,6 +310,14 @@ export class Recorder {
     return this.#paused
   }
 
+  /**
+   * Subscribe to content-free index rows after they have been persisted successfully.
+   */
+  subscribeFlushed(listener: FlushedListener): () => void {
+    this.#flushedListeners.push(listener)
+    return unregisterHook(this.#flushedListeners, listener)
+  }
+
   #refreshPaused(): Promise<void> {
     if (this.#pausedRefresh !== null) {
       return this.#pausedRefresh
@@ -278,6 +340,69 @@ export class Recorder {
     })
 
     return refresh
+  }
+
+  #readMonitoredTags(): Promise<ReadonlySet<string> | null> {
+    if (process.hrtime.bigint() < this.#monitoredTagsExpiresAt) {
+      return Promise.resolve(this.#monitoredTags)
+    }
+
+    if (this.#monitoredTagsRefresh !== null) {
+      return this.#monitoredTagsRefresh
+    }
+
+    const refresh = (async (): Promise<ReadonlySet<string> | null> => {
+      const tags = await safeguardAsync('periscope.recorder.monitored_tags', () =>
+        BatchScope.mute(() => this.store.monitoredTags())
+      )
+
+      if (tags === undefined) {
+        return null
+      }
+
+      this.#monitoredTags = new Set(tags)
+      this.#monitoredTagsExpiresAt = process.hrtime.bigint() + MONITORED_TAGS_CACHE_TTL_NS
+      return this.#monitoredTags
+    })()
+
+    this.#monitoredTagsRefresh = refresh
+    void refresh.then(() => {
+      if (this.#monitoredTagsRefresh === refresh) {
+        this.#monitoredTagsRefresh = null
+      }
+    })
+
+    return refresh
+  }
+
+  #notifyFlushed(entry: StoredEntry): void {
+    if (!entry.shouldDisplayOnIndex || this.#flushedListeners.length === 0) {
+      return
+    }
+
+    const indexRow = Object.freeze({
+      uuid: entry.uuid,
+      batchId: entry.batchId,
+      type: entry.type,
+      familyHash: entry.familyHash,
+      tags: Object.freeze([...entry.tags]),
+      shouldDisplayOnIndex: true as const,
+      sequence: entry.sequence.toString(),
+      createdAt: entry.createdAt.toISOString(),
+    })
+    const event: FlushedEvent = Object.freeze({
+      type: entry.type,
+      uuid: entry.uuid,
+      indexRow,
+    })
+
+    for (const listener of [...this.#flushedListeners]) {
+      const pending = safeguard('periscope.recorder.flushed', () => listener(event))
+
+      if (pending !== null && (typeof pending === 'object' || typeof pending === 'function')) {
+        void safeguardAsync('periscope.recorder.flushed', () => Promise.resolve(pending))
+      }
+    }
   }
 
   /**
@@ -347,16 +472,27 @@ export class Recorder {
   }
 
   /**
-   * Persist everything buffered in `target`, defaulting to the active batch, and every
-   * {@link TRIM_EVERY_FLUSHES} successful writes also bring the store back under
+   * Flush one buffered fragment from `target`, defaulting to the active batch. `final` is the
+   * default lifecycle boundary; `intermediate` keeps an undecided sampled-out context intact.
+   * Every {@link TRIM_EVERY_FLUSHES} successful writes also bring the store back under
    * `storage.maxEntries`.
    *
    * Never rejects: the request middleware awaits this on the way out of every request, and a
    * broken store must not turn into a 500.
    */
-  async flush(target?: BatchContext): Promise<void> {
+  async flush(target?: BatchContext, mode: FlushMode = 'final'): Promise<void> {
     await safeguardAsync('periscope.recorder.flush', async () => {
       const context = target ?? BatchScope.current() ?? this.#ambient.current()
+
+      /**
+       * An intermediate flush cannot decide a sampled-out batch from one fragment. Leaving the
+       * buffer and truncation counters in place lets the final flush expose the whole context to
+       * keepAlways and monitored-tag matching. Sampled-in contexts still take the streaming path
+       * below without delay.
+       */
+      if (!context.sampled && context.retention === 'pending' && mode === 'intermediate') {
+        return
+      }
 
       /**
        * Drained synchronously, before the first `await`. Anything recorded while the store write
@@ -374,7 +510,64 @@ export class Recorder {
       this.#reportTruncation(context, drained)
 
       if (drained.length === 0) {
+        if (!context.sampled && context.retention === 'pending') {
+          context.retention = 'dropped'
+        }
+
         return
+      }
+
+      if (!context.sampled) {
+        if (context.retention === 'dropped') {
+          return
+        }
+
+        if (context.retention === 'pending') {
+          const batchView = new FlushingBatchView(context.kind, drained)
+          let kept =
+            safeguard(
+              'periscope.recorder.keep_always',
+              () => this.#config.recording.keepAlways(batchView),
+              false
+            ) === true
+
+          if (!kept) {
+            const monitoredTags = await this.#readMonitoredTags()
+            const entriesBeforeRefresh = drained.length
+
+            /**
+             * Captured-context watchers may record while the monitored-tag read is in flight.
+             * Fold those entries into the same final decision so a late monitored tag or
+             * keepAlways match retains the complete batch rather than being cleared as a drop.
+             */
+            drained.push(...context.buffer.splice(0))
+            this.#reportTruncation(context, drained)
+
+            if (drained.length !== entriesBeforeRefresh) {
+              kept =
+                safeguard(
+                  'periscope.recorder.keep_always',
+                  () => this.#config.recording.keepAlways(batchView),
+                  false
+                ) === true
+            }
+
+            kept ||=
+              monitoredTags === null ||
+              batchView.hasEntryWhere((entry) => entry.tags.some((tag) => monitoredTags.has(tag)))
+          }
+
+          context.retention = kept ? 'kept' : 'dropped'
+
+          if (!kept) {
+            /**
+             * A listener may record another fragment while the monitored-tag read is in flight.
+             * The final decision owns the context, so a drop must clear those arrivals too.
+             */
+            context.buffer.splice(0)
+            return
+          }
+        }
       }
 
       const stored = drained.map((entry) => entry.toStored())
@@ -385,6 +578,10 @@ export class Recorder {
        * write is what stops a flush from generating the entries for the next flush.
        */
       await BatchScope.mute(() => this.store.save(stored))
+
+      for (const entry of stored) {
+        this.#notifyFlushed(entry)
+      }
 
       this.#flushesSinceTrim++
 
