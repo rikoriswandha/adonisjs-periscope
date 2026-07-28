@@ -16,3 +16,6 @@ coverage
 *.tsbuildinfo
 .vite
 codedb.snapshot
+
+# Copied from the repository root by the periscope prepack script
+packages/periscope/README.md

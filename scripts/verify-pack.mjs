@@ -23,6 +23,8 @@ try {
     'build/src/index.js',
     'build/providers/periscope_provider.js',
     'package.json',
+    'README.md',
+    'LICENSE.md',
   ]
   const missing = required.filter((path) => !files.has(path))
   const hasDashboardAsset = manifest.files.some(

@@ -41,6 +41,7 @@
     "postcompile": "npm run copy:templates && npm run index:commands",
     "copy:templates": "node --input-type=module -e \"import { cpSync } from 'node:fs'; cpSync('stubs', 'build/stubs', { recursive: true })\"",
     "index:commands": "adonis-kit index build/commands",
+    "prepack": "node --input-type=module -e \"import { cpSync } from 'node:fs'; cpSync('../../README.md', 'README.md')\"",
     "build": "npm run clean && npm run compile",
     "test": "node --import=@poppinss/ts-exec --enable-source-maps bin/test.ts",
     "bench:overhead": "node --import=@poppinss/ts-exec --enable-source-maps tests/bench/overhead.bench.ts",
