@@ -4,7 +4,7 @@
   })
 }}}
 import { BaseSchema } from '@adonisjs/lucid/schema'
-import { createPeriscopeTables, dropPeriscopeTables } from 'adonisjs-periscope/storage_schema'
+import { createPeriscopeTables, dropPeriscopeTables } from '@rikology/adonisjs-periscope/storage_schema'
 
 /**
  * Periscope's four tables, for the \`database\` storage driver.
@@ -13,7 +13,7 @@ import { createPeriscopeTables, dropPeriscopeTables } from 'adonisjs-periscope/s
  * \`src/storage/database_schema.ts\`, next to the \`src/storage/sql.ts\` codecs that read and write
  * those columns, and this migration is a thin call into it. Copying the DDL here would leave the
  * driver free to be upgraded while your tables stayed on the old shape — with a shared function
- * the two cannot drift, and \`npm update adonisjs-periscope\` plus a fresh migration is enough to
+ * the two cannot drift, and \`npm update @rikology/adonisjs-periscope\` plus a fresh migration is enough to
  * move.
  *
  * \`content\` and \`tags\` are plain TEXT on every dialect, holding the JSON Periscope wrote. That is

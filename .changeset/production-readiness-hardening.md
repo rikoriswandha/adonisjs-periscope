@@ -1,5 +1,5 @@
 ---
-'adonisjs-periscope': minor
+'@rikology/adonisjs-periscope': minor
 ---
 
 Production-readiness hardening across security, durability, and packaging:

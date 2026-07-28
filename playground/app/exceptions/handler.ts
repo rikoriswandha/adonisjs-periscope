@@ -1,6 +1,6 @@
 import app from '@adonisjs/core/services/app'
 import { type HttpContext, ExceptionHandler } from '@adonisjs/core/http'
-import { withPeriscope } from 'adonisjs-periscope/exception_reporter'
+import { withPeriscope } from '@rikology/adonisjs-periscope/exception_reporter'
 
 class HttpExceptionHandler extends ExceptionHandler {
   /**

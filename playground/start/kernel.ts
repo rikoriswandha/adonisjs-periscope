@@ -27,7 +27,7 @@ server.errorHandler(() => import('#exceptions/handler'))
  * the request, its queries, logs, events, and exceptions.
  */
 server.use([
-  () => import('adonisjs-periscope/middleware/request_watcher'),
+  () => import('@rikology/adonisjs-periscope/middleware/request_watcher'),
   () => import('#middleware/container_bindings_middleware'),
 ])
 

@@ -8,8 +8,8 @@
 /**
  * The package's main entry point. It re-exports the public surface available today.
  *
- * Subpath exports (`adonisjs-periscope/services/recorder`, `adonisjs-periscope/periscope_config`,
- * `adonisjs-periscope/dump`,
+ * Subpath exports (`@rikology/adonisjs-periscope/services/recorder`, `@rikology/adonisjs-periscope/periscope_config`,
+ * `@rikology/adonisjs-periscope/dump`,
  * …) stay the idiomatic import for AdonisJS applications; this barrel exists for the pieces an
  * extension author composes — custom watchers, custom stores, hooks.
  */

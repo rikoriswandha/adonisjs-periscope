@@ -29,7 +29,7 @@ export default defineConfig({
     () => import('@adonisjs/mail/commands'),
     () => import('@adonisjs/cache/commands'),
     () => import('@adonisjs/bouncer/commands'),
-    () => import('adonisjs-periscope/commands'),
+    () => import('@rikology/adonisjs-periscope/commands'),
   ],
 
   /*
@@ -50,7 +50,7 @@ export default defineConfig({
      * watches have stopped producing entries.
      */
     {
-      file: () => import('adonisjs-periscope/provider'),
+      file: () => import('@rikology/adonisjs-periscope/provider'),
       environment: ['web', 'console', 'test'],
     },
     {

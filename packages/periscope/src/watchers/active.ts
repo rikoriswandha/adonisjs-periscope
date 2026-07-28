@@ -19,8 +19,8 @@ import type { RequestWatcher } from './request/watcher.ts'
  * Those host-side pieces are imported long before Periscope registers anything and must keep
  * working when Periscope is disabled, absent from the container, or never registered at all.
  *
- * So the host-side pieces — `adonisjs-periscope/middleware/request_watcher`,
- * `adonisjs-periscope/exception_reporter`, and `adonisjs-periscope/dump` — hold no state and make no container
+ * So the host-side pieces — `@rikology/adonisjs-periscope/middleware/request_watcher`,
+ * `@rikology/adonisjs-periscope/exception_reporter`, and `@rikology/adonisjs-periscope/dump` — hold no state and make no container
  * lookups. They ask this module for the live watcher and, finding none, do nothing at all. That is
  * what makes disabled Periscope literally free on these paths: an empty slot and a branch.
  *

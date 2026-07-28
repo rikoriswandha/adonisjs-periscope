@@ -2,8 +2,8 @@ import { setTimeout as sleep } from 'node:timers/promises'
 
 import { BaseCommand } from '@adonisjs/core/ace'
 import type { CommandOptions } from '@adonisjs/core/types/ace'
-import recorder from 'adonisjs-periscope/services/recorder'
-import { BatchScope, EntryType, IncomingEntry } from 'adonisjs-periscope'
+import recorder from '@rikology/adonisjs-periscope/services/recorder'
+import { BatchScope, EntryType, IncomingEntry } from '@rikology/adonisjs-periscope'
 
 /**
  * Records demo entries through the recorder into the configured store, then reads them back and

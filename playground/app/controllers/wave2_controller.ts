@@ -2,7 +2,7 @@ import { Bouncer } from '@adonisjs/bouncer'
 import cache from '@adonisjs/cache/services/main'
 import type { HttpContext } from '@adonisjs/core/http'
 import mail from '@adonisjs/mail/services/main'
-import { dump } from 'adonisjs-periscope/dump'
+import { dump } from '@rikology/adonisjs-periscope/dump'
 
 import { inspectWave2Ability } from '#abilities/main'
 import FanoutNotification from '#mails/fanout_notification'

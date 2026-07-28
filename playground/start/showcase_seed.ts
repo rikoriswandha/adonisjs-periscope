@@ -19,9 +19,9 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { tracingChannel } from 'node:diagnostics_channel'
 
 import app from '@adonisjs/core/services/app'
-import recorder from 'adonisjs-periscope/services/recorder'
-import { dump } from 'adonisjs-periscope/dump'
-import { BatchScope, Flag } from 'adonisjs-periscope'
+import recorder from '@rikology/adonisjs-periscope/services/recorder'
+import { dump } from '@rikology/adonisjs-periscope/dump'
+import { BatchScope, Flag } from '@rikology/adonisjs-periscope'
 
 import { demoQueue } from '../app/periscope/demo_queue_adapter.js'
 

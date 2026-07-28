@@ -1,6 +1,6 @@
 # Periscope architecture
 
-This document describes how the published `adonisjs-periscope` package is put together. For
+This document describes how the published `@rikology/adonisjs-periscope` package is put together. For
 usage and configuration, see the [README](../README.md); for contribution workflow, invariants,
 and verification commands, see [CONTRIBUTING](../CONTRIBUTING.md).
 
@@ -37,14 +37,14 @@ host signal -> watcher -> IncomingEntry -> Recorder -> PeriscopeStore -> JSON/SS
    constructing anything. Disabled means inert: no store, no watcher, logger, process, model,
    or dashboard hooks are installed.
 2. Construct the configured store and bind the `Recorder` class as a container singleton. The
-   `adonisjs-periscope/services/recorder` subpath resolves that same class binding.
+   `@rikology/adonisjs-periscope/services/recorder` subpath resolves that same class binding.
 3. Register the enabled watchers from `src/watchers/registry.ts`. Optional integrations (Lucid,
    Mail, Cache, Bouncer, Redis, Session, BullMQ) register only when the host package is
    installed and the watcher is enabled.
 4. Mount the dashboard routes and authorization middleware below `dashboard.path`.
 5. On shutdown, clean up watchers, flush pending work, and close the store.
 
-The `configure.ts` hook (run by `node ace add adonisjs-periscope`) publishes the config stub,
+The `configure.ts` hook (run by `node ace add @rikology/adonisjs-periscope`) publishes the config stub,
 registers the provider, inserts the request middleware first in the server middleware stack,
 and installs the exception reporter mixin.
 

@@ -22,8 +22,8 @@ Bouncer.
 Install and configure the package:
 
 ```sh
-npm install adonisjs-periscope
-node ace add adonisjs-periscope
+npm install @rikology/adonisjs-periscope
+node ace add @rikology/adonisjs-periscope
 ```
 
 The configure hook creates `config/periscope.ts`, registers the provider early in `adonisrc.ts`,
@@ -51,7 +51,7 @@ downstream work:
 ```ts
 // start/kernel.ts
 server.use([
-  () => import('adonisjs-periscope/middleware/request_watcher'),
+  () => import('@rikology/adonisjs-periscope/middleware/request_watcher'),
   // other server middleware
 ])
 ```
@@ -61,7 +61,7 @@ The exception reporter preserves the application's existing handler and records 
 ```ts
 // app/exceptions/handler.ts
 import { ExceptionHandler } from '@adonisjs/core/http'
-import { withPeriscope } from 'adonisjs-periscope/exception_reporter'
+import { withPeriscope } from '@rikology/adonisjs-periscope/exception_reporter'
 
 class HttpExceptionHandler extends ExceptionHandler {}
 
@@ -77,7 +77,7 @@ to observe.
 starts with safe local defaults:
 
 ```ts
-import { defineConfig } from 'adonisjs-periscope/periscope_config'
+import { defineConfig } from '@rikology/adonisjs-periscope/periscope_config'
 
 export default defineConfig({
   applicationName: 'billing-api',
@@ -167,7 +167,7 @@ import {
   DEFAULT_REDACT_VALUE_PATTERNS,
   REDACT_EMAIL_PATTERN,
   defineConfig,
-} from 'adonisjs-periscope/periscope_config'
+} from '@rikology/adonisjs-periscope/periscope_config'
 
 export default defineConfig({
   enabledIn: ['development', 'test', 'production'],
@@ -257,8 +257,8 @@ Queue integrations use the exported `QueueWatcherAdapter` contract. The BullMQ r
 observes queue events without replacing application workers:
 
 ```ts
-import { defineConfig } from 'adonisjs-periscope/periscope_config'
-import { BullQueueAdapter } from 'adonisjs-periscope/watchers/bull_queue'
+import { defineConfig } from '@rikology/adonisjs-periscope/periscope_config'
+import { BullQueueAdapter } from '@rikology/adonisjs-periscope/watchers/bull_queue'
 
 export default defineConfig({
   watchers: {
@@ -306,8 +306,8 @@ idempotent `cleanup()`. A custom application watcher can subscribe to a domain s
 existing entry type to `Recorder.record()`:
 
 ```ts
-import { EntryType, IncomingEntry, type Watcher } from 'adonisjs-periscope'
-import type { Recorder } from 'adonisjs-periscope'
+import { EntryType, IncomingEntry, type Watcher } from '@rikology/adonisjs-periscope'
+import type { Recorder } from '@rikology/adonisjs-periscope'
 
 export class PaymentWatcher implements Watcher {
   readonly name = 'payment'
@@ -429,7 +429,7 @@ review requirements, and benchmark gates.
 
 ## Release policy
 
-Releases use Changesets and publish the `adonisjs-periscope` package from GitHub Actions with npm
+Releases use Changesets and publish the `@rikology/adonisjs-periscope` package from GitHub Actions with npm
 provenance. CI builds a real tarball and rejects it unless the provider, package entry point,
 dashboard HTML, and hashed dashboard assets are present. The compatibility matrix covers the
 oldest supported and latest AdonisJS 7 and Lucid 22 releases.

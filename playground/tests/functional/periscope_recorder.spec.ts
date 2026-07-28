@@ -2,8 +2,8 @@ import { existsSync } from 'node:fs'
 import { test } from '@japa/runner'
 import { setTimeout as sleep } from 'node:timers/promises'
 import app from '@adonisjs/core/services/app'
-import recorder from 'adonisjs-periscope/services/recorder'
-import { BatchScope, EntryType, IncomingEntry, SqliteLocalStore } from 'adonisjs-periscope'
+import recorder from '@rikology/adonisjs-periscope/services/recorder'
+import { BatchScope, EntryType, IncomingEntry, SqliteLocalStore } from '@rikology/adonisjs-periscope'
 
 /**
  * The demo (`node ace periscope:demo`) as an assertion, so CI catches a regression in the wiring

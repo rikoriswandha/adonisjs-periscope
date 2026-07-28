@@ -94,14 +94,14 @@ async function createHealthyFixture(fs: FileSystem) {
       'start/kernel.ts',
       `import server from '@adonisjs/core/services/server'
 server.use([
-  () => import('adonisjs-periscope/middleware/request_watcher'),
+  () => import('@rikology/adonisjs-periscope/middleware/request_watcher'),
   () => import('@adonisjs/core/bodyparser_middleware'),
 ])
 `
     ),
     fs.create(
       'database/custom_migrations/1710000000000_renamed.ts',
-      `import { createPeriscopeTables } from 'adonisjs-periscope/storage_schema'
+      `import { createPeriscopeTables } from '@rikology/adonisjs-periscope/storage_schema'
 export default class Migration {
   up() { createPeriscopeTables(this.schema) }
 }
@@ -155,7 +155,7 @@ test.group('Periscope doctor', () => {
         `import server from '@adonisjs/core/services/server'
 server.use([
   () => import('@adonisjs/core/bodyparser_middleware'),
-  () => import('adonisjs-periscope/middleware/request_watcher'),
+  () => import('@rikology/adonisjs-periscope/middleware/request_watcher'),
 ])
 `
       ),

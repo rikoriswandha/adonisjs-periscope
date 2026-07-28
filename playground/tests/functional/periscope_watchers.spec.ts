@@ -7,9 +7,9 @@ import db from '@adonisjs/lucid/services/db'
 import testUtils from '@adonisjs/core/services/test_utils'
 import type { Assert } from '@japa/assert'
 import { test } from '@japa/runner'
-import { EntryType, Flag } from 'adonisjs-periscope'
-import type { StoredEntry } from 'adonisjs-periscope'
-import recorder from 'adonisjs-periscope/services/recorder'
+import { EntryType, Flag } from '@rikology/adonisjs-periscope'
+import type { StoredEntry } from '@rikology/adonisjs-periscope'
+import recorder from '@rikology/adonisjs-periscope/services/recorder'
 
 import periscopeConfig from '#config/periscope'
 
