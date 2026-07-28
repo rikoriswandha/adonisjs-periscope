@@ -24,7 +24,7 @@ import {
 } from './chart-child-passthrough'
 import { ChartProvider, type LineConfig, type Margin } from './chart-context'
 import { isGradientDefComponent, isPatternDefComponent } from './chart-defs'
-import { shortDateFmt } from './chart-formatters'
+import { formatChartDateLabels } from './chart-formatters'
 import {
   type ChartPhase,
   type ChartStatus,
@@ -353,10 +353,18 @@ const TimeSeriesChartCore = memo(function TimeSeriesChartCore({
     scaleLinear({ range: [innerHeight, 0], domain: [0, 100], nice: true })
   )
 
-  const dateLabels = useMemo(
-    () => visiblePlotData.map((d) => shortDateFmt.format(xAccessor(d))),
-    [visiblePlotData, xAccessor]
-  )
+  const dateLabels = useMemo(() => {
+    const dates = visiblePlotData.map((point) => {
+      // Sample-index charts keep wall-clock values on `date` while `xDataKey`
+      // points at a synthetic position field.
+      const explicit = point.date
+      if (explicit instanceof Date && !Number.isNaN(explicit.getTime())) {
+        return explicit
+      }
+      return xAccessor(point)
+    })
+    return formatChartDateLabels(dates)
+  }, [visiblePlotData, xAccessor])
 
   const canInteract = isLoaded && isChartInteractionPhase(chartPhase)
 

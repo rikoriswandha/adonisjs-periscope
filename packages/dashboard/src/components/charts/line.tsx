@@ -1,6 +1,6 @@
 'use client'
 
-import { curveNatural } from '@visx/curve'
+import { curveMonotoneX } from '@visx/curve'
 import { LinePath } from '@visx/shape'
 
 // CurveFactory type - simplified version compatible with visx
@@ -40,7 +40,7 @@ export interface LineProps {
   stroke?: string
   /** Stroke width. Default: 2.5 */
   strokeWidth?: number
-  /** Curve function. Default: curveNatural */
+  /** Curve function. Default: curveMonotoneX */
   curve?: CurveFactory
   /** Whether to animate the line. Default: true */
   animate?: boolean
@@ -197,7 +197,7 @@ export function Line({
   yAxisId,
   stroke = chartCssVars.linePrimary,
   strokeWidth = 2.5,
-  curve = curveNatural,
+  curve = curveMonotoneX,
   animate = true,
   fadeEdges = true,
   showHighlight = true,

@@ -1,4 +1,5 @@
 import { BarChart3, ChevronDown } from 'lucide-react'
+import { curveLinear } from '@visx/curve'
 import { useMemo, useState } from 'react'
 
 import { Grid } from '@/components/charts/grid'
@@ -51,7 +52,7 @@ export function HttpClientDurationChart({ entries }: { entries: StoredEntry[] })
             Outbound request duration
           </h2>
           <p className="mt-0.5 text-2xs text-muted-foreground">
-            Recent response time in milliseconds, oldest to newest. Outcomes are available in the
+            Recent response times as evenly spaced samples, oldest to newest. Outcomes are available in the
             data table.
           </p>
         </div>
@@ -76,11 +77,28 @@ export function HttpClientDurationChart({ entries }: { entries: StoredEntry[] })
           aspectRatio="3 / 1"
           data={data}
           margin={{ top: 16, right: 20, bottom: 36, left: 20 }}
+          xDataKey="sample"
         >
           <Grid horizontal numTicksRows={4} />
-          <Line dataKey="duration" fadeEdges={false} stroke="var(--chart-line-primary)" />
+          <Line curve={curveLinear} dataKey="duration" fadeEdges={false} stroke="var(--chart-line-primary)" />
           <XAxis numTicks={5} />
-          <ChartTooltip />
+          <ChartTooltip
+            content={({ point }) => (
+              <div className="max-w-80 space-y-1.5 px-2.5 py-2">
+                <p className="text-2xs text-chart-tooltip-muted">
+                  {formatDateTime((point.date as Date).toISOString())}
+                </p>
+                <p className="break-all font-mono text-sm font-medium leading-snug text-chart-tooltip-foreground">
+                  <span className="text-2xs font-normal text-chart-tooltip-muted">{String(point.method)}</span>{' '}
+                  {String(point.path)}
+                </p>
+                <p className="font-mono text-xs tabular-nums text-chart-tooltip-foreground">
+                  {formatDuration(point.duration as number)}
+                </p>
+              </div>
+            )}
+            showDatePill={false}
+          />
         </LineChart>
       </div>
       <Collapsible onOpenChange={setTableOpen} open={tableOpen}>
@@ -113,8 +131,8 @@ export function HttpClientDurationChart({ entries }: { entries: StoredEntry[] })
                     <td className="whitespace-nowrap px-3 py-2">
                       {formatDateTime(point.date.toISOString())}
                     </td>
-                    <td className="max-w-80 truncate px-3 py-2 font-mono" title={point.label}>
-                      {point.label}
+                    <td className="max-w-md break-all px-3 py-2 font-mono" title={`${point.method} ${point.path}`}>
+                      <span className="text-muted-foreground">{point.method}</span> {point.path}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2">
                       <HttpClientResult content={point.content} />

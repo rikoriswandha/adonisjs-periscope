@@ -123,12 +123,21 @@ const DateTickerInner = memo(function DateTickerInner({
   )
 })
 
+function labelsLookLikeMonthDay(labels: string[]): boolean {
+  return labels.every((label) => {
+    const parts = label.trim().split(/\s+/)
+    return parts.length >= 2 && /^[A-Za-z]{3,}$/.test(parts[0] ?? '') && /^\d{1,2}$/.test(parts[1] ?? '')
+  })
+}
+
 export function DateTicker({ currentIndex, labels, visible }: DateTickerProps) {
   if (!visible || labels.length === 0) {
     return null
   }
 
-  if (labels.length > COMPACT_TICKER_THRESHOLD) {
+  // Time-only / date+time labels are shown whole; the stacked month/day ticker
+  // only understands short "Jul 27" style labels.
+  if (labels.length > COMPACT_TICKER_THRESHOLD || !labelsLookLikeMonthDay(labels)) {
     return <DateTickerCompact currentIndex={currentIndex} labels={labels} />
   }
 

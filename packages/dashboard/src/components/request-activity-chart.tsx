@@ -1,4 +1,5 @@
 import { BarChart3, ChevronDown } from 'lucide-react'
+import { curveLinear } from '@visx/curve'
 import { useMemo, useState } from 'react'
 
 import { ChartTooltip } from '@/components/charts/tooltip'
@@ -12,18 +13,28 @@ import type { RequestContent, StoredEntry } from '@/types'
 
 export function RequestActivityChart({ entries }: { entries: StoredEntry[] }) {
   const [tableOpen, setTableOpen] = useState(false)
-  const data = useMemo(
-    () =>
-      [...entries]
-        .sort((left, right) => sequenceCompareAscending(left.sequence, right.sequence))
-        .map((entry) => ({
+  const data = useMemo(() => {
+    const points = [...entries]
+      .sort((left, right) => {
+        const byDate = left.createdAt.localeCompare(right.createdAt)
+        return byDate !== 0 ? byDate : sequenceCompareAscending(left.sequence, right.sequence)
+      })
+      .map((entry) => {
+        const content = entry.content as RequestContent
+        return {
+          // Wall-clock timestamps often collide within a burst; space samples evenly
+          // so the line stays readable oldest → newest.
+          sample: new Date(0),
           date: new Date(entry.createdAt),
-          duration: (entry.content as RequestContent).durationMs,
-          label: (entry.content as RequestContent).url,
-        }))
-        .filter((point) => Number.isFinite(point.duration)),
-    [entries]
-  )
+          duration: content.durationMs,
+          method: content.method,
+          path: content.url,
+        }
+      })
+      .filter((point) => Number.isFinite(point.duration))
+
+    return points.map((point, index) => ({ ...point, sample: new Date(index) }))
+  }, [entries])
 
   if (data.length < 2) return null
 
@@ -38,7 +49,7 @@ export function RequestActivityChart({ entries }: { entries: StoredEntry[] }) {
                 Request duration
               </h2>
               <p className="mt-0.5 text-2xs text-muted-foreground">
-                Recent response time in milliseconds, oldest to newest
+                Recent response times as evenly spaced samples, oldest to newest
               </p>
             </div>
             <span className="font-mono text-2xs tabular-nums text-muted-foreground">
@@ -55,11 +66,28 @@ export function RequestActivityChart({ entries }: { entries: StoredEntry[] }) {
               aspectRatio="3 / 1"
               data={data}
               margin={{ top: 16, right: 20, bottom: 36, left: 20 }}
+              xDataKey="sample"
             >
               <Grid horizontal numTicksRows={4} />
-              <Line dataKey="duration" fadeEdges={false} stroke="var(--chart-line-primary)" />
+              <Line curve={curveLinear} dataKey="duration" fadeEdges={false} stroke="var(--chart-line-primary)" />
               <XAxis numTicks={5} />
-              <ChartTooltip />
+              <ChartTooltip
+                content={({ point }) => (
+                  <div className="max-w-80 space-y-1.5 px-2.5 py-2">
+                    <p className="text-2xs text-chart-tooltip-muted">
+                      {formatDateTime((point.date as Date).toISOString())}
+                    </p>
+                    <p className="break-all font-mono text-sm font-medium leading-snug text-chart-tooltip-foreground">
+                      <span className="text-2xs font-normal text-chart-tooltip-muted">{String(point.method)}</span>{' '}
+                      {String(point.path)}
+                    </p>
+                    <p className="font-mono text-xs tabular-nums text-chart-tooltip-foreground">
+                      {formatDuration(point.duration as number)}
+                    </p>
+                  </div>
+                )}
+                showDatePill={false}
+              />
             </LineChart>
           </div>
           <Collapsible onOpenChange={setTableOpen} open={tableOpen}>
@@ -86,7 +114,9 @@ export function RequestActivityChart({ entries }: { entries: StoredEntry[] }) {
                         <td className="whitespace-nowrap px-3 py-2">
                           {formatDateTime(point.date.toISOString())}
                         </td>
-                        <td className="max-w-80 truncate px-3 py-2 font-mono">{point.label}</td>
+                        <td className="max-w-md break-all px-3 py-2 font-mono">
+                          <span className="text-muted-foreground">{point.method}</span> {point.path}
+                        </td>
                         <td className="whitespace-nowrap px-3 py-2 text-right font-mono tabular-nums">
                           {formatDuration(point.duration)}
                         </td>
