@@ -8,8 +8,8 @@
 /**
  * The SQL storage schema, and the codecs that move a {@link StoredEntry} across it.
  *
- * Two drivers write these tables: `database` (P2.1, the application's own Lucid connection, so
- * postgres / mysql / sqlite) and `sqlite-local` (P2.2, a dedicated better-sqlite3 file). They
+ * Two drivers write these tables: `database` (the application's own Lucid connection, so
+ * postgres / mysql / sqlite) and `sqlite-local` (a dedicated better-sqlite3 file). They
  * share this module so the two schemas cannot drift, and so a value round-trips to the same
  * JavaScript type whichever driver — and whichever dialect — read it back.
  *
@@ -19,10 +19,9 @@
  * - **`sequence` is a zero-padded 20-character string, not a `bigint`.** Sequences are
  *   nanosecond stamps around `1.8e18`, far past `Number.MAX_SAFE_INTEGER` (`9e15`). SQLite's
  *   64-bit `INTEGER` holds them, but knex hands them back as JavaScript `number`s, which silently
- *   rounds — and `sequence` is the sort key *and* the pagination cursor, so rounding it corrupts
- *   ordering and can make a cursor skip or repeat entries. Fixed-width decimal text sorts
- *   identically to the number it encodes, is exact in every dialect, and compares the same way in
- *   every collation (all locales order ASCII digits alike).
+ *   rounds. `sequence` is the primary sort component and part of the composite pagination cursor,
+ *   so rounding it corrupts ordering. Fixed-width decimal text sorts identically to the number it
+ *   encodes, is exact in every dialect, and compares the same way in every collation.
  *
  * - **`created_at` is epoch milliseconds in a `bigint` column, not a timestamp.** The contract
  *   asserts millisecond-exact round-trips. `datetime` is second-resolution in MySQL unless it is
@@ -54,7 +53,7 @@ export const ENTRIES_TABLE = 'periscope_entries'
 export const TAGS_TABLE = 'periscope_entry_tags'
 
 /**
- * Tags the user asked to be monitored (P7.2). User intent, not recorded data — which is why
+ * Tags the user asked to be monitored. User intent, not recorded data — which is why
  * `clear()` leaves this table alone.
  */
 export const MONITORED_TAGS_TABLE = 'periscope_monitored_tags'

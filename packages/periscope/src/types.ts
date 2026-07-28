@@ -15,7 +15,7 @@
  * Two rules keep it honest as the package grows phase by phase:
  *
  * 1. **No dead knobs.** A configuration key exists here only once something reads it. Config is
- *    resolved by deep-merging user input over defaults, so later phases add keys additively
+ *    resolved by deep-merging user input over defaults, so compatible keys can be added
  *    without breaking an application's `config/periscope.ts`.
  * 2. **The entry shape is fixed now.** Storage schemas, dashboard routes and every watcher key
  *    off `EntryType` and `StoredEntry`, so those are complete from day one even though most
@@ -65,7 +65,7 @@ export const ENTRY_TYPES = Object.values(EntryType) as readonly EntryType[]
 /**
  * What caused a batch of entries to be recorded. `ambient` covers everything that happens
  * outside a request, command, queue job or test — it is drained by a rotating module-level
- * context (P1.2).
+ * context.
  */
 export type BatchKind = 'request' | 'command' | 'queue' | 'test' | 'ambient'
 
@@ -73,7 +73,7 @@ export type BatchKind = 'request' | 'command' | 'queue' | 'test' | 'ambient'
  * The mutable state of one batch: a correlation id, the entries recorded so far, and the
  * bookkeeping the recorder needs to enforce caps.
  *
- * A request-scoped batch lives in an `AsyncLocalStorage` store (P1.2); everything recorded
+ * A request-scoped batch lives in an `AsyncLocalStorage` store; everything recorded
  * outside one lands in the rotating ambient batch.
  */
 export type BatchContext = {
@@ -134,9 +134,9 @@ export type BatchContext = {
 }
 
 /**
- * Free-form, already-serialised entry payload. Watchers own the shape per type (P3+); the
- * recorder only ever walks it for redaction, so it must be JSON-representable by the time it
- * reaches {@link IncomingEntry}.
+ * Free-form entry payload. Watchers own the shape per type and normally serialise
+ * application-owned values before constructing it. The recorder's redaction pass additionally
+ * turns nested class instances into bounded plain records before storage.
  *
  * `truncated` is reserved: the recorder writes the per-batch cap overflow counts into the
  * batch's primary entry under that key at flush time.
@@ -182,7 +182,7 @@ export type KeepAlwaysHook = (batch: BatchView) => boolean
  *
  * `sequence` is a nanosecond-resolution, wall-clock-anchored, strictly increasing stamp taken
  * at record time. It is the sort key and the pagination cursor — `createdAt` is only
- * millisecond-resolution and ties constantly under load. Transport layers (the JSON API in P4)
+ * millisecond-resolution and ties constantly under load. Transport layers such as the JSON API
  * stringify it, because `bigint` is not JSON-representable.
  */
 export type StoredEntry = {
@@ -326,7 +326,7 @@ export type FlagOptions = {
 }
 
 /**
- * The storage contract. Every driver — memory (P1.4), sqlite-local and database (P2) —
+ * The storage contract. Every driver — memory, sqlite-local and database —
  * implements it, and the shared contract test suite (`tests/storage/contract.ts`) is run
  * against all of them.
  *
@@ -395,7 +395,7 @@ export interface PeriscopeStore {
   clear(application?: string): Promise<void>
 
   /**
-   * Tags the user asked to be monitored. Batches carrying one bypass sampling (P7.2).
+   * Tags the user asked to be monitored. Batches carrying one bypass sampling.
    */
   monitoredTags(): Promise<string[]>
 
@@ -519,7 +519,7 @@ export interface QueueWatcherAdapter {
 /**
  * A watcher: something that subscribes to a source of events and feeds the recorder.
  *
- * The registry (P3.1) resolves enabled watchers from config, calls `register()` inside
+ * The registry resolves enabled watchers from config, calls `register()` inside
  * `safeguard()`, and keeps `cleanup()` for shutdown and for tests that need a clean emitter.
  */
 export interface Watcher {
@@ -798,7 +798,8 @@ export type ResolvedWatchersConfig = {
 export type EntryCapsConfig = Partial<Record<EntryType | 'default', number>>
 
 /**
- * Application authorization hook for the dashboard. Returning `false` produces a 403.
+ * Application authorization hook evaluated for every dashboard request. Returning `false`
+ * produces a 403.
  */
 export type DashboardAuthorize = (ctx: HttpContext) => boolean | Promise<boolean>
 
@@ -809,7 +810,8 @@ export type DashboardConfig = {
   path?: string
 
   /**
-   * Application-defined access policy. Defaults to allowing access.
+   * Application-defined access policy. By default, the current application is resolved from
+   * each request: production is denied and non-production environments are allowed.
    */
   authorize?: DashboardAuthorize
 
@@ -919,6 +921,17 @@ export type PeriscopeConfig = {
     headers?: string[]
 
     /**
+     * Patterns scrubbed from captured string values after key redaction. Strings beyond the
+     * serializer's 16 KiB default ceiling are not scanned. Replaces the built-in secret patterns;
+     * spread `DEFAULT_REDACT_VALUE_PATTERNS` to extend them. Set to `false` to disable value
+     * scanning while retaining key and header redaction.
+     *
+     * Email addresses are intentionally not included by default. Add `REDACT_EMAIL_PATTERN` when
+     * the application treats recorded addresses as sensitive PII.
+     */
+    valuePatterns?: RegExp[] | false
+
+    /**
      * What redacted values are replaced with. Defaults to `'[REDACTED]'`.
      */
     replacement?: string
@@ -974,6 +987,7 @@ export type ResolvedPeriscopeConfig = {
   redact: {
     keys: string[]
     headers: string[]
+    valuePatterns: RegExp[] | false
     replacement: string
   }
   hooks: {

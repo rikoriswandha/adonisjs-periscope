@@ -195,8 +195,8 @@ test.group('HttpClientWatcher', () => {
       message: 'socket closed',
     })
 
-    watcher.cleanup()
-    watcher.cleanup()
+    await watcher.cleanup()
+    await watcher.cleanup()
     const afterCleanup = {
       origin: 'https://api.example.test',
       path: '/not-observed',
@@ -300,5 +300,35 @@ test.group('HttpClientWatcher', () => {
         page.data.some((entry) => entry.content.url === `${request.origin}${request.path}`)
       )
     }
+  })
+
+  test('await an in-flight intermediate flush during cleanup', async ({ assert }) => {
+    const { store, watcher } = await makeWatcher()
+    const save = store.save.bind(store)
+    const started = Promise.withResolvers<void>()
+    const gate = Promise.withResolvers<void>()
+    store.save = async (entries) => {
+      started.resolve()
+      await gate.promise
+      await save(entries)
+    }
+
+    publishCompletedRequest({
+      origin: 'https://api.example.test',
+      path: '/slow-save',
+      method: 'GET',
+    })
+    await started.promise
+
+    let cleaned = false
+    const cleaning = watcher.cleanup().then(() => {
+      cleaned = true
+    })
+    await Promise.resolve()
+    assert.isFalse(cleaned)
+
+    gate.resolve()
+    await cleaning
+    assert.isTrue(cleaned)
   })
 })

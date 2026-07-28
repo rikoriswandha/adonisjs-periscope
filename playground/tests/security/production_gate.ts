@@ -19,6 +19,11 @@ interface ServerHandle {
   stop(): Promise<void>
 }
 
+interface RawRequestOptions {
+  method?: string
+  headers?: Record<string, string>
+}
+
 const PLAYGROUND_ROOT = resolve(import.meta.dirname, '../..')
 const SQLITE_PATH = resolve(PLAYGROUND_ROOT, 'tmp/periscope.sqlite')
 
@@ -39,7 +44,11 @@ async function availablePort(): Promise<number> {
   })
 }
 
-function fetchRaw(origin: string, path: string): Promise<ResponseSnapshot> {
+function fetchRaw(
+  origin: string,
+  path: string,
+  options: RawRequestOptions = {}
+): Promise<ResponseSnapshot> {
   const target = new URL(origin)
 
   return new Promise((resolveResponse, reject) => {
@@ -47,9 +56,9 @@ function fetchRaw(origin: string, path: string): Promise<ResponseSnapshot> {
       {
         host: target.hostname,
         port: Number(target.port),
-        method: 'GET',
+        method: options.method ?? 'GET',
         path,
-        headers: { accept: 'text/html,application/json' },
+        headers: { accept: 'text/html,application/json', ...options.headers },
       },
       (response) => {
         const chunks: Buffer[] = []
@@ -162,6 +171,21 @@ async function productionGate(): Promise<void> {
   }
 }
 
+async function enabledProductionAuthorizationGate(): Promise<void> {
+  const server = await start('production', true)
+
+  try {
+    assertStatus('production dashboard shell', await fetchRaw(server.origin, '/periscope'), 403)
+    assertStatus(
+      'production dashboard API',
+      await fetchRaw(server.origin, '/periscope/api/entries'),
+      403
+    )
+  } finally {
+    await server.stop()
+  }
+}
+
 async function enabledTraversalGate(): Promise<void> {
   const server = await start('development', true)
 
@@ -175,11 +199,39 @@ async function enabledTraversalGate(): Promise<void> {
     if (response.body.includes('defineConfig') || response.body.includes('storage:')) {
       throw new Error('Traversal response disclosed playground/config/periscope.ts')
     }
+    assertStatus(
+      'drive-by clear request',
+      await fetchRaw(server.origin, '/periscope/api/clear', { method: 'POST' }),
+      403
+    )
+    assertStatus(
+      'same-site clear request',
+      await fetchRaw(server.origin, '/periscope/api/clear', {
+        method: 'POST',
+        headers: {
+          'sec-fetch-site': 'same-site',
+          'x-periscope-request': 'dashboard',
+        },
+      }),
+      403
+    )
+    assertStatus(
+      'dashboard clear request',
+      await fetchRaw(server.origin, '/periscope/api/clear', {
+        method: 'POST',
+        headers: {
+          'sec-fetch-site': 'same-origin',
+          'x-periscope-request': 'dashboard',
+        },
+      }),
+      204
+    )
   } finally {
     await server.stop()
   }
 }
 
 await productionGate()
+await enabledProductionAuthorizationGate()
 await enabledTraversalGate()
-console.log('Production environment gate and booted path-traversal drill passed')
+console.log('Production authorization, mutation protection, and path-traversal drills passed')

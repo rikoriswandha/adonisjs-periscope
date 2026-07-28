@@ -14,7 +14,11 @@ import {
   isRecordingEnabled,
 } from '../../src/define_config.ts'
 import { PeriscopeConfigError } from '../../src/errors.ts'
-import { DEFAULT_REDACT_HEADERS, DEFAULT_REDACT_KEYS } from '../../src/recorder/redactor.ts'
+import {
+  DEFAULT_REDACT_HEADERS,
+  DEFAULT_REDACT_KEYS,
+  DEFAULT_REDACT_VALUE_PATTERNS,
+} from '../../src/recorder/redactor.ts'
 import { ENTRY_TYPES, EntryType } from '../../src/types.ts'
 import type { PeriscopeConfig, ResolvedPeriscopeConfig } from '../../src/types.ts'
 
@@ -59,6 +63,7 @@ const DEFAULTS: ResolvedPeriscopeConfig = {
   redact: {
     keys: [...DEFAULT_REDACT_KEYS],
     headers: [...DEFAULT_REDACT_HEADERS],
+    valuePatterns: [...DEFAULT_REDACT_VALUE_PATTERNS],
     replacement: '[REDACTED]',
   },
   hooks: {
@@ -155,9 +160,35 @@ function rejectionOf(config: unknown): { issues: string[]; paths: string[] } {
   throw new Error('expected defineConfig() to throw a PeriscopeConfigError, it returned')
 }
 
+function authorizationContext(inProduction: boolean) {
+  return {
+    containerResolver: {
+      make: async () => ({ inProduction }),
+    },
+  } as unknown as Parameters<typeof DEFAULT_DASHBOARD_AUTHORIZE>[0]
+}
+
 test.group('defineConfig | defaults', () => {
   test('resolve an empty config to exactly the documented defaults', ({ assert }) => {
     assert.deepEqual(defineConfig({}), DEFAULTS)
+  })
+
+  test('deny production by default using the application for each request', async ({ assert }) => {
+    const authorize = defineConfig({}).dashboard.authorize
+
+    assert.isTrue(await authorize(authorizationContext(false)))
+    assert.isFalse(await authorize(authorizationContext(true)))
+    assert.isTrue(await authorize(authorizationContext(false)))
+  })
+
+  test('keep an application-defined authorizer instead of the production default', async ({
+    assert,
+  }) => {
+    const authorize = async () => true
+    const config = defineConfig({ dashboard: { authorize } })
+
+    assert.strictEqual(config.dashboard.authorize, authorize)
+    assert.isTrue(await config.dashboard.authorize(authorizationContext(true)))
   })
 
   test('default to the durable sqlite-local driver, not the ring buffer', ({ assert }) => {
@@ -295,6 +326,7 @@ test.group('defineConfig | merging', () => {
 
     assert.deepEqual(config.redact.keys, ['internal_reference'])
     assert.deepEqual(config.redact.headers, [...DEFAULT_REDACT_HEADERS])
+    assert.deepEqual(config.redact.valuePatterns, [...DEFAULT_REDACT_VALUE_PATTERNS])
   })
 
   test('extend the shipped redaction list only when it is spread explicitly', ({ assert }) => {
@@ -303,6 +335,19 @@ test.group('defineConfig | merging', () => {
     assert.lengthOf(config.redact.keys, DEFAULT_REDACT_KEYS.length + 1)
     assert.include(config.redact.keys, 'password')
     assert.include(config.redact.keys, 'internal_ref')
+  })
+
+  test('replace or disable value patterns explicitly', ({ assert }) => {
+    const custom = /tenant-secret-[a-z]+/g
+
+    const replaced = defineConfig({ redact: { valuePatterns: [custom] } })
+    if (replaced.redact.valuePatterns === false) {
+      throw new Error('value patterns were unexpectedly disabled')
+    }
+    assert.deepEqual(replaced.redact.valuePatterns, [custom])
+    assert.notStrictEqual(replaced.redact.valuePatterns[0], custom)
+
+    assert.isFalse(defineConfig({ redact: { valuePatterns: false } }).redact.valuePatterns)
   })
 
   test('replace enabledIn instead of appending to it', ({ assert }) => {
@@ -326,6 +371,21 @@ test.group('defineConfig | merging', () => {
     keys.push('two')
 
     assert.deepEqual(config.redact.keys, ['one'])
+  })
+
+  test('copy the value-pattern array and its stateful expressions', ({ assert }) => {
+    const pattern = /tenant-secret-[a-z]+/g
+    const patterns = [pattern]
+    const config = defineConfig({ redact: { valuePatterns: patterns } })
+
+    patterns.push(/later/)
+    pattern.lastIndex = 12
+
+    if (config.redact.valuePatterns === false) {
+      throw new Error('value patterns were unexpectedly disabled')
+    }
+    assert.lengthOf(config.redact.valuePatterns, 1)
+    assert.equal(config.redact.valuePatterns[0].lastIndex, 0)
   })
 
   test('accept an empty string as the redaction replacement', ({ assert }) => {
@@ -470,6 +530,14 @@ test.group('defineConfig | validation', () => {
 
   test('reject a blank redaction header', ({ assert }) => {
     assert.include(rejectionOf({ redact: { headers: [''] } }).paths, 'redact.headers[0]')
+  })
+
+  test('reject value patterns that are neither regular expressions nor false', ({ assert }) => {
+    assert.include(
+      rejectionOf({ redact: { valuePatterns: ['password'] } }).paths,
+      'redact.valuePatterns[0]'
+    )
+    assert.include(rejectionOf({ redact: { valuePatterns: true } }).paths, 'redact.valuePatterns')
   })
 
   test('reject a non-string replacement', ({ assert }) => {

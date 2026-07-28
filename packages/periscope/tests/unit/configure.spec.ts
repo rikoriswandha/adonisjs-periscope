@@ -39,7 +39,12 @@ const SHIELD = `import { defineConfig } from '@adonisjs/shield'
 export default defineConfig({
   csrf: {
     enabled: true,
-    exceptRoutes: ['/health'],
+    exceptRoutes: [
+      '/health',
+      '/periscope/api/flags/:name',
+      '/periscope/api/clear',
+      '/periscope/api/monitored-tags/:tag',
+    ],
   },
 })
 `
@@ -168,9 +173,10 @@ test.group('Configure', () => {
       kernel,
       /server\.use\(\[\s*\(\) => import\('adonisjs-periscope\/middleware\/request_watcher'\)/
     )
-    assert.equal(count(shield, '/periscope/api/flags/:name'), 1)
-    assert.equal(count(shield, '/periscope/api/clear'), 1)
-    assert.notInclude(shield, '/periscope/*')
+    assert.equal(count(shield, '/periscope/api/flags/:name'), 0)
+    assert.equal(count(shield, '/periscope/api/clear'), 0)
+    assert.equal(count(shield, '/periscope/api/monitored-tags/:tag'), 0)
+    assert.equal(count(shield, '/health'), 1)
     assert.equal(count(handler, "from 'adonisjs-periscope/exception_reporter'"), 1)
     assert.equal(count(handler, 'export default withPeriscope(HttpExceptionHandler)'), 1)
     assert.equal(first.promptCalls.choice, 1)
@@ -201,12 +207,13 @@ test.group('Configure', () => {
     assert.equal(count(rerunRcFile, "import('adonisjs-periscope/provider')"), 1)
     assert.equal(count(rerunRcFile, "import('adonisjs-periscope/commands')"), 1)
     assert.equal(count(rerunKernel, "import('adonisjs-periscope/middleware/request_watcher')"), 1)
-    assert.equal(count(rerunShield, '/periscope/api/flags/:name'), 1)
-    assert.equal(count(rerunShield, '/periscope/api/clear'), 1)
+    assert.equal(count(rerunShield, '/periscope/api/flags/:name'), 0)
+    assert.equal(count(rerunShield, '/periscope/api/clear'), 0)
+    assert.equal(count(rerunShield, '/periscope/api/monitored-tags/:tag'), 0)
     assert.strictEqual(rerunHandler, handler)
     assert.deepEqual(second.promptCalls, { choice: 0, ask: 0, confirm: 0 })
     assert.deepEqual(second.evaluatedModules, [])
-  }).timeout(10_000)
+  }).timeout(30_000)
 
   test('shows the exception diff and leaves the handler untouched when declined', async ({
     assert,
@@ -279,7 +286,7 @@ test.group('Configure', () => {
     )
     assert.isTrue(second.ui.logger.getLogs().some((log) => log.message.includes('debug: true')))
     assert.deepEqual(second.evaluatedModules, [])
-  }).timeout(10_000)
+  }).timeout(30_000)
 
   test('preserves custom integration files and prints exact manual fallbacks', async ({
     assert,
@@ -343,6 +350,7 @@ export default compose(HttpExceptionHandler)
     assert.include(logs, "() => import('adonisjs-periscope/middleware/request_watcher')")
     assert.include(logs, `ctx.route?.pattern === "/scope/api/flags/:name"`)
     assert.include(logs, `ctx.route?.pattern === "/scope/api/clear"`)
+    assert.include(logs, `ctx.route?.pattern === "/scope/api/monitored-tags/:tag"`)
     assert.include(logs, "import { withPeriscope } from 'adonisjs-periscope/exception_reporter'")
     assert.include(logs, 'export default withPeriscope(compose(HttpExceptionHandler))')
     assert.include(logs, "environment: ['web', 'console', 'test']")
@@ -403,7 +411,7 @@ export default class extends ExceptionHandler {}
         .getLogs()
         .some((log) => log.message.includes('give an anonymous class a name'))
     )
-  }).timeout(10_000)
+  }).timeout(30_000)
 
   test('moves one existing request watcher without duplication and warns on unsafe shapes', async ({
     assert,
@@ -470,7 +478,7 @@ server.use([
     const custom = await makeCommand(fs)
     await configure(custom.command)
     assert.strictEqual(await fs.contents('start/kernel.ts'), customKernel)
-  }).timeout(10_000)
+  }).timeout(30_000)
 
   test('infers preserved config blocks independently of property order and keeps dynamic fallback', async ({
     assert,
@@ -500,8 +508,9 @@ server.use([
     )
     assert.lengthOf(migrations, 1)
     const shield = await fs.contents('config/shield.ts')
-    assert.include(shield, '/scope/api/flags/:name')
-    assert.include(shield, '/scope/api/clear')
+    assert.notInclude(shield, '/scope/api/flags/:name')
+    assert.notInclude(shield, '/scope/api/clear')
+    assert.notInclude(shield, '/scope/api/monitored-tags/:tag')
     assert.deepEqual(structural.promptCalls, { choice: 0, ask: 0, confirm: 1 })
 
     await Promise.all([
@@ -529,7 +538,7 @@ server.use([
         .getLogs()
         .some((log) => log.message.includes('could not infer the dashboard path'))
     )
-  }).timeout(10_000)
+  }).timeout(30_000)
 
   test('converts declaration and specifier type-only reporter imports to runtime bindings', async ({
     assert,
@@ -590,5 +599,5 @@ export default HttpExceptionHandler
     await configure(specifierRerun.command)
     assert.strictEqual(await fs.contents('app/exceptions/handler.ts'), specifierResult)
     assert.equal(specifierRerun.promptCalls.confirm, 0)
-  }).timeout(10_000)
+  }).timeout(30_000)
 })

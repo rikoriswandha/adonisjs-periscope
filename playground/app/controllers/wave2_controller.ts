@@ -8,8 +8,8 @@ import { inspectWave2Ability } from '#abilities/main'
 import FanoutNotification from '#mails/fanout_notification'
 import User from '#models/user'
 
-const CACHE_KEY = 'wave2:fixture'
-const USER_EMAIL = 'wave2@periscope.test'
+const CACHE_KEY = 'integration:fixture'
+const USER_EMAIL = 'integration@periscope.test'
 
 export default class Wave2Controller {
   /**
@@ -22,40 +22,43 @@ export default class Wave2Controller {
     const missed = await cache.get({ key: CACHE_KEY })
     await cache.set({
       key: CACHE_KEY,
-      value: { phase: 6, password: 'wave2-cache-secret' },
+      value: { scenario: 'integration', password: 'cache-secret' },
     })
-    const cached = await cache.get<{ phase: number; password: string }>({ key: CACHE_KEY })
+    const cached = await cache.get<{ scenario: string; password: string }>({ key: CACHE_KEY })
 
     await User.query().where('email', USER_EMAIL).delete()
     const user = await User.create({
-      fullName: 'Wave 2 Fixture',
+      fullName: 'Integration Fixture',
       email: USER_EMAIL,
-      password: 'wave2-model-secret',
+      password: 'model-secret',
     })
 
     try {
-      user.fullName = 'Wave 2 Updated'
+      user.fullName = 'Integration Updated'
       await user.save()
 
       const allowed = await new Bouncer(user).allows(inspectWave2Ability, {
         ownerId: user.id,
-        password: 'wave2-gate-secret',
+        password: 'gate-secret',
       })
 
-      const dumped = dump({ phase: 6, password: 'wave2-dump-secret' })
-      const sent = await mail.send(new FanoutNotification('wave2@periscope.test'))
+      const dumped = dump({ scenario: 'integration', password: 'dump-secret' })
+      const sent = await mail.send(new FanoutNotification('integration@periscope.test'))
 
-      const probeUrl = new URL('/?token=wave2-http-secret&phase=6', request.completeUrl())
+      const probeUrl = new URL(
+        '/?token=http-client-secret&scenario=integration',
+        request.completeUrl()
+      )
       const probe = await fetch(probeUrl, {
-        headers: { 'authorization': 'Bearer wave2-http-secret', 'x-wave2-probe': 'true' },
+        headers: { 'authorization': 'Bearer http-client-secret', 'x-periscope-probe': 'true' },
       })
       await probe.json()
 
       return {
-        cache: { missed: missed === undefined, phase: cached.phase },
+        cache: { missed: missed === undefined, scenario: cached.scenario },
         model: { id: user.id, fullName: user.fullName },
         gate: { allowed },
-        dump: { phase: dumped.phase },
+        dump: { scenario: dumped.scenario },
         mail: { messageId: sent.messageId },
         httpClient: { status: probe.status },
       }

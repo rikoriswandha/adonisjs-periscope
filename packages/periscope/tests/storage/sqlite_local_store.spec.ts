@@ -7,7 +7,7 @@
 
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -155,11 +155,10 @@ db.close()
  * The other process in the trim test: one trim frozen halfway through, holding the write lock
  * with its deletion already applied and its commit still pending.
  *
- * The recorder trims every twenty-fifth flush *in every process*, so two of them measuring the
- * same file against the same cap — and therefore the same excess — is the normal case rather
- * than a contrived one. This process plays the first of the two: it deletes the excess it
- * measured, announces itself, and keeps the transaction open long enough for the second trim to
- * count the file as it was before any of it happened.
+ * Every process trims after each successful flush, so two of them enforcing the same cap against
+ * one file is the normal case rather than a contrived one. This process plays the first: it
+ * deletes the excess it measured, announces itself, and keeps the transaction open long enough
+ * for the second trim to observe the contention.
  */
 const STALE_TRIMMER_PROCESS = `
 import Database from 'better-sqlite3'
@@ -187,7 +186,7 @@ db.transaction(() => {
    * commit would land first and the second trim would simply find nothing to do.
    */
   process.stdout.write('cut\\n')
-  Atomics.wait(idle, 0, 0, 400)
+  Atomics.wait(idle, 0, 0, 50)
 }).immediate()
 
 db.close()
@@ -248,6 +247,19 @@ test.group('SqliteLocalStore', () => {
     const found = await store.find(entry.uuid)
 
     assert.equal(found?.uuid, entry.uuid)
+  })
+
+  test('create a new database file with owner-only permissions', async ({ assert, cleanup }) => {
+    const file = createDatabaseFile()
+    const store = new SqliteLocalStore({ path: file.path })
+    cleanup(async () => {
+      await store.close()
+      file.remove()
+    })
+
+    if (process.platform !== 'win32') {
+      assert.equal(statSync(file.path).mode & 0o777, 0o600)
+    }
   })
 
   test('keep the database in WAL mode', async ({ assert, cleanup }) => {
@@ -370,6 +382,37 @@ test.group('SqliteLocalStore', () => {
     assert.deepEqual(tagRowCounts(file.path), { total: 4, orphans: 0 })
   })
 
+  test('sweep expired flags during trim and prune maintenance', async ({ assert, cleanup }) => {
+    const file = createDatabaseFile()
+    const store = new SqliteLocalStore({ path: file.path })
+    cleanup(async () => {
+      await store.close()
+      file.remove()
+    })
+
+    await store.setFlag('expired-before-trim', '1', {
+      expiresAt: new Date(Date.now() - 1_000),
+    })
+    await store.setFlag('live', '1', { expiresAt: new Date(Date.now() + 60_000) })
+    await store.trim(100)
+
+    await store.setFlag('expired-before-prune', '1', {
+      expiresAt: new Date(Date.now() - 1_000),
+    })
+    await store.prune({ before: new Date(0) })
+
+    const reader = openReader(file.path)
+    try {
+      const rows = reader.prepare<[], { name: string }>(`select name from ${FLAGS_TABLE}`).all()
+      assert.deepEqual(
+        rows.map(({ name }) => name),
+        ['live']
+      )
+    } finally {
+      reader.close()
+    }
+  })
+
   test('delete every tag row on clear', async ({ assert, cleanup }) => {
     const file = createDatabaseFile()
     const store = new SqliteLocalStore({ path: file.path })
@@ -422,6 +465,26 @@ test.group('SqliteLocalStore', () => {
     await saving
 
     assert.equal(total.get()?.total, 1)
+  })
+
+  test('drain a scheduled save before closing the database handle', async ({ assert, cleanup }) => {
+    const file = createDatabaseFile()
+    const store = new SqliteLocalStore({ path: file.path })
+    cleanup(() => file.remove())
+    const saving = store.save([makeStoredEntry()])
+
+    await store.close()
+    await saving
+
+    const reader = openReader(file.path)
+    try {
+      const row = reader
+        .prepare<[], { total: number }>(`select count(*) as total from ${ENTRIES_TABLE}`)
+        .get()
+      assert.equal(row?.total, 1)
+    } finally {
+      reader.close()
+    }
   })
 
   test('survive a second process writing the same file', async ({ assert, cleanup }) => {

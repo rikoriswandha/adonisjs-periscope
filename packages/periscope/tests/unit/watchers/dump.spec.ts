@@ -131,13 +131,42 @@ test.group('DumpWatcher and dump()', () => {
     assert,
   }) => {
     const { watcher } = await makeWatcher(true)
-    watcher.cleanup()
-    watcher.cleanup()
+    await watcher.cleanup()
+    await watcher.cleanup()
 
     const context = BatchScope.createContext('request')
     assert.doesNotThrow(() => BatchScope.runWith(context, () => dump('after-cleanup')))
     assert.isFalse(watcher.active)
     assert.isNull(getActiveWatcher('dump'))
     assert.lengthOf(context.buffer, 0)
+  })
+
+  test('await an in-flight flag refresh during cleanup', async ({ assert }) => {
+    const { app, emitter } = await createApp()
+    const config = defineConfig({})
+    const store = new MemoryStore({ maxEntries: 100 })
+    const recorder = new Recorder({ config, store })
+    const watcher = new DumpWatcher({ app, emitter, recorder, config, dev: true })
+    const read = Promise.withResolvers<void>()
+    const started = Promise.withResolvers<void>()
+
+    store.hasFlagWithPrefix = async () => {
+      started.resolve()
+      await read.promise
+      return false
+    }
+
+    const registering = watcher.register()
+    await started.promise
+    let cleaned = false
+    const cleaning = watcher.cleanup().then(() => {
+      cleaned = true
+    })
+    await Promise.resolve()
+
+    assert.isFalse(cleaned)
+    read.resolve()
+    await Promise.all([registering, cleaning])
+    assert.isTrue(cleaned)
   })
 })

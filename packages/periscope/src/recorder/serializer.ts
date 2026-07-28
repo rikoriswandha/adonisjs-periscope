@@ -114,8 +114,8 @@ export type SerializeOptions = {
 
 /**
  * The serializer owns these defaults outright — there is deliberately no `config.serialization`
- * knob mirroring them, because until a watcher needs to override the limits (P3.6's Event watcher
- * caps payloads at 8 KB by passing its own options) nothing would read it. 16 KB is roughly the
+ * knob mirroring them, because until a watcher needs to override the limits (the Event watcher
+ * caps payloads at 8 KB by passing its own options), nothing would read it. 16 KB is roughly the
  * point past which a payload stops being readable in the dashboard anyway.
  */
 export const SERIALIZER_DEFAULTS = {

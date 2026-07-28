@@ -433,18 +433,18 @@ function normalizeDashboardPath(path: string) {
   return withLeadingSlash.replace(/\/+$/, '')
 }
 
-function shieldRoutes(dashboardPath: string) {
+function shieldMutationRoutes(dashboardPath: string) {
   const prefix = normalizeDashboardPath(dashboardPath)
-  return [`${prefix}/api/flags/:name`, `${prefix}/api/clear`]
+  return [`${prefix}/api/flags/:name`, `${prefix}/api/clear`, `${prefix}/api/monitored-tags/:tag`]
 }
 
 function warnShield(command: Configure, dashboardPath: string) {
-  const routes = shieldRoutes(dashboardPath)
+  const routes = shieldMutationRoutes(dashboardPath)
   command.logger.warning(
-    'Shield is installed, but its exceptRoutes setting is not a standard array. Preserve the custom predicate and make it return true for exactly these Periscope mutation route patterns:'
+    'Shield is installed, but its exceptRoutes setting is not a standard array. Preserve the custom predicate, but ensure it returns false for every Periscope mutation route pattern below so Shield validates their CSRF tokens:'
   )
   command.logger.log(
-    routes.map((route) => `ctx.route?.pattern === ${JSON.stringify(route)}`).join(' ||\n')
+    routes.map((route) => `ctx.route?.pattern === ${JSON.stringify(route)}`).join('\n')
   )
 }
 
@@ -456,7 +456,7 @@ async function configureShield(
   if (!packageIsAvailable(command, '@adonisjs/shield')) return 'not-applicable'
   if (!dashboardPath) {
     command.logger.warning(
-      'Shield is installed, but Periscope could not infer the dashboard path from the preserved config. Add exact exceptions for <dashboard>/api/flags/:name and <dashboard>/api/clear; array entries are exact route patterns, not globs.'
+      'Shield is installed, but Periscope could not infer the dashboard path from the preserved config. Remove any Periscope flags, clear, and monitored-tag mutation patterns from csrf.exceptRoutes after resolving the dashboard path.'
     )
     return 'manual-action'
   }
@@ -473,26 +473,33 @@ async function configureShield(
     csrfInitializer?.getKindName() === 'ObjectLiteralExpression'
       ? (csrfInitializer as ObjectLiteralExpression)
       : undefined
-  const exceptRoutes = csrf && arrayProperty(csrf, 'exceptRoutes')
-
-  if (!file || !exceptRoutes) {
+  if (!file || !csrf) {
     warnShield(command, dashboardPath)
     return 'manual-action'
   }
 
-  const routes = shieldRoutes(dashboardPath)
-  const existing = new Set(
-    exceptRoutes
-      .getElements()
-      .filter((element) => element.getKindName() === 'StringLiteral')
-      .map((element) => {
-        const literal = element as StringLiteral
-        return literal.getLiteralValue()
-      })
-  )
-  const missing = routes.filter((route) => !existing.has(route))
-  if (missing.length === 0) return 'already-configured'
-  missing.forEach((route) => exceptRoutes.addElement(JSON.stringify(route)))
+  const exceptRoutesProperty = csrf.getProperty('exceptRoutes')
+  if (!exceptRoutesProperty) return 'already-configured'
+
+  const exceptRoutes = arrayProperty(csrf, 'exceptRoutes')
+  if (!exceptRoutes) {
+    warnShield(command, dashboardPath)
+    return 'manual-action'
+  }
+
+  const routes = shieldMutationRoutes(dashboardPath)
+  const indexes: number[] = []
+  exceptRoutes.getElements().forEach((element, index) => {
+    if (
+      element.getKindName() === 'StringLiteral' &&
+      routes.includes((element as StringLiteral).getLiteralValue())
+    ) {
+      indexes.push(index)
+    }
+  })
+
+  if (indexes.length === 0) return 'already-configured'
+  indexes.reverse().forEach((index) => exceptRoutes.removeElement(index))
   await file.save()
   return 'configured'
 }
@@ -719,8 +726,8 @@ function printChecklist(
   )
   command.logger.log(
     outcomes.shield === 'not-applicable'
-      ? '[x] Shield is not installed; no CSRF exception is required'
-      : `${complete(outcomes.shield) ? '[x]' : '[ ]'} Exempt only the two exact Periscope mutation route patterns from Shield CSRF`
+      ? '[x] Shield is not installed; Periscope mutations require the dashboard-only request header'
+      : `${complete(outcomes.shield) ? '[x]' : '[ ]'} Keep every Periscope mutation route under Shield CSRF verification`
   )
   command.logger.log(
     `${complete(outcomes.exceptionHandler) ? '[x]' : '[ ]'} Wrap the application exception handler with withPeriscope`

@@ -232,7 +232,7 @@ test.group('Types | EntryQuery', () => {
 
     /**
      * The cursor is an opaque string even though it is derived from a `bigint` sequence — a
-     * driver handing back a `bigint` would not survive the JSON API in P4.
+     * driver handing back a `bigint` would not survive the JSON API.
      */
     expectTypeOf<Required<EntryQuery>['cursor']>().toEqualTypeOf<string>()
     expectTypeOf<Required<EntryQuery>['type']>().toEqualTypeOf<EntryType>()
@@ -435,8 +435,8 @@ test.group('Types | configuration', () => {
     assert.deepEqual(Object.keys(empty), [])
 
     /**
-     * `defineConfig` deep-merges over defaults, so later phases may add keys additively. That
-     * only holds while *every* key is optional — `Partial<T>` equalling `T` is exactly that.
+     * `defineConfig` deep-merges over defaults, so keys may be added without breaking callers.
+     * That only holds while *every* key is optional — `Partial<T>` equalling `T` is exactly that.
      */
     expectTypeOf<Partial<PeriscopeConfig>>().toEqualTypeOf<PeriscopeConfig>()
     expectTypeOf({}).toExtend<PeriscopeConfig>()
@@ -484,7 +484,7 @@ test.group('Types | configuration', () => {
         ambientRotationMs: 10_000,
         pausedFlagTtlMs: 5_000,
       },
-      redact: { keys: [], headers: [], replacement: '[REDACTED]' },
+      redact: { keys: [], headers: [], valuePatterns: false, replacement: '[REDACTED]' },
       hooks: { filter: [], tag: [] },
       watchers: {
         request: {
@@ -598,6 +598,7 @@ test.group('Types | configuration', () => {
     expectTypeOf<ResolvedPeriscopeConfig['redact']>().toEqualTypeOf<{
       keys: string[]
       headers: string[]
+      valuePatterns: RegExp[] | false
       replacement: string
     }>()
     expectTypeOf<ResolvedPeriscopeConfig['hooks']>().toEqualTypeOf<{

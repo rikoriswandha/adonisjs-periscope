@@ -30,7 +30,11 @@
  */
 
 import { PeriscopeConfigError } from './errors.ts'
-import { DEFAULT_REDACT_HEADERS, DEFAULT_REDACT_KEYS } from './recorder/redactor.ts'
+import {
+  DEFAULT_REDACT_HEADERS,
+  DEFAULT_REDACT_KEYS,
+  DEFAULT_REDACT_VALUE_PATTERNS,
+} from './recorder/redactor.ts'
 import { ENTRY_TYPES, EntryType } from './types.ts'
 import type {
   CaptureMode,
@@ -55,7 +59,12 @@ import type {
  * redact: { keys: [...DEFAULT_REDACT_KEYS, 'internal_reference'] }
  * ```
  */
-export { DEFAULT_REDACT_HEADERS, DEFAULT_REDACT_KEYS } from './recorder/redactor.ts'
+export {
+  DEFAULT_REDACT_HEADERS,
+  DEFAULT_REDACT_KEYS,
+  DEFAULT_REDACT_VALUE_PATTERNS,
+  REDACT_EMAIL_PATTERN,
+} from './recorder/redactor.ts'
 
 /**
  * Top-level keys of `config/periscope.ts`. Doubles as the accepted-key list quoted back to the
@@ -114,7 +123,7 @@ const DEFAULT_QUERY_CAP = 200
 const DEFAULT_REPLACEMENT = '[REDACTED]'
 
 /**
- * Watcher defaults (P3 and P6).
+ * Watcher defaults.
  *
  * The two thresholds are the interesting numbers. A second is the point at which a human
  * notices a page is slow, and 100 ms is the point at which a single query stops being noise in
@@ -141,7 +150,16 @@ const CAPTURE_MODES: readonly CaptureMode[] = ['dev', 'always', 'never']
  */
 const DEFAULT_DASHBOARD_PATH = '/periscope'
 const DEFAULT_N_PLUS_ONE_THRESHOLD = 5
-export const DEFAULT_DASHBOARD_AUTHORIZE: DashboardAuthorize = () => true
+
+/**
+ * Resolve the application through the request container instead of a process-global service.
+ * Multiple Adonis applications may coexist in one process and must keep their production gates
+ * isolated.
+ */
+export const DEFAULT_DASHBOARD_AUTHORIZE: DashboardAuthorize = async ({ containerResolver }) => {
+  const app = await containerResolver.make('app')
+  return !app.inProduction
+}
 
 /**
  * Recognised values of `PERISCOPE_ENABLED`, compared trimmed and lower-cased. Anything else is
@@ -350,6 +368,40 @@ function readStringArray(path: string, value: unknown, issues: string[]): string
   }
 
   return valid ? (items as readonly string[]).slice() : undefined
+}
+
+/**
+ * Value patterns may be disabled independently of key/header redaction. Expressions are cloned
+ * while resolving config so neither a caller's `lastIndex` nor later array mutation can alter the
+ * live recorder.
+ */
+function readRegExpArrayOrFalse(
+  path: string,
+  value: unknown,
+  issues: string[]
+): RegExp[] | false | undefined {
+  if (value === undefined || value === false) {
+    return value
+  }
+
+  if (!Array.isArray(value)) {
+    issues.push(`${path}: must be an array of regular expressions or false; got ${describe(value)}`)
+    return undefined
+  }
+
+  const patterns: RegExp[] = []
+  let valid = true
+  for (const [index, pattern] of value.entries()) {
+    if (!(pattern instanceof RegExp)) {
+      issues.push(`${path}[${index}]: must be a regular expression; got ${describe(pattern)}`)
+      valid = false
+      continue
+    }
+
+    patterns.push(new RegExp(pattern.source, pattern.flags))
+  }
+
+  return valid ? patterns : undefined
 }
 
 function readFunctionArray<T>(path: string, value: unknown, issues: string[]): T[] | undefined {
@@ -688,8 +740,8 @@ function normalisePath(path: string): string {
  * - Nested blocks merge key-by-key, so `{ storage: { driver: 'memory' } }` keeps the default
  *   `maxEntries`.
  * - Arrays **replace**, they never concatenate. That holds for `enabledIn`, `redact.keys`,
- *   `redact.headers` and both hook lists. To extend the shipped redaction lists rather than
- *   replace them, spread them: `keys: [...DEFAULT_REDACT_KEYS, 'internal_ref']`.
+ *   `redact.headers`, `redact.valuePatterns` and both hook lists. To extend the shipped
+ *   redaction lists rather than replace them, spread the corresponding exported default.
  * - `recording.caps` is sparse on the way in and dense on the way out.
  * - `storage.connection` stays absent unless the application sets it, rather than being
  *   materialised as an explicit `undefined`.
@@ -771,9 +823,15 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
     issues
   )
 
-  const redact = readBlock(input, 'redact', ['keys', 'headers', 'replacement'], issues)
+  const redact = readBlock(
+    input,
+    'redact',
+    ['keys', 'headers', 'valuePatterns', 'replacement'],
+    issues
+  )
   const redactKeys = readStringArray('redact.keys', redact.keys, issues)
   const redactHeaders = readStringArray('redact.headers', redact.headers, issues)
+  const valuePatterns = readRegExpArrayOrFalse('redact.valuePatterns', redact.valuePatterns, issues)
   const replacement = readString('redact.replacement', redact.replacement, issues)
 
   const hooks = readBlock(input, 'hooks', ['filter', 'tag'], issues)
@@ -838,6 +896,9 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
     redact: {
       keys: redactKeys ?? [...DEFAULT_REDACT_KEYS],
       headers: redactHeaders ?? [...DEFAULT_REDACT_HEADERS],
+      valuePatterns:
+        valuePatterns ??
+        DEFAULT_REDACT_VALUE_PATTERNS.map((pattern) => new RegExp(pattern.source, pattern.flags)),
       replacement: replacement ?? DEFAULT_REPLACEMENT,
     },
     hooks: {
@@ -856,8 +917,8 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
 /**
  * The environment gate: should this process record at all?
  *
- * Used by the provider when it builds the recorder (P1.6) and again by the dashboard's
- * `authorize` middleware (P4.1), which is why it lives here rather than inside the recorder —
+ * Used by the provider when it builds the recorder and again by the dashboard's `authorize`
+ * middleware, which is why it lives here rather than inside the recorder —
  * both callers must reach the same verdict from the same rule.
  *
  * `periscopeEnabled` is the raw `process.env.PERISCOPE_ENABLED` string, passed in rather than

@@ -523,6 +523,32 @@ export function runStoreContractTests(driverName: string, createStore: StoreFact
       assert.equal(pages, 3)
     })
 
+    test('paginate tied cross-process sequences without skipping rows', async ({ assert }) => {
+      const sequence = BigInt(Date.now()) * 1_000_000n
+      const entries = Array.from({ length: 5 }, (_, index) =>
+        makeStoredEntry({
+          sequence,
+          uuid: `00000000-0000-0000-0000-${String(index + 1).padStart(12, '0')}`,
+        })
+      )
+      await store.save(entries)
+
+      const seen: string[] = []
+      let cursor: string | undefined
+
+      do {
+        const page = await store.list({ limit: 2, cursor })
+        seen.push(...page.data.map((entry) => entry.uuid))
+        cursor = page.nextCursor ?? undefined
+      } while (cursor !== undefined)
+
+      assert.deepEqual(
+        seen,
+        [...entries].reverse().map((entry) => entry.uuid)
+      )
+      assert.equal(new Set(seen).size, entries.length)
+    })
+
     test('resolve a null cursor on a last page that is exactly full', async ({ assert }) => {
       const entries = Array.from({ length: 4 }, () => makeStoredEntry())
 
@@ -854,6 +880,24 @@ export function runStoreContractTests(driverName: string, createStore: StoreFact
         [entries[4].uuid, entries[3].uuid]
       )
       assert.isNull(await store.find(entries[0].uuid))
+    })
+
+    test('enforce the trim cap when every sequence is tied', async ({ assert }) => {
+      const sequence = BigInt(Date.now()) * 1_000_000n
+      const entries = Array.from({ length: 5 }, (_, index) =>
+        makeStoredEntry({
+          sequence,
+          uuid: `00000000-0000-0000-0000-${String(index + 1).padStart(12, '0')}`,
+        })
+      )
+      await store.save(entries)
+
+      assert.equal(await store.trim(2), 3)
+      const page = await store.list()
+      assert.deepEqual(
+        page.data.map((entry) => entry.uuid),
+        [entries[4].uuid, entries[3].uuid]
+      )
     })
 
     test('return zero when the store is already under the cap', async ({ assert }) => {

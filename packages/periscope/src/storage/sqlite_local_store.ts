@@ -5,7 +5,7 @@
  * file that was distributed with this source code.
  */
 
-import { mkdirSync } from 'node:fs'
+import { closeSync, constants, mkdirSync, openSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 import Database from 'better-sqlite3'
@@ -25,8 +25,13 @@ import type {
   PruneOptions,
   StoredEntry,
 } from '../types.ts'
-import { encodeCursor, parseCursor, resolvePageSize } from './pagination.ts'
-import { aggregateExceptionGroups } from './exception_groups.ts'
+import {
+  encodeCursor,
+  encodeEntryCursor,
+  parseCursor,
+  parseEntryCursor,
+  resolvePageSize,
+} from './pagination.ts'
 import {
   ENTRIES_TABLE,
   FLAGS_TABLE,
@@ -40,6 +45,7 @@ import {
   toTagRows,
 } from './sql.ts'
 import type { EntryRow, TagRow } from './sql.ts'
+import type { EntryCursor } from './pagination.ts'
 
 /**
  * Everything better-sqlite3 will bind. The driver refuses a JavaScript `boolean`, a `Date`, a
@@ -69,16 +75,19 @@ const ENTRY_COLUMNS =
 const ENTRY_COLUMN_COUNT = 10
 
 /**
- * How long a statement waits for a lock held by another connection before giving up.
- *
- * Two processes routinely have this file open: `node ace serve` writing entries and
- * `node ace periscope:prune` (or a second dashboard) deleting them. WAL lets them read
- * concurrently but still serialises writers, so a prune commit can hold the write lock for a
- * moment. Five seconds is far longer than any statement here takes and turns what would be an
- * immediate `SQLITE_BUSY` into a short wait; the alternative — failing the flush — loses entries
- * for no reason.
+ * How often {@link SqliteLocalStore.trim} sweeps expired flags and re-reads `count(*)` from the
+ * file. Between sweeps the ceiling check runs against the in-process count, so a flush costs no
+ * SQL when the store is under its cap; the interval bounds both how long an expired flag row can
+ * linger and how long another process's inserts can go unseen by this one's ceiling.
  */
-const BUSY_TIMEOUT_MS = 5_000
+const MAINTENANCE_INTERVAL_MS = 30_000
+
+/**
+ * better-sqlite3 waits synchronously on the event-loop thread. WAL keeps normal reads concurrent,
+ * while this short ceiling lets the recorder retain and retry a fragment instead of freezing the
+ * host for seconds when another process holds the writer lock.
+ */
+const BUSY_TIMEOUT_MS = 100
 
 /**
  * The schema, created on first open.
@@ -113,11 +122,11 @@ create table if not exists ${ENTRIES_TABLE} (
 );
 
 create index if not exists periscope_entries_sequence_index
-  on ${ENTRIES_TABLE} (sequence);
+  on ${ENTRIES_TABLE} (sequence, uuid);
 create index if not exists periscope_entries_type_display_index
-  on ${ENTRIES_TABLE} (type, should_display_on_index, sequence);
+  on ${ENTRIES_TABLE} (type, should_display_on_index, sequence, uuid);
 create index if not exists periscope_entries_batch_id_index
-  on ${ENTRIES_TABLE} (batch_id, sequence);
+  on ${ENTRIES_TABLE} (batch_id, sequence, uuid);
 create index if not exists periscope_entries_family_hash_index
   on ${ENTRIES_TABLE} (family_hash);
 create index if not exists periscope_entries_created_at_index
@@ -146,9 +155,9 @@ create table if not exists ${FLAGS_TABLE} (
 
 const APPLICATION_INDEXES = `
 create index if not exists periscope_entries_application_type_display_index
-  on ${ENTRIES_TABLE} (application, type, should_display_on_index, sequence);
+  on ${ENTRIES_TABLE} (application, type, should_display_on_index, sequence, uuid);
 create index if not exists periscope_entries_application_sequence_index
-  on ${ENTRIES_TABLE} (application, sequence);
+  on ${ENTRIES_TABLE} (application, sequence, uuid);
 `
 
 /**
@@ -197,6 +206,8 @@ function openDatabase(path: string): DatabaseHandle {
 
   try {
     mkdirSync(dirname(path), { recursive: true })
+    const descriptor = openSync(path, constants.O_CREAT | constants.O_RDWR, 0o600)
+    closeSync(descriptor)
 
     db = new Database(path)
 
@@ -304,7 +315,7 @@ export class SqliteLocalStore implements PeriscopeStore {
    * The mutating operations, each wrapped once in a better-sqlite3 transaction. `db.transaction`
    * returns a function, so the wrappers are built here rather than rebuilt per call.
    */
-  readonly #saveAll: (saves: readonly PendingSave[]) => void
+  readonly #saveAll: (saves: readonly PendingSave[]) => number
   readonly #pruneBefore: (before: number, keepExceptions: boolean) => number
   readonly #trimTo: (cap: number) => number
   readonly #clearAll: () => void
@@ -312,17 +323,32 @@ export class SqliteLocalStore implements PeriscopeStore {
   readonly #pendingSaves: PendingSave[] = []
   #saveScheduled = false
 
+  /**
+   * In-process entry count, so the per-flush ceiling check in {@link SqliteLocalStore.trim} costs
+   * nothing when the store is under the cap. Seeded from `count(*)` at open, advanced by every
+   * insert this process commits, and re-read from the file on the maintenance interval — which is
+   * also what bounds how long another process's inserts can go unseen.
+   */
+  #entryCount = 0
+  #entryCountDirty = false
+  #lastMaintenanceAt = 0
+
   constructor(options: SqliteLocalStoreOptions) {
     this.#db = openDatabase(options.path)
 
     this.#saveAll = this.#db.transaction((saves: readonly PendingSave[]) => {
+      let inserted = 0
       for (const save of saves) {
-        this.#insertEntries(save.entries)
+        inserted += this.#insertEntries(save.entries)
         this.#insertTags(save.entries)
       }
+      return inserted
     })
 
     this.#pruneBefore = this.#db.transaction((before: number, keepExceptions: boolean) => {
+      this.#prepare(
+        `delete from ${FLAGS_TABLE} where expires_at is not null and expires_at <= ?`
+      ).run(Date.now())
       const filter = keepExceptions ? 'created_at < ? and type <> ?' : 'created_at < ?'
       const values: Binding[] = keepExceptions ? [before, EntryType.EXCEPTION] : [before]
 
@@ -340,25 +366,28 @@ export class SqliteLocalStore implements PeriscopeStore {
     })
 
     /*
-     * Self-limiting by the cap, rather than by an excess measured outside the transaction. Every
-     * process running the application trims on its own flush schedule, so two of them routinely
-     * measure the same excess against the same file; a delete that trusted that number would cut
-     * it twice and leave `cap - excess` rows behind. Phrasing the survivors as "the newest `cap`
-     * entries" makes the second, concurrent trim a no-op instead of a second cut, whatever it
-     * counted a moment ago.
+     * The excess is measured *inside* the immediate transaction, under the write lock taken at
+     * `begin`. Every process running the application trims on its own flush schedule, so two of
+     * them routinely race the same file; an excess measured outside the transaction could be cut
+     * twice, leaving `cap - excess` rows behind. Measured under the lock, the second trim counts
+     * the survivors of the first and deletes nothing.
      *
-     * `immediate` rather than the default deferred begin: the write lock is taken at `begin`, so
-     * the rows the subquery picks are the rows the delete removes, and no reader-then-writer
-     * snapshot can be left behind by another process committing between the two statements.
+     * Deleting the oldest `excess` rows through an ascending `limit` keeps the steady-state cost
+     * proportional to the overflow of one flush, instead of the `offset cap` phrasing that walked
+     * the newest `cap` index entries on every call.
      */
     this.#trimTo = this.#db.transaction((cap: number) => {
-      // `limit -1` is SQLite's "no upper bound", which is what makes `offset` usable on its own:
-      // skip the newest `cap` entries, take every entry older than them.
-      const doomed = `select uuid from ${ENTRIES_TABLE} order by sequence desc limit -1 offset ?`
+      const total =
+        this.#prepare<{ total: number }>(`select count(*) as total from ${ENTRIES_TABLE}`).get()
+          ?.total ?? 0
+      const excess = total - cap
+      if (excess <= 0) return 0
 
-      this.#prepare(`delete from ${TAGS_TABLE} where entry_uuid in (${doomed})`).run(cap)
+      const doomed = `select uuid from ${ENTRIES_TABLE} order by sequence asc, uuid asc limit ?`
 
-      return this.#prepare(`delete from ${ENTRIES_TABLE} where uuid in (${doomed})`).run(cap)
+      this.#prepare(`delete from ${TAGS_TABLE} where entry_uuid in (${doomed})`).run(excess)
+
+      return this.#prepare(`delete from ${ENTRIES_TABLE} where uuid in (${doomed})`).run(excess)
         .changes
     }).immediate
 
@@ -372,6 +401,10 @@ export class SqliteLocalStore implements PeriscopeStore {
       ).run(application)
       this.#prepare(`delete from ${ENTRIES_TABLE} where application = ?`).run(application)
     })
+
+    this.#entryCount =
+      this.#prepare<{ total: number }>(`select count(*) as total from ${ENTRIES_TABLE}`).get()
+        ?.total ?? 0
   }
 
   /**
@@ -401,7 +434,9 @@ export class SqliteLocalStore implements PeriscopeStore {
    * around the duplicate. Keeping the stored version also keeps the tag rows below consistent
    * with it — an upsert would rewrite the entry while its old tags stayed indexed.
    */
-  #insertEntries(entries: StoredEntry[]): void {
+  #insertEntries(entries: StoredEntry[]): number {
+    let inserted = 0
+
     for (let offset = 0; offset < entries.length; offset += INSERT_CHUNK_SIZE) {
       const end = Math.min(offset + INSERT_CHUNK_SIZE, entries.length)
       const values: Binding[] = []
@@ -429,10 +464,12 @@ export class SqliteLocalStore implements PeriscopeStore {
         )
       }
 
-      this.#prepare(
+      inserted += this.#prepare(
         `insert or ignore into ${ENTRIES_TABLE} (${ENTRY_COLUMNS}) values ${placeholders(end - offset, ENTRY_COLUMN_COUNT)}`
-      ).run(...values)
+      ).run(...values).changes
     }
+
+    return inserted
   }
 
   /**
@@ -472,7 +509,7 @@ export class SqliteLocalStore implements PeriscopeStore {
     if (saves.length === 0) return
 
     try {
-      this.#saveAll(saves)
+      this.#entryCount += this.#saveAll(saves)
       for (const save of saves) save.resolve()
     } catch (error) {
       for (const save of saves) save.reject(error)
@@ -488,7 +525,13 @@ export class SqliteLocalStore implements PeriscopeStore {
    * return one row per matching tag and quietly duplicate entries the day a query filters on a
    * tag an entry carries twice.
    */
-  #selectEntries(query: EntryQuery, cursor: bigint | null): { sql: string; values: Binding[] } {
+  #selectEntries(
+    query: EntryQuery,
+    cursor: EntryCursor | null
+  ): {
+    sql: string
+    values: Binding[]
+  } {
     const conditions: string[] = []
     const values: Binding[] = []
 
@@ -525,14 +568,20 @@ export class SqliteLocalStore implements PeriscopeStore {
     }
 
     if (cursor !== null) {
-      conditions.push('sequence < ?')
-      values.push(encodeSequence(cursor))
+      const sequence = encodeSequence(cursor.sequence)
+      if (cursor.uuid === null) {
+        conditions.push('sequence < ?')
+        values.push(sequence)
+      } else {
+        conditions.push('(sequence < ? or (sequence = ? and uuid < ?))')
+        values.push(sequence, sequence, cursor.uuid)
+      }
     }
 
     const where = conditions.length === 0 ? '' : ` where ${conditions.join(' and ')}`
 
     return {
-      sql: `select ${ENTRY_COLUMNS} from ${ENTRIES_TABLE}${where} order by sequence desc limit ?`,
+      sql: `select ${ENTRY_COLUMNS} from ${ENTRIES_TABLE}${where} order by sequence desc, uuid desc limit ?`,
       values,
     }
   }
@@ -559,7 +608,7 @@ export class SqliteLocalStore implements PeriscopeStore {
 
   async list(query: EntryQuery = {}): Promise<Paginated<StoredEntry>> {
     const limit = resolvePageSize(query.limit)
-    const { sql, values } = this.#selectEntries(query, parseCursor(query.cursor))
+    const { sql, values } = this.#selectEntries(query, parseEntryCursor(query.cursor))
 
     /*
      * One row more than the page: its existence — and only its existence — is what says another
@@ -575,14 +624,16 @@ export class SqliteLocalStore implements PeriscopeStore {
 
     return {
       data,
-      nextCursor: overflowed ? encodeCursor(data[data.length - 1].sequence) : null,
+      nextCursor: overflowed
+        ? encodeEntryCursor(data[data.length - 1].sequence, data[data.length - 1].uuid)
+        : null,
     }
   }
 
   async batch(batchId: string): Promise<StoredEntry[]> {
     // Oldest first: the batch screen is a timeline, the opposite of every index screen.
     const rows = this.#prepare<EntryRow>(
-      `select ${ENTRY_COLUMNS} from ${ENTRIES_TABLE} where batch_id = ? order by sequence asc`
+      `select ${ENTRY_COLUMNS} from ${ENTRIES_TABLE} where batch_id = ? order by sequence asc, uuid asc`
     ).all(batchId)
 
     return rows.map(toStoredEntry)
@@ -636,41 +687,106 @@ export class SqliteLocalStore implements PeriscopeStore {
       values.push(query.application)
     }
 
-    const rows = this.#prepare<EntryRow>(
-      `select ${ENTRY_COLUMNS} from ${ENTRIES_TABLE} where ${conditions.join(' and ')}`
-    ).all(...values)
+    const limit = resolvePageSize(query.limit)
+    const cursor = parseCursor(query.cursor)
+    const having = cursor === null ? '' : ' having max(sequence) < ?'
+    const groupValues: Binding[] = [
+      ...values,
+      ...(cursor === null ? [] : [encodeSequence(cursor)]),
+      limit + 1,
+    ]
+    const groups = this.#prepare<{
+      family_hash: string
+      latest_sequence: string
+      total: number
+    }>(
+      `select family_hash, max(sequence) as latest_sequence, count(*) as total
+       from ${ENTRIES_TABLE}
+       where ${conditions.join(' and ')}
+       group by family_hash${having}
+       order by latest_sequence desc
+       limit ?`
+    ).all(...groupValues)
+    const page = groups.slice(0, limit)
 
-    return aggregateExceptionGroups(rows.map(toStoredEntry), query)
+    if (page.length === 0) {
+      return { data: [], nextCursor: null }
+    }
+
+    const sequences = page.map(({ latest_sequence: sequence }) => sequence)
+    const rows = this.#prepare<EntryRow>(
+      `select ${ENTRY_COLUMNS} from ${ENTRIES_TABLE}
+       where ${conditions.join(' and ')}
+       and sequence in (${sequences.map(() => '?').join(', ')})`
+    ).all(...values, ...sequences)
+    const latestByFamily = new Map(
+      rows.map((row) => [`${row.family_hash}\u0000${row.sequence}`, toStoredEntry(row)])
+    )
+    const data: ExceptionGroup[] = []
+
+    for (const group of page) {
+      const latest = latestByFamily.get(`${group.family_hash}\u0000${group.latest_sequence}`)
+
+      if (latest !== undefined) {
+        data.push({
+          familyHash: group.family_hash,
+          latest,
+          count: group.total,
+          lastSeen: new Date(latest.createdAt.getTime()),
+        })
+      }
+    }
+
+    return {
+      data,
+      nextCursor:
+        groups.length > limit ? encodeCursor(BigInt(page[page.length - 1].latest_sequence)) : null,
+    }
   }
 
   async prune(options: PruneOptions): Promise<number> {
-    return this.#pruneBefore(options.before.getTime(), options.keepExceptions === true)
+    const deleted = this.#pruneBefore(options.before.getTime(), options.keepExceptions === true)
+    this.#entryCount = Math.max(0, this.#entryCount - deleted)
+
+    return deleted
   }
 
   async trim(maxEntries: number): Promise<number> {
     const cap = Number.isFinite(maxEntries) && maxEntries > 0 ? Math.floor(maxEntries) : 0
+    const now = Date.now()
 
     /*
-     * Counting first is what lets the common case — a store already under the cap, which is every
-     * call but the occasional one — cost a single index-only count instead of opening a write
-     * transaction to delete nothing.
-     *
-     * That is the whole of its job. The count runs in autocommit and is stale the moment it is
-     * read, so it decides only whether to open the transaction; what to delete is decided inside
-     * the transaction, against the cap.
+     * `trim` runs after every successful flush, synchronously on the event-loop thread, so its
+     * common case must not touch the file at all. The tracked count answers the under-cap check
+     * for free; the flag sweep and the count resync — which is also what picks up inserts from
+     * other processes sharing the file — run on the maintenance interval instead of per flush.
      */
-    const total = this.#prepare<{ total: number }>(
-      `select count(*) as total from ${ENTRIES_TABLE}`
-    ).get()
+    if (this.#entryCountDirty || now - this.#lastMaintenanceAt >= MAINTENANCE_INTERVAL_MS) {
+      this.#lastMaintenanceAt = now
+      this.#entryCountDirty = false
+      this.#prepare(
+        `delete from ${FLAGS_TABLE} where expires_at is not null and expires_at <= ?`
+      ).run(now)
+      this.#entryCount =
+        this.#prepare<{ total: number }>(`select count(*) as total from ${ENTRIES_TABLE}`).get()
+          ?.total ?? 0
+    }
 
-    return (total?.total ?? 0) <= cap ? 0 : this.#trimTo(cap)
+    if (this.#entryCount <= cap) return 0
+
+    const deleted = this.#trimTo(cap)
+    this.#entryCount = Math.max(0, this.#entryCount - deleted)
+
+    return deleted
   }
 
   async clear(application?: string): Promise<void> {
     if (application === undefined) {
       this.#clearAll()
+      this.#entryCount = 0
     } else {
       this.#clearApplication(application)
+      this.#entryCountDirty = true
     }
   }
 
@@ -749,6 +865,7 @@ export class SqliteLocalStore implements PeriscopeStore {
     if (!this.#db.open) {
       return
     }
+    this.#drainPendingSaves()
 
     this.#statements.clear()
     this.#db.close()

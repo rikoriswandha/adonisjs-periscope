@@ -11,12 +11,12 @@ import { test } from '@japa/runner'
 
 import { IncomingEntry } from '../../../src/entry.ts'
 import { BatchScope } from '../../../src/recorder/context.ts'
+import { MONITORED_TAGS_CACHE_TTL_MS, Recorder } from '../../../src/recorder/recorder.ts'
 import {
-  MONITORED_TAGS_CACHE_TTL_MS,
-  Recorder,
-  TRIM_EVERY_FLUSHES,
-} from '../../../src/recorder/recorder.ts'
-import { DEFAULT_REDACT_HEADERS, DEFAULT_REDACT_KEYS } from '../../../src/recorder/redactor.ts'
+  DEFAULT_REDACT_HEADERS,
+  DEFAULT_REDACT_KEYS,
+  DEFAULT_REDACT_VALUE_PATTERNS,
+} from '../../../src/recorder/redactor.ts'
 import { setInternalLogger } from '../../../src/safeguard.ts'
 import { ENTRY_TYPES, EntryType, Flag } from '../../../src/types.ts'
 import type {
@@ -67,7 +67,7 @@ class FakeStore implements PeriscopeStore {
    * Runs at the top of `save()`. Lets a test observe the world *during* a store write — which is
    * how the "the store's own activity is muted" invariant is checked.
    */
-  onSave: (() => void) | null = null
+  onSave: (() => void | Promise<void>) | null = null
 
   /**
    * Runs at the top of `getFlag()`, for the same reason {@link FakeStore.onSave} exists: the
@@ -89,7 +89,7 @@ class FakeStore implements PeriscopeStore {
   onTrim: (() => void) | null = null
 
   async save(entries: StoredEntry[]): Promise<void> {
-    this.onSave?.()
+    await this.onSave?.()
 
     if (this.saveFailure !== null) {
       throw this.saveFailure
@@ -203,11 +203,11 @@ type ConfigOverrides = {
   tag?: TagHook[]
 
   /**
-   * Emptying this turns redaction into a pass-through, which is how a test gets hold of the
-   * *identity* of the content object a watcher handed over — `Redactor#redact` returns its
-   * argument unchanged when it has no keys to scrub.
+   * Empty keys plus disabled value scanning turns redaction into a pass-through. Identity tests
+   * use both so the recorder receives the exact content object owned by the caller.
    */
   redactKeys?: string[]
+  redactValuePatterns?: RegExp[] | false
 }
 
 /**
@@ -239,14 +239,15 @@ function makeConfig(overrides: ConfigOverrides = {}): ResolvedPeriscopeConfig {
     redact: {
       keys: overrides.redactKeys ?? [...DEFAULT_REDACT_KEYS],
       headers: [...DEFAULT_REDACT_HEADERS],
+      valuePatterns: overrides.redactValuePatterns ?? [...DEFAULT_REDACT_VALUE_PATTERNS],
       replacement: '[REDACTED]',
     },
     hooks: { filter: overrides.filter ?? [], tag: overrides.tag ?? [] },
 
     /**
      * The recorder reads neither block — watchers own their own settings and the dashboard is a
-     * phase-4 concern — but the resolved config is dense by contract, so they are written out at
-     * their defaults rather than cast away.
+     * separate concern — but the resolved config writes both blocks at their defaults rather than
+     * casting them away.
      */
     watchers: {
       request: {
@@ -639,7 +640,7 @@ test.group('Recorder | resilience', (group) => {
     assert.lengthOf(context.buffer, 0)
   })
 
-  test('resolve instead of rejecting when the store write fails', async ({ assert }) => {
+  test('retain a failed write for a later flush without rejecting', async ({ assert }) => {
     const store = new FakeStore()
     store.saveFailure = new Error('the database is on fire')
 
@@ -647,7 +648,7 @@ test.group('Recorder | resilience', (group) => {
     const context = BatchScope.createContext('request')
 
     BatchScope.runWith(context, () => {
-      recorder.record(IncomingEntry.make(EntryType.LOG))
+      recorder.record(IncomingEntry.make(EntryType.LOG, { message: 'retry me' }))
     })
 
     /**
@@ -657,7 +658,37 @@ test.group('Recorder | resilience', (group) => {
     await recorder.flush(context)
 
     assert.lengthOf(store.saves, 0)
-    assert.lengthOf(context.buffer, 0, 'a failed write must not leave the buffer to grow forever')
+    assert.lengthOf(context.buffer, 1)
+
+    store.saveFailure = null
+    await recorder.flush(context)
+
+    assert.lengthOf(context.buffer, 0)
+    assert.equal(store.saves[0][0].content.message, 'retry me')
+  })
+
+  test('bound repeated failed requeues when truncation creates a synthetic entry', async ({
+    assert,
+  }) => {
+    const store = new FakeStore()
+    store.saveFailure = new Error('still unavailable')
+    const recorder = new Recorder({
+      config: makeConfig({ caps: { log: 0 } }),
+      store,
+    })
+    const context = BatchScope.createContext('request')
+
+    BatchScope.runWith(context, () => {
+      recorder.record(IncomingEntry.make(EntryType.LOG))
+      recorder.record(IncomingEntry.make(EntryType.LOG))
+    })
+
+    await recorder.flush(context)
+    await recorder.flush(context)
+    await recorder.flush(context)
+
+    assert.lengthOf(context.buffer, 1)
+    assert.deepEqual(context.buffer[0].content.truncated, { log: 2 })
   })
 })
 
@@ -689,6 +720,68 @@ test.group('Recorder | flush', (group) => {
     assert.deepEqual(first.content, { sql: 'select 1' })
     assert.isTrue(first.shouldDisplayOnIndex)
     assert.equal(typeof first.sequence, 'bigint')
+  })
+
+  test('leave a fragment buffered until its store save resolves', async ({ assert }) => {
+    const store = new FakeStore()
+    const recorder = new Recorder({ config: makeConfig(), store })
+    const context = BatchScope.createContext('request')
+    const saveGate = Promise.withResolvers<void>()
+    let saveStarted = false
+
+    store.onSave = async () => {
+      saveStarted = true
+      await saveGate.promise
+    }
+    BatchScope.runWith(context, () => {
+      recorder.record(IncomingEntry.make(EntryType.LOG, { message: 'pending' }))
+    })
+
+    const flushing = recorder.flush(context)
+    await waitUntil(() => saveStarted)
+
+    assert.lengthOf(context.buffer, 1)
+    saveGate.resolve()
+    await flushing
+    assert.lengthOf(context.buffer, 0)
+  })
+
+  test('serialize two flushes of one context while the first save is pending', async ({
+    assert,
+  }) => {
+    const store = new FakeStore()
+    const recorder = new Recorder({ config: makeConfig(), store })
+    const context = BatchScope.createContext('request')
+    const firstSave = Promise.withResolvers<void>()
+    let saveCalls = 0
+
+    store.onSave = async () => {
+      saveCalls++
+      if (saveCalls === 1) {
+        await firstSave.promise
+      }
+    }
+    BatchScope.runWith(context, () => {
+      recorder.record(IncomingEntry.make(EntryType.LOG, { message: 'first' }))
+    })
+    const firstFlush = recorder.flush(context)
+    await waitUntil(() => saveCalls === 1)
+
+    BatchScope.runWith(context, () => {
+      recorder.record(IncomingEntry.make(EntryType.LOG, { message: 'second' }))
+    })
+    const secondFlush = recorder.flush(context)
+
+    assert.equal(saveCalls, 1)
+    assert.lengthOf(context.buffer, 2)
+    firstSave.resolve()
+    await Promise.all([firstFlush, secondFlush])
+
+    assert.deepEqual(
+      store.saves.map((batch) => batch.map((entry) => entry.content.message)),
+      [['first'], ['second']]
+    )
+    assert.lengthOf(context.buffer, 0)
   })
 
   test('default to the active batch when no target is given', async ({ assert }) => {
@@ -867,6 +960,34 @@ test.group('Recorder | flush', (group) => {
     assert.equal(store.saves[0][0].content.message, 'outside any batch')
   })
 
+  test('await an in-flight explicit flush during shutdown', async ({ assert }) => {
+    const store = new FakeStore()
+    const recorder = new Recorder({ config: makeConfig(), store })
+    const context = BatchScope.createContext('request')
+    const gate = Promise.withResolvers<void>()
+    let saveStarted = false
+    store.onSave = async () => {
+      saveStarted = true
+      await gate.promise
+    }
+    BatchScope.runWith(context, () => {
+      recorder.record(IncomingEntry.make(EntryType.LOG))
+    })
+
+    const flushing = recorder.flush(context)
+    await waitUntil(() => saveStarted)
+    let stopped = false
+    const shutdown = recorder.shutdown().then(() => {
+      stopped = true
+    })
+    await Promise.resolve()
+    assert.isFalse(stopped)
+
+    gate.resolve()
+    await Promise.all([flushing, shutdown])
+    assert.isTrue(stopped)
+  })
+
   test('report the drop when a cap of zero left the flush with nothing to write', async ({
     assert,
   }) => {
@@ -934,15 +1055,19 @@ test.group('Recorder | flush', (group) => {
   }) => {
     const store = new FakeStore()
     const recorder = new Recorder({
-      config: makeConfig({ caps: { query: 1 }, redactKeys: [] }),
+      config: makeConfig({
+        caps: { query: 1 },
+        redactKeys: [],
+        redactValuePatterns: false,
+      }),
       store,
     })
     const context = BatchScope.createContext('request')
 
     /**
-     * With no keys configured, redaction is a pass-through that returns its argument by identity,
-     * so this object — owned by the host application and still referenced here — is the one the
-     * entry carries. Periscope may read it; it may not write to it.
+     * With no keys or value patterns configured, redaction is a pass-through that returns its
+     * argument by identity, so this host-owned object is the one the entry carries. Periscope may
+     * read it; it may not write to it.
      */
     const hostContent: EntryContent = { method: 'GET', url: '/checkout' }
 
@@ -1338,61 +1463,29 @@ test.group('Recorder | sampling and flush subscriptions', (group) => {
   })
 })
 
-test.group('Recorder | opportunistic trim', (group) => {
+test.group('Recorder | hard-cap trim', (group) => {
   group.each.teardown(() => {
     setInternalLogger(null)
   })
 
-  test('leave the store alone until the flush interval is reached', async ({ assert }) => {
+  test('trim after every successful write with the configured cap', async ({ assert }) => {
     const store = new FakeStore()
     const recorder = new Recorder({ config: makeConfig(), store })
 
-    await flushBatches(recorder, TRIM_EVERY_FLUSHES - 1)
+    await flushBatches(recorder, 3)
 
-    assert.lengthOf(store.saves, TRIM_EVERY_FLUSHES - 1)
-    assert.lengthOf(store.trims, 0, 'trimming on every flush is exactly what the interval avoids')
+    assert.lengthOf(store.saves, 3)
+    assert.deepEqual(store.trims, [10_000, 10_000, 10_000])
   })
 
-  test('trim once at the interval, with the configured cap', async ({ assert }) => {
+  test('not trim when a flush wrote nothing', async ({ assert }) => {
     const store = new FakeStore()
     const recorder = new Recorder({ config: makeConfig(), store })
 
-    await flushBatches(recorder, TRIM_EVERY_FLUSHES)
-
-    assert.deepEqual(store.trims, [10_000], 'the cap comes from storage.maxEntries, unmodified')
-  })
-
-  test('restart the interval after a trim instead of trimming on every later flush', async ({
-    assert,
-  }) => {
-    const store = new FakeStore()
-    const recorder = new Recorder({ config: makeConfig(), store })
-
-    await flushBatches(recorder, TRIM_EVERY_FLUSHES * 2)
-
-    assert.lengthOf(store.trims, 2)
-  })
-
-  test('not advance the interval on a flush that wrote nothing', async ({ assert }) => {
-    const store = new FakeStore()
-    const recorder = new Recorder({ config: makeConfig(), store })
-
-    /**
-     * An idle application still flushes: the ambient batch rotates on a timer whether or not
-     * anything was recorded, and the request middleware flushes every request. Letting those
-     * empty flushes count would turn "every 25 writes" into "every 25 ticks", trimming a store
-     * nothing has been added to since the last trim.
-     */
-    for (let index = 0; index < TRIM_EVERY_FLUSHES; index++) {
-      await recorder.flush(BatchScope.createContext('request'))
-    }
+    await recorder.flush(BatchScope.createContext('request'))
 
     assert.lengthOf(store.saves, 0)
     assert.lengthOf(store.trims, 0)
-
-    await flushBatches(recorder, TRIM_EVERY_FLUSHES)
-
-    assert.lengthOf(store.trims, 1, 'the interval counts writes, not calls')
   })
 
   test('mute recording while the store trims so the delete cannot record itself', async ({
@@ -1400,67 +1493,36 @@ test.group('Recorder | opportunistic trim', (group) => {
   }) => {
     const store = new FakeStore()
     const recorder = new Recorder({ config: makeConfig(), store })
-
     let mutedDuringTrim: boolean | undefined
     let bufferedDuringTrim: number | undefined
 
     store.onTrim = () => {
       const inner = BatchScope.current()
-
-      /**
-       * A trim is a `delete from periscope_entries`, which the query watcher observes exactly
-       * like the insert the save just did (§0, invariant 2). Unmuted, housekeeping would write
-       * the entries that make the next housekeeping necessary.
-       */
       recorder.record(IncomingEntry.make(EntryType.QUERY, { sql: 'delete from periscope' }))
-
       mutedDuringTrim = inner?.muted
       bufferedDuringTrim = inner?.buffer.length
     }
 
-    await flushBatches(recorder, TRIM_EVERY_FLUSHES)
+    await flushBatches(recorder, 1)
 
     assert.lengthOf(store.trims, 1)
     assert.isTrue(mutedDuringTrim, 'the trim must be called inside a muted context')
     assert.equal(bufferedDuringTrim, 0, 'the delete issued by the store must not be buffered')
   })
 
-  test('resolve the flush and keep its entries when the trim fails', async ({ assert }) => {
-    const store = new FakeStore()
-    store.trimFailure = new Error('cannot delete from a read-only replica')
-
-    const recorder = new Recorder({ config: makeConfig(), store })
-
-    /**
-     * A rejection here fails the test for the same reason a failing save must not reject: the
-     * request middleware awaits this flush, and housekeeping is not allowed to become a 500.
-     */
-    await flushBatches(recorder, TRIM_EVERY_FLUSHES)
-
-    assert.lengthOf(store.saves, TRIM_EVERY_FLUSHES, 'the write of the trimming flush must stand')
-    assert.lengthOf(store.trims, 0, 'the double refused the trim')
-  })
-
-  test('wait a full interval before retrying a trim that failed', async ({ assert }) => {
+  test('swallow a trim failure and retry on the next successful write', async ({ assert }) => {
     const store = new FakeStore()
     store.trimFailure = new Error('the database is locked')
-
     const recorder = new Recorder({ config: makeConfig(), store })
 
-    await flushBatches(recorder, TRIM_EVERY_FLUSHES)
-
-    store.trimFailure = null
-
-    /**
-     * The counter is reset before the attempt, not after a success, so a broken store is retried
-     * on the next interval rather than on every single flush until it recovers.
-     */
-    await flushBatches(recorder, TRIM_EVERY_FLUSHES - 1)
-
+    await flushBatches(recorder, 1)
+    assert.lengthOf(store.saves, 1, 'the successful write must stand')
     assert.lengthOf(store.trims, 0)
 
+    store.trimFailure = null
     await flushBatches(recorder, 1)
 
+    assert.lengthOf(store.saves, 2)
     assert.deepEqual(store.trims, [10_000])
   })
 })

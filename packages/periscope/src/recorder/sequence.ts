@@ -6,17 +6,16 @@
  */
 
 /**
- * The ordering stamp put on every entry the recorder accepts (P1.3).
+ * The ordering stamp put on every entry the recorder accepts.
  *
- * `sequence` is the sort key and the pagination cursor for the whole dashboard, so it has to be
- * three things at once, and no single clock gives all three:
+ * `sequence` is the primary sort key for the whole dashboard, so it has to be three things at
+ * once, and no single clock gives all three:
  *
  * - **Meaningful across processes and restarts.** `process.hrtime.bigint()` counts from an
  *   arbitrary origin — usually boot — so two runs of the same app produce overlapping,
  *   incomparable values. Unusable on its own.
- * - **Fine-grained enough not to tie.** `Date.now()` is millisecond resolution. A request that
- *   fires forty queries ties forty times, and a tied cursor either skips entries or repeats
- *   them.
+ * - **Fine-grained enough not to tie within one process.** `Date.now()` is millisecond
+ *   resolution. A request that fires forty queries would otherwise tie forty times.
  * - **Monotonic.** Wall-clock time goes backwards: NTP steps, VM snapshot restores, a manual
  *   `date -s`. An entry recorded after another must never sort before it.
  *
@@ -30,7 +29,8 @@
  *
  * The result reads as nanoseconds since the Unix epoch — comparable with values from other
  * processes and meaningful to a human — while every increment inside this process comes from the
- * monotonic clock, so a wall-clock jump mid-process cannot reorder anything.
+ * monotonic clock. Separate processes can still tie; durable stores order and page by the
+ * collision-safe `(sequence, uuid)` pair, using the entry UUID as the final tie-breaker.
  */
 
 /**

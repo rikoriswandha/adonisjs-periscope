@@ -529,7 +529,7 @@ test.group('PeriscopeProvider', (group) => {
     const line: { name?: string; msg?: string; err?: { message?: string } } = JSON.parse(logs[0])
 
     /**
-     * The channel name is load-bearing rather than decorative: P3.5's LogWatcher excludes
+     * The channel name is load-bearing rather than decorative: LogWatcher excludes
      * `periscope.internal` by name, and that exclusion is what stops a failing store from
      * recording its own error logs as entries that fail to write.
      */

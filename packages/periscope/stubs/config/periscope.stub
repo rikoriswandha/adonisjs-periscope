@@ -1,8 +1,8 @@
 {{{
   exports({ to: app.configPath('periscope.ts') })
 }}}
-// Add \`DEFAULT_REDACT_KEYS\` / \`DEFAULT_REDACT_HEADERS\` to this import to extend, rather than
-// replace, the redaction lists Periscope ships with — see the \`redact\` block below.
+// Add the exported \`DEFAULT_REDACT_*\` lists to this import to extend, rather than replace, the
+// redaction defaults Periscope ships with — see the \`redact\` block below.
 import { defineConfig } from 'adonisjs-periscope/periscope_config'
 
 export default defineConfig({
@@ -129,6 +129,18 @@ export default defineConfig({
      * HTTP header names to scrub. Replaces \`DEFAULT_REDACT_HEADERS\`, same as above.
      */
     // headers: [...DEFAULT_REDACT_HEADERS, 'x-internal-token'],
+
+    /**
+     * Secret-shaped substrings scrubbed from captured strings. Bearer/JWT credentials, common
+     * API-key shapes, password assignments/URL credentials, and Luhn-valid card numbers are on
+     * by default. This array REPLACES \`DEFAULT_REDACT_VALUE_PATTERNS\`; set it to false to disable
+     * value scanning.
+     *
+     * Email addresses remain visible unless \`REDACT_EMAIL_PATTERN\` is added explicitly:
+     *
+     *   valuePatterns: [...DEFAULT_REDACT_VALUE_PATTERNS, REDACT_EMAIL_PATTERN],
+     */
+    // valuePatterns: [...DEFAULT_REDACT_VALUE_PATTERNS, REDACT_EMAIL_PATTERN],
 
     /**
      * What redacted values are replaced with.
@@ -327,5 +339,11 @@ export default defineConfig({
      * live beneath a different URL prefix.
      */
     path: '/periscope',
+    /**
+     * Deny production and unknown environments until this is replaced with an application-specific
+     * authorization check.
+     */
+    authorize: () =>
+      process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test',
   },
 })

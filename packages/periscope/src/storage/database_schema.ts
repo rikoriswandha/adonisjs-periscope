@@ -106,24 +106,24 @@ export function createPeriscopeTables(schema: PeriscopeSchemaBuilder): Periscope
      * query asserts on a name — an index Periscope cannot name is an index Periscope cannot
      * prove it is using.
      */
-    table.index(['sequence'], 'periscope_entries_sequence_index')
+    table.index(['sequence', 'uuid'], 'periscope_entries_sequence_index')
 
     /*
      * The index the dashboard's main screen lives on: filter by type, keep only the entries a
-     * watcher left visible, walk them newest-first. `sequence` trails the two equality columns
-     * so the same index serves the ordering and the cursor's range scan.
+     * watcher left visible, then walk the collision-safe `(sequence, uuid)` key newest-first.
+     * That pair trails the equality columns so one index serves ordering and cursor range scans.
      */
     table.index(
-      ['type', 'should_display_on_index', 'sequence'],
+      ['type', 'should_display_on_index', 'sequence', 'uuid'],
       'periscope_entries_type_display_index'
     )
     table.index(
-      ['application', 'type', 'should_display_on_index', 'sequence'],
+      ['application', 'type', 'should_display_on_index', 'sequence', 'uuid'],
       'periscope_entries_application_type_display_index'
     )
-    table.index(['application', 'sequence'], 'periscope_entries_application_sequence_index')
+    table.index(['application', 'sequence', 'uuid'], 'periscope_entries_application_sequence_index')
 
-    table.index(['batch_id', 'sequence'], 'periscope_entries_batch_id_index')
+    table.index(['batch_id', 'sequence', 'uuid'], 'periscope_entries_batch_id_index')
     table.index(['family_hash'], 'periscope_entries_family_hash_index')
 
     // Pruning's only predicate.

@@ -6,8 +6,7 @@
  */
 
 /**
- * The package's main entry point. It re-exports the public surface that exists today; each phase
- * adds to it as watchers, storage drivers and the dashboard land.
+ * The package's main entry point. It re-exports the public surface available today.
  *
  * Subpath exports (`adonisjs-periscope/services/recorder`, `adonisjs-periscope/periscope_config`,
  * `adonisjs-periscope/dump`,
@@ -27,6 +26,8 @@ export { PeriscopeConfigError, PeriscopeError, PeriscopeStorageError } from './e
 export {
   DEFAULT_REDACT_HEADERS,
   DEFAULT_REDACT_KEYS,
+  DEFAULT_REDACT_VALUE_PATTERNS,
+  REDACT_EMAIL_PATTERN,
   defineConfig,
   isRecordingEnabled,
 } from './define_config.ts'

@@ -323,7 +323,7 @@ export default class PeriscopeProvider {
   }
 
   /**
-   * Point Periscope's swallowed-failure reporter at the application logger (P1.3).
+   * Point Periscope's swallowed-failure reporter at the application logger.
    *
    * `safeguard()` is what keeps Periscope from throwing into host code (§0, invariant 1), but a
    * swallowed failure that is also silent is indistinguishable from "nothing happened": a store
@@ -331,7 +331,7 @@ export default class PeriscopeProvider {
    * standalone default in `safeguard.ts` cannot fix that on its own — it has no application to
    * borrow a logger from — so the provider, which does, hooks the real one up here.
    *
-   * The `periscope.internal` name is load-bearing rather than cosmetic: P3.5's LogWatcher
+   * The `periscope.internal` name is load-bearing rather than cosmetic: LogWatcher
    * excludes that channel by name, and that exclusion is the only thing standing between a
    * failing store and a feedback loop where Periscope's own error logs become Periscope entries
    * that fail to write, which logs another error.

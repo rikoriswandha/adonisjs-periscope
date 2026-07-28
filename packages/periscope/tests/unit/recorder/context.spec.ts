@@ -33,7 +33,7 @@ function currentOrFail(): BatchContext {
 }
 
 /**
- * Stand-in for the recorder's final pipeline step (P1.3 owns the real one). It does the single
+ * Stand-in for the recorder's final pipeline step. It does the single
  * thing these tests are about: attribute an entry to whatever batch happens to be current.
  */
 function record(): IncomingEntry {

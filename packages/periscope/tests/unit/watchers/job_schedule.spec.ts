@@ -47,7 +47,7 @@ async function makeWatcher(capturePayload = false) {
     await watcher.cleanup()
     await recorder.shutdown()
   })
-  return { adapter, store, watcher }
+  return { adapter, recorder, store, watcher }
 }
 
 test.group('JobScheduleWatcher', () => {
@@ -85,6 +85,46 @@ test.group('JobScheduleWatcher', () => {
     assert.deepEqual(watcher.stats, { jobs: 1, schedules: 0 })
   })
 
+  test('evict the oldest active job correlation after the bounded capacity', async ({ assert }) => {
+    const { adapter, store } = await makeWatcher(true)
+
+    for (let index = 0; index <= 1_000; index += 1) {
+      adapter.observer!.started({
+        adapter: 'test',
+        queue: 'bounded',
+        jobId: String(index),
+        name: `Job${index}`,
+        payload: { index },
+      })
+    }
+
+    adapter.observer!.completed({
+      adapter: 'test',
+      queue: 'bounded',
+      jobId: '0',
+    })
+    adapter.observer!.completed({
+      adapter: 'test',
+      queue: 'bounded',
+      jobId: '1000',
+    })
+    await settle()
+
+    const page = await store.list({ type: EntryType.JOB })
+    const evicted = page.data.find((entry) => entry.content.jobId === '0')
+    const retained = page.data.find((entry) => entry.content.jobId === '1000')
+
+    assert.isDefined(evicted)
+    assert.notProperty(evicted!.content, 'durationMs')
+    assert.notProperty(evicted!.content, 'payload')
+    assert.isDefined(retained)
+    assert.property(retained!.content, 'durationMs')
+    assert.deepInclude(retained!.content, {
+      name: 'Job1000',
+      payload: { index: 1000 },
+    })
+  })
+
   test('persist scheduled work immediately and run adapter cleanup', async ({ assert }) => {
     const { adapter, store, watcher } = await makeWatcher()
     adapter.observer!.scheduled({
@@ -101,5 +141,37 @@ test.group('JobScheduleWatcher', () => {
     assert.isNumber(page.data[0].content.delayMs)
     await watcher.cleanup()
     assert.isTrue(adapter.cleaned)
+  })
+
+  test('await a scheduled-entry flush before cleanup resolves', async ({ assert }) => {
+    const { adapter, recorder, store, watcher } = await makeWatcher()
+    const save = store.save.bind(store)
+    const started = Promise.withResolvers<void>()
+    const gate = Promise.withResolvers<void>()
+    store.save = async (entries) => {
+      started.resolve()
+      await gate.promise
+      await save(entries)
+    }
+
+    adapter.observer!.scheduled({
+      adapter: 'test',
+      queue: 'reports',
+      jobId: 'blocked',
+    })
+    await started.promise
+
+    let cleaned = false
+    const cleaning = watcher.cleanup().then(() => {
+      cleaned = true
+    })
+    await Promise.resolve()
+
+    assert.isTrue(adapter.cleaned)
+    assert.isFalse(cleaned)
+    gate.resolve()
+    await cleaning
+    await recorder.shutdown()
+    assert.isTrue(cleaned)
   })
 })

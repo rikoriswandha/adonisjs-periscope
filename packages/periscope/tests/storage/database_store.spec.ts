@@ -24,7 +24,7 @@
 import { test } from '@japa/runner'
 
 import { DatabaseStore } from '../../src/storage/database_store.ts'
-import { ENTRIES_TABLE, TAGS_TABLE } from '../../src/storage/sql.ts'
+import { ENTRIES_TABLE, FLAGS_TABLE, TAGS_TABLE } from '../../src/storage/sql.ts'
 import { EntryType } from '../../src/types.ts'
 import { POSTGRES_URL, closeTestDatabases, useTestDatabase } from '../helpers/lucid.ts'
 import { makeStoredEntry, runStoreContractTests } from './contract.ts'
@@ -356,10 +356,64 @@ function registerDriverTests(connection: TestConnection): void {
       // Monitored tags are user intent and are the one thing `clear` must not touch.
       assert.deepEqual(await store.monitoredTags(), ['a'])
     })
+
+    test('sweep expired flags during trim and prune maintenance', async ({ assert }) => {
+      const { database, store } = await createStore(connection)
+
+      await store.setFlag('expired-before-trim', '1', {
+        expiresAt: new Date(Date.now() - 1_000),
+      })
+      await store.setFlag('live', '1', { expiresAt: new Date(Date.now() + 60_000) })
+      await store.trim(100)
+
+      await store.setFlag('expired-before-prune', '1', {
+        expiresAt: new Date(Date.now() - 1_000),
+      })
+      await store.prune({ before: new Date(0) })
+
+      assert.equal(await countRows(database, FLAGS_TABLE), 1)
+      assert.equal(await store.getFlag('live'), '1')
+    })
   })
 }
 
 registerDriverTests('sqlite')
+
+test('DatabaseStore bound pending write backlog drops the oldest waiting batch', async ({
+  assert,
+}) => {
+  const { database } = await createStore('sqlite')
+  const gate = Promise.withResolvers<void>()
+  const started = Promise.withResolvers<void>()
+  const store = new DatabaseStore({
+    db: gateFirstTransaction(database.db, async () => {
+      started.resolve()
+      await gate.promise
+    }),
+    connection: 'sqlite',
+  })
+  const entries = Array.from({ length: 66 }, () => makeStoredEntry())
+  const active = store.save([entries[0]])
+  await started.promise
+
+  const queued = entries.slice(1).map((entry) =>
+    store.save([entry]).then(
+      () => 'saved' as const,
+      () => 'dropped' as const
+    )
+  )
+
+  assert.equal(await queued[0], 'dropped')
+  gate.resolve()
+  await active
+  const outcomes = await Promise.all(queued)
+  await store.close()
+
+  assert.equal(outcomes.filter((outcome) => outcome === 'dropped').length, 1)
+  assert.equal(await countRows(database, ENTRIES_TABLE), 65)
+  assert.isNull(await store.find(entries[1].uuid))
+  assert.isNotNull(await store.find(entries[65].uuid))
+})
 
 if (POSTGRES_URL !== undefined) {
   registerDriverTests('postgres')
@@ -435,9 +489,8 @@ test.group('DatabaseStore connections', (group) => {
       await store.close()
 
       /*
-       * The connection belongs to the application. A driver that closed it on shutdown would take
-       * the host's database down with Periscope, so `close()` has to be observably inert — both
-       * for the host's own queries and for a second store built on the same connection.
+       * The connection belongs to the application. Draining Periscope writes must not close it:
+       * host queries and a second store built on the same connection both remain usable.
        */
       const [row] = await database.client
         .query<{ one: number }>()
@@ -453,5 +506,33 @@ test.group('DatabaseStore connections', (group) => {
       assert.lengthOf(reopenedPage.data, 1)
       await assert.doesNotReject(() => store.close())
     }
+  })
+
+  test('wait for an active write before close resolves', async ({ assert }) => {
+    const { database } = await createStore('sqlite')
+    const gate = Promise.withResolvers<void>()
+    const started = Promise.withResolvers<void>()
+    const store = new DatabaseStore({
+      db: gateFirstTransaction(database.db, async () => {
+        started.resolve()
+        await gate.promise
+      }),
+      connection: 'sqlite',
+    })
+    const entry = makeStoredEntry()
+    const saving = store.save([entry])
+    await started.promise
+
+    let closed = false
+    const closing = store.close().then(() => {
+      closed = true
+    })
+    await Promise.resolve()
+    assert.isFalse(closed)
+
+    gate.resolve()
+    await Promise.all([saving, closing])
+    assert.isTrue(closed)
+    assert.isNotNull(await store.find(entry.uuid))
   })
 })

@@ -18,8 +18,8 @@ host signal -> watcher -> IncomingEntry -> Recorder -> PeriscopeStore -> JSON/SS
 - The **Recorder** correlates entries into batches, applies sampling, caps, hooks, redaction,
   and bounded serialization, then flushes to storage.
 - A **store** persists entries behind a single portable contract.
-- The **HTTP layer** exposes read-only JSON and SSE endpoints below the configured dashboard
-  path and serves the built single-page dashboard.
+- The **HTTP layer** exposes JSON and SSE endpoints below the configured dashboard path, including
+  mutations for flags, stored-data clearing, and monitored tags, and serves the single-page dashboard.
 
 ## Workspace layout
 
@@ -36,8 +36,8 @@ host signal -> watcher -> IncomingEntry -> Recorder -> PeriscopeStore -> JSON/SS
 1. Evaluate the environment gate (`enabledIn` plus the `PERISCOPE_ENABLED` override) before
    constructing anything. Disabled means inert: no store, no watcher, logger, process, model,
    or dashboard hooks are installed.
-2. Construct the configured store and the `Recorder`, and bind them to the container
-   (`periscope/recorder` is also re-exported via `adonisjs-periscope/services/recorder`).
+2. Construct the configured store and bind the `Recorder` class as a container singleton. The
+   `adonisjs-periscope/services/recorder` subpath resolves that same class binding.
 3. Register the enabled watchers from `src/watchers/registry.ts`. Optional integrations (Lucid,
    Mail, Cache, Bouncer, Redis, Session, BullMQ) register only when the host package is
    installed and the watcher is enabled.

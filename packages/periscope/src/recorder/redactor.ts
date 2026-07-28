@@ -6,9 +6,10 @@
  */
 
 import type { ResolvedPeriscopeConfig } from '../types.ts'
+import { safeSerialize, SERIALIZER_DEFAULTS } from './serializer.ts'
 
 /**
- * Deep key-deny-list scrubbing.
+ * Deep key and value scrubbing.
  *
  * Redaction is the last line of defence between a host application's secrets and Periscope's
  * storage. It runs inside the recorder pipeline *before* an entry is buffered (architecture
@@ -78,11 +79,53 @@ export const DEFAULT_REDACT_HEADERS = [
 ] as const
 
 /**
+ * Value patterns applied to every captured string that is small enough for the shared
+ * serializer budget. These expressions deliberately use only bounded/delimiter-driven
+ * repetitions: recorded values are attacker-controlled, so a backtracking-heavy default would
+ * turn redaction itself into a denial-of-service primitive.
+ *
+ * The patterns cover, in order:
+ *
+ * - bearer credentials;
+ * - compact JWTs;
+ * - common OpenAI, GitHub and AWS access-key shapes;
+ * - password assignments in query strings and semicolon-delimited connection strings;
+ * - credentials embedded in URL connection strings;
+ * - 13–19 digit payment-card candidates (confirmed with a Luhn check before replacement).
+ *
+ * Arrays replace rather than extend this list. Applications that add a pattern should spread
+ * these defaults so newly shipped protections remain enabled.
+ */
+const CREDIT_CARD_VALUE_PATTERN = /\b\d(?:[ -]?\d){12,18}\b/g
+
+export const DEFAULT_REDACT_VALUE_PATTERNS = [
+  /\bBearer[ \t]+[-A-Za-z0-9._~+/=]{8,}/gi,
+  /\beyJ[A-Za-z0-9_-]{2,}\.eyJ[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{8,}\b/g,
+  /\b(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})\b/g,
+  /\b(?:password|passwd|pwd)[ \t]*[=:][ \t]*[^&;\s,'"]+/gi,
+  /\b[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^@/\s]+@/gi,
+  CREDIT_CARD_VALUE_PATTERN,
+] as const
+
+/**
+ * Email addresses are PII rather than credentials in many applications, so scrubbing them is
+ * opt-in. Add this expression to `redact.valuePatterns` alongside
+ * {@link DEFAULT_REDACT_VALUE_PATTERNS} when recorded addresses must be hidden.
+ */
+export const REDACT_EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)+\b/gi
+
+/**
  * Stand-in written where a cycle is detected. Content reaching the redactor has normally been
  * through `safeSerialize` already, which breaks cycles itself — but the redactor is public API
  * and a hostile or hand-built payload must not be able to hang the recorder.
  */
 const CIRCULAR = '[Circular]'
+
+/**
+ * `safeSerialize` appends this marker after spending its byte budget. Reserve its ASCII width so
+ * a truncated class field remains within the value scanner ceiling instead of skipping the scan.
+ */
+const CLASS_SERIALIZER_MAX_BYTES = SERIALIZER_DEFAULTS.maxBytes - '[Truncated]'.length
 
 /**
  * Collapse a key to its comparable form: lowercase, then everything that is not `a-z` or `0-9`
@@ -96,10 +139,8 @@ function normaliseKey(key: string): string {
 }
 
 /**
- * Whether the value is a bare object literal — the only object shape the walker is allowed to
- * rebuild. `Date`, `Buffer`, `Map`, class instances and anything else with a real prototype are
- * passed through by identity: reconstructing them faithfully is impossible in the general case,
- * and Periscope's job here is to be harmless, not clever.
+ * Whether the value is a bare object literal, which can be rebuilt directly. Class instances
+ * take the bounded serializer route below; built-in containers remain opaque.
  */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null) {
@@ -109,6 +150,48 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   const prototype = Object.getPrototypeOf(value)
 
   return prototype === Object.prototype || prototype === null
+}
+
+/**
+ * Class instances need one bounded pass through the serializer before redaction. The serializer
+ * safely reads getters and `toJSON`, adds the useful `__class` marker, and returns a plain shape
+ * that the regular key/value walker can inspect.
+ *
+ * Built-in containers stay opaque here. Their useful serialised representations do not expose
+ * own application fields, and preserving them by identity avoids changing the long-standing
+ * contract for dates, buffers, maps, sets, URLs, regular expressions and errors.
+ */
+function shouldSerializeClassInstance(value: unknown): value is object {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+
+  try {
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype === Object.prototype || prototype === null) {
+      return false
+    }
+
+    if (
+      value instanceof Date ||
+      value instanceof RegExp ||
+      value instanceof URL ||
+      value instanceof Error ||
+      value instanceof Map ||
+      value instanceof Set ||
+      ArrayBuffer.isView(value) ||
+      value instanceof ArrayBuffer ||
+      value instanceof SharedArrayBuffer
+    ) {
+      return false
+    }
+
+    return (
+      Object.keys(value).length > 0 || ('toJSON' in value && typeof value.toJSON === 'function')
+    )
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -135,6 +218,53 @@ function setKey(target: Record<string, unknown>, key: string, value: unknown): v
   target[key] = value
 }
 
+type CompiledValuePattern = {
+  expression: RegExp
+  validateLuhn: boolean
+}
+
+/**
+ * Every configured expression is cloned so a caller mutating `lastIndex` cannot change recorder
+ * behaviour. Redaction is exhaustive even when the supplied expression omitted `g`.
+ */
+function compileValuePattern(pattern: RegExp): CompiledValuePattern {
+  const flags = pattern.global ? pattern.flags : `${pattern.flags}g`
+
+  return {
+    expression: new RegExp(pattern.source, flags),
+    validateLuhn: pattern.source === CREDIT_CARD_VALUE_PATTERN.source,
+  }
+}
+
+/**
+ * Confirm a card-shaped candidate before scrubbing it. This keeps timestamps, database IDs and
+ * other long numeric values visible while still covering the common formatted and unformatted
+ * card representations.
+ */
+function passesLuhn(candidate: string): boolean {
+  const digits = candidate.replace(/[ -]/g, '')
+  if (digits.length < 13 || digits.length > 19) {
+    return false
+  }
+
+  let sum = 0
+  let double = false
+  for (let index = digits.length - 1; index >= 0; index--) {
+    let digit = digits.charCodeAt(index) - 48
+    if (double) {
+      digit *= 2
+      if (digit > 9) {
+        digit -= 9
+      }
+    }
+
+    sum += digit
+    double = !double
+  }
+
+  return sum % 10 === 0
+}
+
 /**
  * Scrubs configured keys and headers out of entry content.
  *
@@ -154,6 +284,11 @@ export class Redactor {
    */
   readonly #headers: Set<string>
 
+  /**
+   * Cloned, globally applied expressions. An empty array means value-level scanning is disabled.
+   */
+  readonly #valuePatterns: readonly CompiledValuePattern[]
+
   readonly #replacement: string
 
   constructor(config: ResolvedPeriscopeConfig['redact']) {
@@ -172,15 +307,22 @@ export class Redactor {
 
     this.#headers = new Set(config.headers.map((header) => header.toLowerCase()))
     this.#replacement = config.replacement
+    /**
+     * `RecorderOptions` is public and JavaScript callers may still supply a previously resolved
+     * config without the additive field. Keep that runtime shape secure by default as well.
+     */
+    const configuredPatterns = config.valuePatterns ?? DEFAULT_REDACT_VALUE_PATTERNS
+    this.#valuePatterns =
+      configuredPatterns === false ? [] : configuredPatterns.map(compileValuePattern)
   }
 
   /**
-   * Return a copy of `value` with the value of every matching key replaced, at any depth,
-   * inside plain objects and arrays.
+   * Return a copy of `value` with matching keys replaced and secret-shaped substrings scrubbed,
+   * at any depth inside plain objects, arrays and serialisable class instances.
    *
-   * Matching is by key, not by value: whatever a matching key holds — a string, a number, a
-   * whole nested object, `null` — is replaced wholesale, because a secret nested one level
-   * below `credentials` is still a secret.
+   * Whatever a matching key holds — a string, a number, a whole nested object, `null` — is
+   * replaced wholesale, because a secret nested one level below `credentials` is still a secret.
+   * Strings not attached to a denied key are scanned with the configured value patterns.
    *
    * The input is never mutated. Subtrees are rebuilt unconditionally rather than only when
    * something below them changed; the extra allocation is worth not having to reason about
@@ -190,7 +332,7 @@ export class Redactor {
    * walk always terminates.
    */
   redact<T>(value: T): T {
-    if (this.#keys.size === 0) {
+    if (this.#keys.size === 0 && this.#valuePatterns.length === 0) {
       return value
     }
 
@@ -218,11 +360,43 @@ export class Redactor {
   }
 
   /**
+   * Scrub one bounded string. Values larger than the serializer's normal 16 KiB ceiling are
+   * intentionally skipped: running operator-provided expressions over an unbounded response or
+   * mail body would move the recorder's cost guardrail behind the expensive work.
+   */
+  #redactString(value: string): string {
+    if (value.length > SERIALIZER_DEFAULTS.maxBytes) {
+      return value
+    }
+
+    let result = value
+    for (const { expression, validateLuhn } of this.#valuePatterns) {
+      /**
+       * A custom replacement can itself be long. Do not feed a newly expanded value into another
+       * expression once it crosses the same scanner ceiling.
+       */
+      if (result.length > SERIALIZER_DEFAULTS.maxBytes) {
+        break
+      }
+
+      result = result.replace(expression, (candidate) =>
+        !validateLuhn || passesLuhn(candidate) ? this.#replacement : candidate
+      )
+    }
+
+    return result
+  }
+
+  /**
    * Recursive worker. `ancestors` holds the containers on the current path only — entries are
    * removed on the way back up — so a value repeated across sibling branches is still walked,
    * while a true cycle short-circuits to {@link CIRCULAR}.
    */
   #walk(value: unknown, ancestors: Set<object>): unknown {
+    if (typeof value === 'string') {
+      return this.#redactString(value)
+    }
+
     if (Array.isArray(value)) {
       if (ancestors.has(value)) {
         return CIRCULAR
@@ -241,7 +415,9 @@ export class Redactor {
     }
 
     if (!isPlainObject(value)) {
-      return value
+      return shouldSerializeClassInstance(value)
+        ? this.#walk(safeSerialize(value, { maxBytes: CLASS_SERIALIZER_MAX_BYTES }), ancestors)
+        : value
     }
 
     if (ancestors.has(value)) {

@@ -5,7 +5,7 @@
 |
 | The fixture app's Periscope config. It is deliberately close to the published stub
 | (`packages/periscope/stubs/config/periscope.stub`) so that drift between what an application
-| gets from `node ace add periscope` and what the playground exercises shows up here first.
+| gets from `node ace add adonisjs-periscope` and what the playground exercises shows up here first.
 |
 | `sqlite-local` is the zero-config default, so that is what the fixture runs on: the
 | demo command and the functional tests both prove entries survive in `tmp/periscope.sqlite`
@@ -24,7 +24,7 @@ export default defineConfig({
 
   /**
    * The playground runs under NODE_ENV=development locally and NODE_ENV=test in CI, and both
-   * need to record for the phase demos and the integration tests to mean anything.
+   * need to record for the watcher demos and the integration tests to mean anything.
    */
   enabledIn: ['development', 'test'],
 

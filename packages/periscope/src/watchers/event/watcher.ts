@@ -6,7 +6,7 @@
  */
 
 /**
- * Records application events through the emitter's wildcard listener (P3.6).
+ * Records application events through the emitter's wildcard listener.
  *
  * Registering that listener has a process-wide, observable side effect. Emittery includes
  * wildcard listeners when answering `hasListeners(name)` for every name, so this watcher makes

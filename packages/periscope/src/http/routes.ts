@@ -17,6 +17,7 @@ import { StaticController } from './controllers/static_controller.ts'
 import { StreamController } from './controllers/stream_controller.ts'
 import { createDashboardAuthorize } from './middleware/authorize.ts'
 import type { DashboardEnvironment } from './middleware/authorize.ts'
+import { protectDashboardMutation } from './middleware/protect_mutations.ts'
 
 export type RegisterDashboardRoutesOptions = {
   router: Router
@@ -49,6 +50,7 @@ export function registerDashboardRoutes(options: RegisterDashboardRoutesOptions)
     router.get('/api/entries/:uuid/eml', entries.eml.bind(entries))
     router.get('/api/batches/:batchId', entries.batch.bind(entries))
     router.get('/api/batches/:batchId/export', entries.exportBatch.bind(entries))
+    router.get('/api/csrf-token', dashboard.csrfToken.bind(dashboard))
     router.get('/api/counts', dashboard.counts.bind(dashboard))
     router.get('/api/status', dashboard.status.bind(dashboard))
     router.put('/api/flags/:name', dashboard.setFlag.bind(dashboard))
@@ -73,4 +75,5 @@ export function registerDashboardRoutes(options: RegisterDashboardRoutesOptions)
   }
 
   routes.use(authorize)
+  routes.use(protectDashboardMutation)
 }

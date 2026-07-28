@@ -329,6 +329,7 @@ export class HttpClientWatcher implements Watcher {
   readonly #self: SelfAddress
   readonly #requests = new WeakMap<StructuralRequest, RequestState>()
   readonly #activeRequests = new Set<StructuralRequest>()
+  readonly #flushes = new Set<Promise<void>>()
   #registered = false
 
   readonly #onCreate: ChannelListener = (message) => {
@@ -389,7 +390,7 @@ export class HttpClientWatcher implements Watcher {
     })
   }
 
-  cleanup(): void {
+  async cleanup(): Promise<void> {
     if (this.#registered) {
       this.#registered = false
       const subscriptions = [
@@ -414,6 +415,8 @@ export class HttpClientWatcher implements Watcher {
       this.#requests.delete(request)
     }
     this.#activeRequests.clear()
+
+    await Promise.all(this.#flushes)
   }
 
   #create(message: unknown): void {
@@ -513,6 +516,8 @@ export class HttpClientWatcher implements Watcher {
      * streaming while an undecided sampled-out context defers the entry to its request's final
      * retention decision.
      */
-    void this.#context.recorder.flush(state.context, 'intermediate')
+    const flushing = this.#context.recorder.flush(state.context, 'intermediate')
+    this.#flushes.add(flushing)
+    void flushing.then(() => this.#flushes.delete(flushing))
   }
 }

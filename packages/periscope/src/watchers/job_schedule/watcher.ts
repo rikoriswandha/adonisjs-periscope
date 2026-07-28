@@ -19,6 +19,8 @@ type ActiveJob = {
   startedAt: bigint
 }
 
+const MAX_ACTIVE_JOBS = 1_000
+
 function jobKey(event: QueueJobEvent): string {
   return `${event.adapter}\u0000${event.queue}\u0000${event.jobId}`
 }
@@ -35,6 +37,7 @@ export class JobScheduleWatcher implements Watcher, QueueWatcherObserver {
   readonly #context: WatcherContext
   readonly #activeJobs = new Map<string, ActiveJob>()
   readonly #cleanups: (() => void | Promise<void>)[] = []
+  readonly #flushes = new Set<Promise<unknown>>()
   #active = false
 
   constructor(context: WatcherContext) {
@@ -60,16 +63,33 @@ export class JobScheduleWatcher implements Watcher, QueueWatcherObserver {
         safeguardAsync('periscope.watcher.job_schedule.cleanup', () => Promise.resolve(cleanup()))
       )
     )
+    await Promise.all(this.#flushes)
+  }
+
+  #flush(context: BatchContext): void {
+    const flushing = safeguardAsync('periscope.watcher.job_schedule.flush', () =>
+      this.#context.recorder.flush(context, 'final')
+    )
+    this.#flushes.add(flushing)
+    void flushing.then(() => this.#flushes.delete(flushing))
   }
 
   started(event: QueueJobEvent): void {
     safeguard('periscope.watcher.job_schedule.started', () => {
       if (!this.#active) return
-      this.#activeJobs.set(jobKey(event), {
+      const key = jobKey(event)
+      this.#activeJobs.delete(key)
+      this.#activeJobs.set(key, {
         context: BatchScope.createContext('queue'),
         event,
         startedAt: process.hrtime.bigint(),
       })
+
+      if (this.#activeJobs.size > MAX_ACTIVE_JOBS) {
+        const oldest = this.#activeJobs.keys().next().value
+
+        if (oldest !== undefined) this.#activeJobs.delete(oldest)
+      }
     })
   }
 
@@ -111,9 +131,7 @@ export class JobScheduleWatcher implements Watcher, QueueWatcherObserver {
         )
       })
       this.stats.schedules += 1
-      void safeguardAsync('periscope.watcher.job_schedule.flush', () =>
-        this.#context.recorder.flush(context, 'final')
-      )
+      this.#flush(context)
     })
   }
 
@@ -153,9 +171,7 @@ export class JobScheduleWatcher implements Watcher, QueueWatcherObserver {
         )
       })
       this.stats.jobs += 1
-      void safeguardAsync('periscope.watcher.job_schedule.flush', () =>
-        this.#context.recorder.flush(context, 'final')
-      )
+      this.#flush(context)
     })
   }
 }

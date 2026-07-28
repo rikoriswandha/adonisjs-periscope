@@ -107,22 +107,6 @@ jobs:
       - name: Install
         run: npm ci
 
-      # The playground is a real AdonisJS app: it refuses to boot without
-      # APP_KEY and friends. `.env.test` is committed and layers on top of
-      # `.env`, which may or may not be committed — provide it either way.
-      - name: Provision playground env
-        shell: bash
-        run: |
-          if [ -f playground/.env ]; then
-            echo "playground/.env already present; leaving it untouched."
-          elif [ -f playground/.env.example ]; then
-            cp playground/.env.example playground/.env
-            echo "Copied playground/.env.example -> playground/.env"
-          else
-            echo "::error::playground/.env.example is missing; the playground cannot boot."
-            exit 1
-          fi
-
       - name: Unit tests (packages/periscope)
         run: npm -w adonisjs-periscope run test
         env:
@@ -175,21 +159,6 @@ jobs:
           npm pkg set "dependencies.@adonisjs/lucid=${{ matrix.lucid }}" -w playground
           npm install --package-lock=false
 
-      # Keep this identical to the main test job: the focused functional spec boots the real
-      # AdonisJS application and therefore needs the same environment contract.
-      - name: Provision playground env
-        shell: bash
-        run: |
-          if [ -f playground/.env ]; then
-            echo "playground/.env already present; leaving it untouched."
-          elif [ -f playground/.env.example ]; then
-            cp playground/.env.example playground/.env
-            echo "Copied playground/.env.example -> playground/.env"
-          else
-            echo "::error::playground/.env.example is missing; the playground cannot boot."
-            exit 1
-          fi
-
       - name: Build periscope (the playground imports the built package)
         run: npm -w adonisjs-periscope run build
 
@@ -213,9 +182,9 @@ jobs:
       - name: Build package + dashboard
         run: npm run build
 
-      # Risk R6 / P9.1: inspect the artifact npm would publish, not merely the build directory.
-      # The script creates a real tarball and verifies the dashboard entry, hashed assets, package
-      # entrypoint and provider are all included by npm's files/ignore rules.
+      # Inspect the artifact npm would publish, not merely the build directory. The script packs
+      # from the package workspace and verifies every export target, the configure stubs, and the
+      # dashboard entry and hashed assets against npm's actual files/ignore rules.
       - name: Verify published tarball contents
         run: npm run pack:test
 

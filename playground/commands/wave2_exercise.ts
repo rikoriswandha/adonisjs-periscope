@@ -2,7 +2,7 @@ import { args, BaseCommand, flags } from '@adonisjs/core/ace'
 import type { CommandOptions } from '@adonisjs/core/types/ace'
 
 export default class Wave2Exercise extends BaseCommand {
-  static commandName = 'wave2:exercise'
+  static commandName = 'playground:exercise'
   static description = 'Exercise the Periscope CommandWatcher with a playground-owned command'
   static options: CommandOptions = { startApp: true }
 
@@ -13,6 +13,6 @@ export default class Wave2Exercise extends BaseCommand {
   declare password?: string
 
   async run() {
-    this.logger.info(`Wave 2 command completed for ${this.scenario}`)
+    this.logger.info(`Watcher command completed for ${this.scenario}`)
   }
 }

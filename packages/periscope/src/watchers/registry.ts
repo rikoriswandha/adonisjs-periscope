@@ -57,7 +57,7 @@ export const WATCHER_FACTORIES: Record<WatcherName, WatcherFactory> = {
 }
 
 /**
- * Resolves the enabled watchers from config, registers them, and keeps their teardown (P3.1).
+ * Resolves the enabled watchers from config, registers them, and keeps their teardown.
  *
  * Every step runs inside `safeguard()` (§0, invariant 1). A watcher that throws while
  * subscribing takes itself out of the run and nothing else: the others still register, the

@@ -1,8 +1,5 @@
-# The repo-root .gitignore ignores `.env` everywhere. The playground is a throwaway
-# fixture app that must boot with zero setup, so it is negated here — and only here.
-# Never copy this negation into a real application.
-
-!.env
+# Keep developer secrets local. Copy `.env.example` to `.env` for manual playground use.
+.env
 .env.local
 .env.production.local
 .env.development.local

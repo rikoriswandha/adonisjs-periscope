@@ -6,7 +6,7 @@
  */
 
 /**
- * The recursion gate (plan §0, invariant 2; P3.3's "Done when"), against a real database.
+ * The recursion gate (invariant 2), against a real database.
  *
  * This is the one test in the suite where the query watcher and the storage driver are pointed at
  * the *same* Lucid connection on purpose, because that is the only arrangement in which Periscope

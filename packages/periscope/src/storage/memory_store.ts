@@ -6,7 +6,7 @@
  */
 
 import { EntryType } from '../types.ts'
-import { encodeCursor, parseCursor, resolvePageSize } from './pagination.ts'
+import { encodeEntryCursor, parseEntryCursor, resolvePageSize } from './pagination.ts'
 import { aggregateExceptionGroups } from './exception_groups.ts'
 import type {
   ApplicationSummary,
@@ -20,6 +20,7 @@ import type {
   PruneOptions,
   StoredEntry,
 } from '../types.ts'
+import type { EntryCursor } from './pagination.ts'
 
 /**
  * Ceiling used when the caller gives none. Matches `storage.maxEntries` in the resolved config,
@@ -57,7 +58,10 @@ export type MemoryStoreOptions = {
  */
 function bySequenceAscending(left: StoredEntry, right: StoredEntry): number {
   if (left.sequence === right.sequence) {
-    return 0
+    if (left.uuid === right.uuid) {
+      return 0
+    }
+    return left.uuid < right.uuid ? -1 : 1
   }
 
   return left.sequence < right.sequence ? -1 : 1
@@ -68,7 +72,10 @@ function bySequenceAscending(left: StoredEntry, right: StoredEntry): number {
  */
 function bySequenceDescending(left: StoredEntry, right: StoredEntry): number {
   if (left.sequence === right.sequence) {
-    return 0
+    if (left.uuid === right.uuid) {
+      return 0
+    }
+    return left.uuid > right.uuid ? -1 : 1
   }
 
   return left.sequence > right.sequence ? -1 : 1
@@ -81,8 +88,12 @@ function bySequenceDescending(left: StoredEntry, right: StoredEntry): number {
  * optimisation, the predicate is the definition. Keeping the two separate means an index bug can
  * only ever cost recall, never return an entry that does not match.
  */
-function matchesQuery(entry: StoredEntry, query: EntryQuery, cursor: bigint | null): boolean {
-  if (cursor !== null && entry.sequence >= cursor) {
+function matchesQuery(entry: StoredEntry, query: EntryQuery, cursor: EntryCursor | null): boolean {
+  if (
+    cursor !== null &&
+    (entry.sequence > cursor.sequence ||
+      (entry.sequence === cursor.sequence && (cursor.uuid === null || entry.uuid >= cursor.uuid)))
+  ) {
     return false
   }
 
@@ -131,13 +142,11 @@ function matchesQuery(entry: StoredEntry, query: EntryQuery, cursor: bigint | nu
  *   one of them after the entry is gone. Every deletion — eviction, prune, trim, overwrite —
  *   therefore funnels through the single private `#remove`, and `clear` resets all three
  *   together. Nothing else may call `Map#delete` on `#entries`.
- * - **Ordering comes from `sequence`, never from insertion order.** Insertion order does equal
- *   sequence order in practice (the recorder stamps monotonically and flushes a batch at a
- *   time), but a driver whose reads silently depend on the caller behaving is a driver that
- *   corrupts a timeline the first time a batch is replayed out of order. Reads sort explicitly.
- *   Eviction is the one exception, and a deliberate one: it pops the front of the insertion
- *   order, which is O(1) and correct whenever the recorder stamped the entries. `trim` — an
- *   explicit maintenance operation that is allowed to cost more — sorts by `sequence` instead.
+ * - **Ordering is explicit, never insertion order.** The recorder stamps sequences monotonically
+ *   within one process, but workers may tie; reads therefore sort by `(sequence, uuid)`.
+ *   Eviction is the one deliberate exception: it pops the front of insertion order in O(1), which
+ *   is correct for the recorder's normal write path. `trim` is an explicit maintenance operation
+ *   allowed to cost more, so it resolves the composite order exactly.
  * - **Copy in, copy out.** Entries are cloned on the way in, so a watcher that keeps mutating an
  *   object after handing it over cannot rewrite history, and cloned on the way out, so the
  *   dashboard cannot mutate the buffer through a result. The clone is shallow plus a fresh
@@ -313,7 +322,7 @@ export class MemoryStore implements PeriscopeStore {
 
   async list(query: EntryQuery = {}): Promise<Paginated<StoredEntry>> {
     const limit = resolvePageSize(query.limit)
-    const cursor = parseCursor(query.cursor)
+    const cursor = parseEntryCursor(query.cursor)
     const matches: StoredEntry[] = []
 
     for (const entry of this.#candidateEntries(query)) {
@@ -333,7 +342,10 @@ export class MemoryStore implements PeriscopeStore {
      */
     return {
       data: page.map((entry) => this.#copy(entry)),
-      nextCursor: matches.length > limit ? encodeCursor(page[page.length - 1].sequence) : null,
+      nextCursor:
+        matches.length > limit
+          ? encodeEntryCursor(page[page.length - 1].sequence, page[page.length - 1].uuid)
+          : null,
     }
   }
 
@@ -447,7 +459,7 @@ export class MemoryStore implements PeriscopeStore {
 
     /*
      * Unlike eviction, `trim` is an explicit maintenance command and cannot assume the buffer
-     * was filled in stamping order, so "oldest" is resolved against `sequence`.
+     * was filled in stamping order, so "oldest" uses the full `(sequence, uuid)` key.
      */
     const doomed = [...this.#entries.values()].sort(bySequenceAscending).slice(0, excess)
 

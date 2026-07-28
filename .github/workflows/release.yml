@@ -1,9 +1,10 @@
 name: Release
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
     branches: [main]
-  workflow_dispatch:
+    types: [completed]
 
 concurrency:
   group: release-main
@@ -16,11 +17,17 @@ permissions:
 
 jobs:
   release:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_sha == github.sha
     name: Version or publish
     runs-on: ubuntu-24.04
     environment: npm
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - uses: actions/setup-node@v5
         with:
@@ -32,7 +39,7 @@ jobs:
         run: npm ci
 
       - name: Verify package and publish
-        uses: changesets/action@v1
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1
         with:
           version: npm run version-packages
           publish: npm run release

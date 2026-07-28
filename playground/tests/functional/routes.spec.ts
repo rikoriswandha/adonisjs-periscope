@@ -2,9 +2,8 @@ import { test } from '@japa/runner'
 import testUtils from '@adonisjs/core/services/test_utils'
 
 /**
- * The booted-app integration test required by P0.2/P0.3. It pins the observable
- * contract of every fixture route, so later phases can bolt Periscope onto this
- * app and immediately see whether they changed host behaviour.
+ * This booted-app integration test pins the observable contract of every fixture route,
+ * so Periscope changes can be checked immediately for changes to host behaviour.
  */
 test.group('playground routes', (group) => {
   group.setup(() => testUtils.db().migrate())

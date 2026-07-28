@@ -25,7 +25,7 @@
     "format": "prettier --write .",
     "changeset": "changeset",
     "version-packages": "changeset version",
-    "release": "npm run build && npm run pack:test && changeset publish",
+    "release": "npm run pack:test && changeset publish",
     "pack:test": "node scripts/verify-pack.mjs"
   },
   "devDependencies": {

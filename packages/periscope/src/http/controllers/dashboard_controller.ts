@@ -23,6 +23,13 @@ export class DashboardController {
     private readonly environment: DashboardEnvironment
   ) {}
 
+  csrfToken({ request, response }: HttpContext) {
+    const token = (request as typeof request & { csrfToken?: unknown }).csrfToken
+    response.header('cache-control', 'no-store')
+
+    return { token: typeof token === 'string' ? token : null }
+  }
+
   async counts({ request }: HttpContext) {
     const application = firstQueryString(request.qs().application)
     return { data: await this.store.counts(application) }

@@ -12,7 +12,7 @@ import type { BatchContext, BatchKind } from '../types.ts'
 import { activeTraceId } from './trace_context.ts'
 
 /**
- * The one and only batch store (plan P1.2).
+ * The one and only batch store.
  *
  * It is module-level rather than a static class property so that every importer of this module
  * shares the same storage instance: correlation breaks the moment two copies of the store exist,

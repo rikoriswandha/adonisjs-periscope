@@ -122,11 +122,11 @@ export class DumpWatcher implements Watcher {
     this.#timer.unref()
   }
 
-  cleanup(): void {
+  async cleanup(): Promise<void> {
+    const refreshing = this.#refreshing
     this.#registered = false
     this.#generation++
     this.#active = false
-    this.#refreshing = null
 
     if (this.#timer !== null) {
       clearInterval(this.#timer)
@@ -136,5 +136,7 @@ export class DumpWatcher implements Watcher {
     if (getActiveWatcher('dump') === this) {
       setActiveWatcher('dump', null)
     }
+
+    await refreshing
   }
 }

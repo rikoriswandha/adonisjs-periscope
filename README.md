@@ -122,8 +122,8 @@ application selector persists its choice in the URL.
 ## Dashboard security
 
 The dashboard and JSON/SSE API live below `dashboard.path`. Every dashboard request passes the
-environment gate and then `dashboard.authorize`. The default authorizer allows local development
-and denies production.
+environment gate and then `dashboard.authorize`. The default authorizer denies requests in
+production; override `dashboard.authorize` explicitly to enable access there.
 
 Request details surface repeated query-family warnings at `dashboard.nPlusOneThreshold`, an active
 OpenTelemetry trace ID when `@opentelemetry/api` is installed, and a JSON batch export suitable for
@@ -164,6 +164,8 @@ short retention:
 import {
   DEFAULT_REDACT_HEADERS,
   DEFAULT_REDACT_KEYS,
+  DEFAULT_REDACT_VALUE_PATTERNS,
+  REDACT_EMAIL_PATTERN,
   defineConfig,
 } from 'adonisjs-periscope/periscope_config'
 
@@ -189,16 +191,17 @@ export default defineConfig({
   redact: {
     keys: [...DEFAULT_REDACT_KEYS, 'tenantSecret'],
     headers: [...DEFAULT_REDACT_HEADERS],
+    valuePatterns: [...DEFAULT_REDACT_VALUE_PATTERNS, REDACT_EMAIL_PATTERN],
   },
 
   watchers: {
     request: { captureResponse: false, captureSession: false },
     query: { hideBindings: true },
-    command: { captureOutput: false },
-    mail: { captureBody: false },
+    command: { enabled: false },
+    mail: { enabled: false },
     cache: { captureValues: false },
-    model: { captureValues: false },
-    gate: { captureUser: false },
+    model: { captureDirty: false },
+    gate: { enabled: false },
     dump: { enabled: false },
   },
 
@@ -214,6 +217,15 @@ export default defineConfig({
 Set `PERISCOPE_ENABLED=true` only for the incident window, monitor storage growth, then disable and
 clear retained data. Sampling is decided once per batch so correlated entries stay together.
 Monitored tags and `recording.keepAlways` can retain a sampled-out batch.
+
+Value-level redaction is on by default for bearer/JWT credentials, common `sk-`, `ghp_`, and
+`AKIA` keys, password assignments and URL connection credentials, and Luhn-valid payment-card
+numbers. These patterns scrub secrets even inside opaque strings such as query bindings, logs,
+mail bodies, model/gate values, and response previews. Email redaction is intentionally opt-in via
+`REDACT_EMAIL_PATTERN`; set `valuePatterns: false` only when value scanning must be disabled while
+retaining key and header redaction.
+To bound recorder CPU, individual strings over the serializer's 16 KiB default ceiling are not
+pattern-scanned; deny-listed keys are still replaced wholesale.
 
 ## Watcher reference
 
@@ -245,7 +257,8 @@ Queue integrations use the exported `QueueWatcherAdapter` contract. The BullMQ r
 observes queue events without replacing application workers:
 
 ```ts
-import { BullQueueAdapter, defineConfig } from 'adonisjs-periscope'
+import { defineConfig } from 'adonisjs-periscope/periscope_config'
+import { BullQueueAdapter } from 'adonisjs-periscope/watchers/bull_queue'
 
 export default defineConfig({
   watchers: {

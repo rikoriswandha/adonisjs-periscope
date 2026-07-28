@@ -63,25 +63,6 @@ const TRUNCATED_TAG = 'truncated'
 const TRUNCATION_MESSAGE = 'Periscope dropped entries in this batch after a per-type cap was hit.'
 
 /**
- * How many *successful* flushes pass between two opportunistic `store.trim()` calls.
- *
- * `storage.maxEntries` is a ceiling on retained history, not a per-write invariant, so trimming
- * on every flush would be indefensible: a flush costs one insert on a request's way out, while a
- * trim is a whole-table maintenance delete. Twenty-five is chosen to be invisible from both
- * sides of that trade. One extra statement per twenty-five flushes disappears into the writes
- * those same flushes already do, and an application recording a handful of entries per request
- * can only carry a few hundred rows past the cap before the next trim pulls it back — an
- * overshoot of a few percent on a ten-thousand-entry default, which is exactly the accuracy a
- * "keep roughly the last N entries" knob deserves.
- *
- * There is deliberately no config key for it. The interval schedules an intent the user already
- * expressed through `storage.maxEntries`; a second knob would only let someone mis-tune the
- * first. Config surface arrives the day something needs to override it. It is exported only so
- * the suite that proves the interval can assert against the number instead of duplicating it.
- */
-export const TRIM_EVERY_FLUSHES = 25
-
-/**
  * A monitored-tag read may be reused for at most ten seconds.
  */
 export const MONITORED_TAGS_CACHE_TTL_MS = 10_000
@@ -259,13 +240,20 @@ export class Recorder {
   #pausedRefresh: Promise<void> | null = null
 
   /**
-   * Successful flushes since the last opportunistic trim — see {@link TRIM_EVERY_FLUSHES}.
-   *
-   * It lives on the recorder rather than on a batch context because contexts are short-lived:
-   * a request batch flushes exactly once, so a per-context counter would never reach any
-   * interval worth having and every request would trim.
+   * Per-context flushes are serialized so leaving entries buffered until a save commits cannot
+   * make two callers persist the same fragment. The set gives shutdown one place to drain every
+   * flush before the provider closes storage.
    */
-  #flushesSinceTrim = 0
+  readonly #contextFlushes = new WeakMap<BatchContext, Promise<void>>()
+  readonly #inFlightFlushes = new Set<Promise<void>>()
+  #trimRequested = false
+  #trimmingStore: Promise<void> | null = null
+
+  /**
+   * Recorder caps already bound accepted entries per type. One extra slot carries the synthetic
+   * truncation report, keeping a failed-save requeue bounded even when every type cap is full.
+   */
+  readonly #bufferLimit: number
 
   /**
    * Memoised shutdown, which is what makes {@link Recorder.shutdown} idempotent: a second caller
@@ -276,6 +264,8 @@ export class Recorder {
   constructor(options: RecorderOptions) {
     this.store = options.store
     this.#config = options.config
+    this.#bufferLimit =
+      Object.values(options.config.recording.caps).reduce((total, cap) => total + cap, 0) + 1
     this.#enabled = options.enabled ?? options.config.enabled
     this.redactor = new Redactor(options.config.redact)
     BatchScope.configureSampling(options.config.recording.sampleRate)
@@ -294,7 +284,7 @@ export class Recorder {
   }
 
   /**
-   * Whether recording is paused by `node ace periscope:pause` (P5.3).
+   * Whether recording is paused by `node ace periscope:pause`.
    *
    * The flag lives in the store, which is asynchronous, while `record()` is synchronous and must
    * stay that way — a watcher cannot await, and making the hot path await a database round trip
@@ -475,146 +465,186 @@ export class Recorder {
   /**
    * Flush one buffered fragment from `target`, defaulting to the active batch. `final` is the
    * default lifecycle boundary; `intermediate` keeps an undecided sampled-out context intact.
-   * Every {@link TRIM_EVERY_FLUSHES} successful writes also bring the store back under
-   * `storage.maxEntries`.
+   * Every successful write also restores the `storage.maxEntries` ceiling.
    *
    * Never rejects: the request middleware awaits this on the way out of every request, and a
    * broken store must not turn into a 500.
    */
-  async flush(target?: BatchContext, mode: FlushMode = 'final'): Promise<void> {
-    await safeguardAsync('periscope.recorder.flush', async () => {
-      const context = target ?? BatchScope.current() ?? this.#ambient.current()
+  flush(target?: BatchContext, mode: FlushMode = 'final'): Promise<void> {
+    const context = target ?? BatchScope.current() ?? this.#ambient.current()
+    const previous = this.#contextFlushes.get(context)
+    const pending = (async (): Promise<void> => {
+      if (previous !== undefined) {
+        await previous
+      }
 
-      /**
-       * An intermediate flush cannot decide a sampled-out batch from one fragment. Leaving the
-       * buffer and truncation counters in place lets the final flush expose the whole context to
-       * keepAlways and monitored-tag matching. Sampled-in contexts still take the streaming path
-       * below without delay.
-       */
-      if (!context.sampled && context.retention === 'pending' && mode === 'intermediate') {
+      await safeguardAsync('periscope.recorder.flush', () => this.#flushContext(context, mode))
+    })()
+
+    this.#contextFlushes.set(context, pending)
+    this.#inFlightFlushes.add(pending)
+    void pending.then(() => {
+      if (this.#contextFlushes.get(context) === pending) {
+        this.#contextFlushes.delete(context)
+      }
+      this.#inFlightFlushes.delete(pending)
+    })
+
+    return pending
+  }
+
+  async #flushContext(context: BatchContext, mode: FlushMode): Promise<void> {
+    /**
+     * An intermediate flush cannot decide a sampled-out batch from one fragment. Leaving the
+     * buffer and truncation counters in place lets the final flush expose the whole context to
+     * keepAlways and monitored-tag matching. Sampled-in contexts still take the streaming path.
+     */
+    if (!context.sampled && context.retention === 'pending' && mode === 'intermediate') {
+      return
+    }
+
+    /**
+     * Keep the fragment in the context until storage confirms it. Concurrent records append
+     * behind this snapshot, while the per-context queue above prevents a second flush from
+     * replaying it. A failed save can therefore be retried without reconstructing lost entries.
+     */
+    const drained = context.buffer.slice()
+    let bufferedEntries = drained.length
+
+    /**
+     * Reported before the empty-buffer bail-out. A flush with nothing to write can still owe a
+     * truncation report because every entry of a capped type may have been dropped.
+     */
+    this.#reportTruncation(context, drained)
+
+    if (drained.length === 0) {
+      if (!context.sampled && context.retention === 'pending') {
+        context.retention = 'dropped'
+      }
+
+      return
+    }
+
+    if (!context.sampled) {
+      if (context.retention === 'dropped') {
+        context.buffer.splice(0, bufferedEntries)
         return
       }
 
-      /**
-       * Drained synchronously, before the first `await`. Anything recorded while the store write
-       * is in flight lands in a fresh buffer and is picked up by the next flush, and a second
-       * flush racing this one finds nothing — entries can be neither written twice nor lost.
-       */
-      const drained = context.buffer.splice(0)
+      if (context.retention === 'pending') {
+        const batchView = new FlushingBatchView(context.kind, drained)
+        let kept =
+          safeguard(
+            'periscope.recorder.keep_always',
+            () => this.#config.recording.keepAlways(batchView),
+            false
+          ) === true
 
-      /**
-       * Reported *before* the empty-buffer bail-out. A flush with nothing to write can still owe
-       * a truncation report: the batch may have had every entry of a capped type dropped, or it
-       * may have written its entries in an earlier flush and only kept dropping since. The counts
-       * sit on the context until someone reports them, and returning first is how they were lost.
-       */
-      this.#reportTruncation(context, drained)
+        if (!kept) {
+          const monitoredTags = await this.#readMonitoredTags()
+          const entriesBeforeRefresh = drained.length
+          const arrivals = context.buffer.slice(bufferedEntries)
 
-      if (drained.length === 0) {
-        if (!context.sampled && context.retention === 'pending') {
-          context.retention = 'dropped'
+          /**
+           * Captured-context watchers may record while the monitored-tag read is in flight. Fold
+           * those entries into the same final decision without removing them before persistence.
+           */
+          drained.push(...arrivals)
+          bufferedEntries += arrivals.length
+          this.#reportTruncation(context, drained)
+
+          if (drained.length !== entriesBeforeRefresh) {
+            kept =
+              safeguard(
+                'periscope.recorder.keep_always',
+                () => this.#config.recording.keepAlways(batchView),
+                false
+              ) === true
+          }
+
+          kept ||=
+            monitoredTags === null ||
+            batchView.hasEntryWhere((entry) => entry.tags.some((tag) => monitoredTags.has(tag)))
         }
 
-        return
-      }
+        context.retention = kept ? 'kept' : 'dropped'
 
-      if (!context.sampled) {
-        if (context.retention === 'dropped') {
+        if (!kept) {
+          context.buffer.splice(0)
           return
         }
-
-        if (context.retention === 'pending') {
-          const batchView = new FlushingBatchView(context.kind, drained)
-          let kept =
-            safeguard(
-              'periscope.recorder.keep_always',
-              () => this.#config.recording.keepAlways(batchView),
-              false
-            ) === true
-
-          if (!kept) {
-            const monitoredTags = await this.#readMonitoredTags()
-            const entriesBeforeRefresh = drained.length
-
-            /**
-             * Captured-context watchers may record while the monitored-tag read is in flight.
-             * Fold those entries into the same final decision so a late monitored tag or
-             * keepAlways match retains the complete batch rather than being cleared as a drop.
-             */
-            drained.push(...context.buffer.splice(0))
-            this.#reportTruncation(context, drained)
-
-            if (drained.length !== entriesBeforeRefresh) {
-              kept =
-                safeguard(
-                  'periscope.recorder.keep_always',
-                  () => this.#config.recording.keepAlways(batchView),
-                  false
-                ) === true
-            }
-
-            kept ||=
-              monitoredTags === null ||
-              batchView.hasEntryWhere((entry) => entry.tags.some((tag) => monitoredTags.has(tag)))
-          }
-
-          context.retention = kept ? 'kept' : 'dropped'
-
-          if (!kept) {
-            /**
-             * A listener may record another fragment while the monitored-tag read is in flight.
-             * The final decision owns the context, so a drop must clear those arrivals too.
-             */
-            context.buffer.splice(0)
-            return
-          }
-        }
       }
+    }
 
-      const stored = drained.map((entry) => entry.toStored(this.#config.applicationName))
+    const stored = drained.map((entry) => entry.toStored(this.#config.applicationName))
 
+    try {
       /**
-       * §0, invariant 2. The driver's own work — a Lucid insert, its query log, whatever it
-       * writes to stderr — is observable by the very watchers feeding this recorder. Muting the
-       * write is what stops a flush from generating the entries for the next flush.
+       * The driver's own work is observable by the watchers feeding this recorder. Muting the
+       * write stops a flush from generating entries for the next flush.
        */
       await BatchScope.mute(() => this.store.save(stored))
-
-      for (const entry of stored) {
-        this.#notifyFlushed(entry)
+    } catch (error) {
+      /**
+       * Normal buffered entries never left the context. A synthetic truncation entry is the one
+       * possible exception, so restore any missing drained entries in order, then enforce the
+       * same fixed ceiling as the normal record path.
+       */
+      const queued = new Set(context.buffer)
+      for (let index = drained.length - 1; index >= 0; index -= 1) {
+        const entry = drained[index]
+        if (!queued.has(entry) && context.buffer.length < this.#bufferLimit) {
+          context.buffer.unshift(entry)
+          queued.add(entry)
+        }
+      }
+      if (context.buffer.length > this.#bufferLimit) {
+        context.buffer.splice(this.#bufferLimit)
       }
 
-      this.#flushesSinceTrim++
+      throw error
+    }
 
-      if (this.#flushesSinceTrim < TRIM_EVERY_FLUSHES) {
-        return
+    /**
+     * Only the entries represented by this successful write leave the buffer. Anything recorded
+     * while the save was in flight remains for the next serialized flush.
+     */
+    context.buffer.splice(0, bufferedEntries)
+
+    for (const entry of stored) {
+      this.#notifyFlushed(entry)
+    }
+
+    /**
+     * `maxEntries` is a hard retention ceiling. Each successful write therefore performs the
+     * driver's cheap under-cap check and trims immediately when necessary.
+     */
+    await this.#trimStore()
+  }
+
+  #trimStore(): Promise<void> {
+    this.#trimRequested = true
+
+    if (this.#trimmingStore !== null) {
+      return this.#trimmingStore
+    }
+
+    const trimming = (async () => {
+      while (this.#trimRequested) {
+        this.#trimRequested = false
+        await BatchScope.mute(() => this.store.trim(this.#config.storage.maxEntries))
       }
+    })()
+    this.#trimmingStore = trimming
 
-      /**
-       * Reset *before* the trim rather than after it resolves, so the interval counts attempts
-       * and not successes. A store whose deletes fail — a locked SQLite file, a read-only
-       * replica, a permissions problem — would otherwise sit pinned at the threshold and turn
-       * every single subsequent flush into another failed maintenance query against a database
-       * that is already unhealthy. Skipping one interval's worth of trimming costs nothing in
-       * exchange: the cap bounds history, not correctness, and whenever the store recovers a
-       * single trim collapses the whole accumulated backlog in one statement.
-       */
-      this.#flushesSinceTrim = 0
+    const settled = () => {
+      if (this.#trimmingStore === trimming) {
+        this.#trimmingStore = null
+      }
+    }
+    void trimming.then(settled, settled)
 
-      /**
-       * Muted for exactly the reason the save above is (§0, invariant 2): a trim is a delete,
-       * which is database traffic the query watcher would hand straight back to this recorder.
-       * It also shares the enclosing `safeguardAsync`, so a driver that cannot trim degrades
-       * into "history grows past the cap" instead of into a rejected flush — pruning is
-       * housekeeping, and housekeeping must never be able to fail a request.
-       *
-       * Against the `memory` driver this is close to free. That store already evicts the oldest
-       * entries on every save, so it is under the cap by construction and its `trim` returns 0
-       * after a single size comparison; the call stays unconditional because the recorder does
-       * not know, and must not care, which driver it was handed.
-       */
-      await BatchScope.mute(() => this.store.trim(this.#config.storage.maxEntries))
-    })
+    return trimming
   }
 
   /**
@@ -695,6 +725,11 @@ export class Recorder {
       const pausedRefresh = this.#pausedRefresh
       this.#shuttingDown = safeguardAsync('periscope.recorder.shutdown', async () => {
         await pausedRefresh
+
+        while (this.#inFlightFlushes.size > 0) {
+          await Promise.all(this.#inFlightFlushes)
+        }
+
         await this.#ambient.stop()
       })
     }
@@ -719,10 +754,9 @@ export class Recorder {
    * not a log line the application produced — so it only surfaces in that batch's timeline.
    *
    * The note is written into a *copy* of the carrier's content, never into the object itself.
-   * `Redactor#redact` returns its argument by identity when there is nothing to scrub, so
-   * `entry.content` is very often the exact object the watcher was handed by the host
-   * application, which may still be holding it. Periscope observes; it does not add keys to
-   * things it was merely shown.
+   * A custom redaction policy may disable both key and value scanning, in which case the entry
+   * still holds the exact object supplied by the host application. Periscope observes; it does
+   * not add keys to things it was merely shown.
    */
   #reportTruncation(context: BatchContext, drained: IncomingEntry[]): void {
     const truncated = context.truncated

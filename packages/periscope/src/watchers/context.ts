@@ -11,7 +11,7 @@ import type { Recorder } from '../recorder/recorder.ts'
 import type { ResolvedPeriscopeConfig } from '../types.ts'
 
 /**
- * Everything a watcher is allowed to see (P3.1).
+ * Everything a watcher is allowed to see.
  *
  * Watchers receive this object rather than the application, so that what a watcher can reach is
  * a written-down list rather than "whatever is in the container". `app` is still here — the log

@@ -12,15 +12,15 @@
  * Two constraints shape everything below.
  *
  * **The connection belongs to the host.** Periscope borrows it; it does not own it, cannot
- * reconfigure it, and must not close it. That is why `close()` is a documented no-op, why the
- * foreign key on the tag table is treated as decoration rather than as a delete mechanism, and
- * why the query client is resolved per call instead of cached — Lucid may reconnect a pool
+ * reconfigure it, and must not close it. `close()` only drains Periscope's bounded write queue.
+ * The foreign key on the tag table is treated as decoration rather than as a delete mechanism,
+ * and the query client is resolved per call instead of cached — Lucid may reconnect a pool
  * underneath a long-lived object, and a driver holding the client it was handed at boot would
  * keep talking to a dead one.
  *
  * **Query builder only, never a Lucid model.** Two reasons, and the second is the load-bearing
  * one. Models would drag `BaseModel` into Periscope's type surface and make an optional peer
- * dependency a compile-time one. More importantly the ModelWatcher (P6.4) installs recording
+ * dependency a compile-time one. More importantly the ModelWatcher installs recording
  * hooks on every model in the application: a Periscope model would record Periscope's own
  * writes, and each recorded write would produce another write. Invariant 2 — Periscope never
  * records itself — is enforced here, by not giving the watcher anything to attach to.
@@ -33,9 +33,15 @@
  * branches on `dialect.name`.
  */
 
+import { safeguard } from '../safeguard.ts'
 import { EntryType } from '../types.ts'
-import { encodeCursor, parseCursor, resolvePageSize } from './pagination.ts'
-import { aggregateExceptionGroups } from './exception_groups.ts'
+import {
+  encodeCursor,
+  encodeEntryCursor,
+  parseCursor,
+  parseEntryCursor,
+  resolvePageSize,
+} from './pagination.ts'
 import {
   ENTRIES_TABLE,
   FLAGS_TABLE,
@@ -47,7 +53,7 @@ import {
   toStoredEntry,
   toTagRows,
 } from './sql.ts'
-import type { EntryRow } from './sql.ts'
+import type { EntryRow, TagRow } from './sql.ts'
 import type {
   ApplicationSummary,
   EntryQuery,
@@ -60,6 +66,7 @@ import type {
   PruneOptions,
   StoredEntry,
 } from '../types.ts'
+import type { EntryCursor } from './pagination.ts'
 import type { Database } from '@adonisjs/lucid/database'
 import type { QueryClientContract, TransactionClientContract } from '@adonisjs/lucid/types/database'
 import type { DatabaseQueryBuilderContract } from '@adonisjs/lucid/types/querybuilder'
@@ -90,6 +97,19 @@ type MonitoredTagRow = { tag: string }
  */
 type FlagRow = { value: string; expires_at: number | string | null }
 
+interface PendingDatabaseSave {
+  entryRows: EntryRow[]
+  tagRows: TagRow[]
+  resolve(): void
+  reject(error: unknown): void
+}
+
+/**
+ * One active transaction plus at most this many waiting batches bounds both pool pressure and
+ * retained request contexts when the host database is slower than incoming requests.
+ */
+const DATABASE_SAVE_BACKLOG_LIMIT = 64
+
 /**
  * A grouped count. Postgres returns `count(*)` as a `bigint`, hence the string.
  */
@@ -110,11 +130,13 @@ function* chunked<T>(items: T[], size: number): Generator<T[]> {
  * `stubs/migrations/create_periscope_tables.stub`.
  *
  * See the module docblock for why the client is resolved per call, why no Lucid model appears
- * anywhere below, and why `close()` does nothing.
+ * anywhere below, and why `close()` drains writes without closing the connection.
  */
 export class DatabaseStore implements PeriscopeStore {
   readonly #db: Database
   readonly #connection: string | undefined
+  readonly #pendingSaves: PendingDatabaseSave[] = []
+  #drainingSaves: Promise<void> | null = null
 
   constructor(options: DatabaseStoreOptions) {
     this.#db = options.db
@@ -145,7 +167,7 @@ export class DatabaseStore implements PeriscopeStore {
   #applyFilters(
     builder: DatabaseQueryBuilderContract<EntryRow>,
     query: EntryQuery,
-    cursor: bigint | null
+    cursor: EntryCursor | null
   ): void {
     if (query.type !== undefined) {
       builder.where('type', query.type)
@@ -175,13 +197,18 @@ export class DatabaseStore implements PeriscopeStore {
       })
     }
 
-    /*
-     * Strictly less than, against the padded encoding rather than the raw digits: the column is
-     * fixed-width text, so `'00000000001800000000977' < '00000000001800000001954'` only agrees
-     * with the numeric comparison while both sides are padded to the same width.
-     */
     if (cursor !== null) {
-      builder.where('sequence', '<', encodeSequence(cursor))
+      const sequence = encodeSequence(cursor.sequence)
+
+      if (cursor.uuid === null) {
+        builder.where('sequence', '<', sequence)
+      } else {
+        builder.whereRaw('(sequence < ? or (sequence = ? and uuid < ?))', [
+          sequence,
+          sequence,
+          cursor.uuid,
+        ])
+      }
     }
   }
 
@@ -233,35 +260,78 @@ export class DatabaseStore implements PeriscopeStore {
       return
     }
 
-    const entryRows = entries.map(toEntryRow)
-    const tagRows = entries.flatMap(toTagRows)
-
-    /*
-     * One transaction for the whole batch, so a reader can never see an entry whose tag rows have
-     * not landed yet — `list({ tag })` would report the entry as untagged for the width of the
-     * window, which on a dashboard that polls is a visible flicker rather than a race nobody
-     * hits.
-     */
-    await this.#client().transaction(async (trx) => {
-      for (const chunk of chunked(entryRows, INSERT_CHUNK_SIZE)) {
-        /*
-         * Conflicts are ignored rather than merged. A conflict here means the same uuid is being
-         * saved twice, which only happens when a flush is retried after a partial failure; the
-         * rows are identical, so the cheapest correct answer is to keep what is already there.
-         * Failing instead would cost every other entry in the batch.
-         */
-        await trx.knexQuery().table(ENTRIES_TABLE).insert(chunk).onConflict('uuid').ignore()
+    return new Promise<void>((resolve, reject) => {
+      if (this.#pendingSaves.length >= DATABASE_SAVE_BACKLOG_LIMIT) {
+        const dropped = this.#pendingSaves.shift()
+        if (dropped !== undefined) {
+          const error = new Error(
+            `Periscope database write backlog exceeded ${DATABASE_SAVE_BACKLOG_LIMIT} pending batches`
+          )
+          dropped.reject(error)
+          safeguard('periscope.storage.database.backpressure', () => {
+            throw error
+          })
+        }
       }
 
-      for (const chunk of chunked(tagRows, INSERT_CHUNK_SIZE)) {
-        await trx
-          .knexQuery()
-          .table(TAGS_TABLE)
-          .insert(chunk)
-          .onConflict(['entry_uuid', 'tag'])
-          .ignore()
+      this.#pendingSaves.push({
+        entryRows: entries.map(toEntryRow),
+        tagRows: entries.flatMap(toTagRows),
+        resolve,
+        reject,
+      })
+      this.#startSaveDrain()
+    })
+  }
+
+  #startSaveDrain(): void {
+    if (this.#drainingSaves !== null) {
+      return
+    }
+
+    const draining = this.#drainPendingSaves()
+    this.#drainingSaves = draining
+    void draining.then(() => {
+      if (this.#drainingSaves === draining) {
+        this.#drainingSaves = null
+        if (this.#pendingSaves.length > 0) {
+          this.#startSaveDrain()
+        }
       }
     })
+  }
+
+  async #drainPendingSaves(): Promise<void> {
+    for (;;) {
+      const save = this.#pendingSaves.shift()
+      if (save === undefined) {
+        return
+      }
+
+      try {
+        await this.#client().transaction(async (trx) => {
+          for (const chunk of chunked(save.entryRows, INSERT_CHUNK_SIZE)) {
+            /*
+             * Conflicts are ignored rather than merged. A repeated uuid means a failed flush was
+             * retried; keeping the identical row lets every other entry in that batch proceed.
+             */
+            await trx.knexQuery().table(ENTRIES_TABLE).insert(chunk).onConflict('uuid').ignore()
+          }
+
+          for (const chunk of chunked(save.tagRows, INSERT_CHUNK_SIZE)) {
+            await trx
+              .knexQuery()
+              .table(TAGS_TABLE)
+              .insert(chunk)
+              .onConflict(['entry_uuid', 'tag'])
+              .ignore()
+          }
+        })
+        save.resolve()
+      } catch (error) {
+        save.reject(error)
+      }
+    }
   }
 
   async find(uuid: string): Promise<StoredEntry | null> {
@@ -278,20 +348,25 @@ export class DatabaseStore implements PeriscopeStore {
     const limit = resolvePageSize(query.limit)
     const builder = this.#client().query<EntryRow>().from(ENTRIES_TABLE)
 
-    this.#applyFilters(builder, query, parseCursor(query.cursor))
+    this.#applyFilters(builder, query, parseEntryCursor(query.cursor))
 
     /*
      * One row more than the page: its existence is the whole answer to "is there a next page?",
      * and it costs one row rather than the `count(*)` over the same predicate that the obvious
      * alternative would need.
      */
-    const rows = await builder.orderBy('sequence', 'desc').limit(limit + 1)
+    const rows = await builder
+      .orderBy('sequence', 'desc')
+      .orderBy('uuid', 'desc')
+      .limit(limit + 1)
     const page = rows.slice(0, limit)
 
     return {
       data: page.map(toStoredEntry),
       nextCursor:
-        rows.length > limit ? encodeCursor(toStoredEntry(page[page.length - 1]).sequence) : null,
+        rows.length > limit
+          ? encodeEntryCursor(BigInt(page[page.length - 1].sequence), page[page.length - 1].uuid)
+          : null,
     }
   }
 
@@ -302,6 +377,7 @@ export class DatabaseStore implements PeriscopeStore {
       .from(ENTRIES_TABLE)
       .where('batch_id', batchId)
       .orderBy('sequence', 'asc')
+      .orderBy('uuid', 'asc')
 
     return rows.map(toStoredEntry)
   }
@@ -351,36 +427,116 @@ export class DatabaseStore implements PeriscopeStore {
   }
 
   async exceptionGroups(query: ExceptionGroupQuery = {}): Promise<Paginated<ExceptionGroup>> {
-    const builder = this.#client()
-      .query<EntryRow>()
+    type ExceptionGroupRow = {
+      family_hash: string
+      latest_sequence: string
+      total: number | string
+    }
+
+    const client = this.#client()
+    const limit = resolvePageSize(query.limit)
+    const cursor = parseCursor(query.cursor)
+    const groupBuilder = client
+      .query<ExceptionGroupRow>()
       .from(ENTRIES_TABLE)
       .where('type', EntryType.EXCEPTION)
       .whereNotNull('family_hash')
 
-    this.#applyFilters(builder, query, null)
+    if (query.tag !== undefined) {
+      const tag = query.tag
 
-    const rows = await builder
-    return aggregateExceptionGroups(rows.map(toStoredEntry), query)
+      groupBuilder.whereIn('uuid', (subquery) => {
+        subquery.from(TAGS_TABLE).select('entry_uuid').where('tag', tag)
+      })
+    }
+
+    if (query.application !== undefined) {
+      groupBuilder.where('application', query.application)
+    }
+
+    groupBuilder
+      .select('family_hash')
+      .max('sequence as latest_sequence')
+      .count('* as total')
+      .groupBy('family_hash')
+
+    if (cursor !== null) {
+      groupBuilder.havingRaw('max(sequence) < ?', [encodeSequence(cursor)])
+    }
+
+    const groups = await groupBuilder.orderBy('latest_sequence', 'desc').limit(limit + 1)
+    const page = groups.slice(0, limit)
+
+    if (page.length === 0) {
+      return { data: [], nextCursor: null }
+    }
+
+    const entryBuilder = client
+      .query<EntryRow>()
+      .from(ENTRIES_TABLE)
+      .whereIn(
+        'sequence',
+        page.map(({ latest_sequence: sequence }) => sequence)
+      )
+    this.#applyFilters(entryBuilder, query, null)
+
+    const rows = await entryBuilder
+    const latestByFamily = new Map(
+      rows.map((row) => [`${row.family_hash}\u0000${row.sequence}`, toStoredEntry(row)])
+    )
+    const data: ExceptionGroup[] = []
+
+    for (const group of page) {
+      const latest = latestByFamily.get(`${group.family_hash}\u0000${group.latest_sequence}`)
+
+      if (latest !== undefined) {
+        data.push({
+          familyHash: group.family_hash,
+          latest,
+          count: Number(group.total),
+          lastSeen: new Date(latest.createdAt.getTime()),
+        })
+      }
+    }
+
+    return {
+      data,
+      nextCursor:
+        groups.length > limit ? encodeCursor(BigInt(page[page.length - 1].latest_sequence)) : null,
+    }
   }
 
   async prune(options: PruneOptions): Promise<number> {
     const before = options.before.getTime()
     const keepExceptions = options.keepExceptions === true
 
-    return this.#client().transaction(async (trx) =>
-      this.#deleteEntries(trx, (builder) => {
+    return this.#client().transaction(async (trx) => {
+      await trx
+        .query()
+        .from(FLAGS_TABLE)
+        .whereNotNull('expires_at')
+        .where('expires_at', '<=', Date.now())
+        .del()
+
+      return this.#deleteEntries(trx, (builder) => {
         builder.where('created_at', '<', before)
 
         if (keepExceptions) {
           builder.whereNot('type', EntryType.EXCEPTION)
         }
       })
-    )
+    })
   }
 
   async trim(maxEntries: number): Promise<number> {
     const cap = Number.isFinite(maxEntries) && maxEntries > 0 ? Math.floor(maxEntries) : 0
     const client = this.#client()
+    await client
+      .query()
+      .from(FLAGS_TABLE)
+      .whereNotNull('expires_at')
+      .where('expires_at', '<=', Date.now())
+      .del()
 
     /*
      * A scheduling hint and nothing more. The recorder trims after every flush, so the common
@@ -406,18 +562,19 @@ export class DatabaseStore implements PeriscopeStore {
       }
 
       /*
-       * The survivors are defined by the cap, inside the transaction: take the `sequence` of the
-       * `cap`-th newest entry and delete everything strictly below it. Whatever else ran in the
-       * meantime, what is left afterwards is the newest `cap` entries — which is exactly what
-       * `maxEntries` promises — and the answer is one boundary value rather than a
-       * `where uuid in (...)` listing every doomed row, which at trim scale would blow SQLite's
-       * bind-parameter ceiling and hold a few hundred thousand uuids in memory to do it.
+       * The survivors are defined by the cap, inside the transaction: take the composite
+       * `(sequence, uuid)` key of the `cap`-th newest entry and delete everything below it.
+       * Whatever else ran in the meantime, exactly the newest `cap` entries remain. The answer is
+       * one boundary pair rather than a `where uuid in (...)` listing every doomed row, which at
+       * trim scale would blow SQLite's bind-parameter ceiling and hold a few hundred thousand
+       * uuids in memory to do it.
        */
       const boundary = await trx
-        .query<{ sequence: string }>()
+        .query<{ sequence: string; uuid: string }>()
         .from(ENTRIES_TABLE)
-        .select('sequence')
+        .select('sequence', 'uuid')
         .orderBy('sequence', 'desc')
+        .orderBy('uuid', 'desc')
         .offset(cap - 1)
         .limit(1)
         .first()
@@ -434,7 +591,11 @@ export class DatabaseStore implements PeriscopeStore {
       const oldestKept = boundary.sequence
 
       return this.#deleteEntries(trx, (builder) => {
-        builder.where('sequence', '<', oldestKept)
+        builder.whereRaw('(sequence < ? or (sequence = ? and uuid < ?))', [
+          oldestKept,
+          oldestKept,
+          boundary.uuid,
+        ])
       })
     })
   }
@@ -541,11 +702,13 @@ export class DatabaseStore implements PeriscopeStore {
   }
 
   /**
-   * Releases nothing, on purpose: the connection belongs to the application, and Lucid closes it
-   * during its own shutdown. Closing it here would take the host's database down with Periscope's
-   * provider — the exact failure this method looks like it should perform.
-   *
-   * Idempotent by construction, which the contract requires: shutdown can run more than once.
+   * Wait for the bounded write queue to settle without closing the host application's connection.
+   * Repeated calls are safe, and a batch already being written remains owned until its caller has
+   * observed success or failure.
    */
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    while (this.#drainingSaves !== null) {
+      await this.#drainingSaves
+    }
+  }
 }

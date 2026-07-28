@@ -23,6 +23,11 @@ import {
   StaticController,
 } from '../../../src/http/controllers/static_controller.ts'
 import { createDashboardAuthorize } from '../../../src/http/middleware/authorize.ts'
+import {
+  PERISCOPE_REQUEST_HEADER,
+  PERISCOPE_REQUEST_HEADER_VALUE,
+  protectDashboardMutation,
+} from '../../../src/http/middleware/protect_mutations.ts'
 import { registerDashboardRoutes } from '../../../src/http/routes.ts'
 import { makeStoredEntry } from '../../storage/contract.ts'
 import type { ResolvedPeriscopeConfig } from '../../../src/types.ts'
@@ -135,6 +140,120 @@ test.group('Dashboard authorization', () => {
     assert.equal(context.response.getStatus(), 403)
     assert.equal(authorizationCalls, 1)
     assert.equal(streamHandlerCalls, 0)
+  })
+
+  test('deny production by default per application request and preserve custom overrides', async ({
+    assert,
+  }) => {
+    const config = defineConfig({
+      enabledIn: ['development', 'production'],
+      storage: { driver: 'memory' },
+    })
+    const recorder = createRecorder(config).recorder
+    const production = createContext('/periscope/api/status')
+    production.containerResolver = {
+      make: async () => ({ inProduction: true }),
+    } as unknown as typeof production.containerResolver
+    const development = createContext('/periscope/api/status')
+    development.containerResolver = {
+      make: async () => ({ inProduction: false }),
+    } as unknown as typeof development.containerResolver
+    let developmentNextCalls = 0
+
+    await createDashboardAuthorize(config, recorder, {
+      nodeEnv: 'production',
+      periscopeEnabled: () => undefined,
+    })(production, async () => {})
+    await createDashboardAuthorize(config, recorder, {
+      nodeEnv: 'development',
+      periscopeEnabled: () => undefined,
+    })(development, async () => {
+      developmentNextCalls += 1
+    })
+
+    assert.equal(production.response.getStatus(), 403)
+    assert.equal(developmentNextCalls, 1)
+
+    const override = defineConfig({
+      enabledIn: ['production'],
+      storage: { driver: 'memory' },
+      dashboard: { authorize: () => true },
+    })
+    const overrideContext = createContext('/periscope/api/status')
+    let overrideNextCalls = 0
+    await createDashboardAuthorize(override, createRecorder(override).recorder, {
+      nodeEnv: 'production',
+      periscopeEnabled: () => undefined,
+    })(overrideContext, async () => {
+      overrideNextCalls += 1
+    })
+
+    assert.equal(overrideNextCalls, 1)
+  })
+})
+
+test.group('Dashboard mutation protection', () => {
+  test('reject drive-by clear requests and allow the dashboard same-origin header', async ({
+    assert,
+  }) => {
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      const context = createContext('/periscope/api/clear', method)
+      let nextCalls = 0
+
+      await protectDashboardMutation(context, async () => {
+        nextCalls += 1
+      })
+
+      assert.equal(context.response.getStatus(), 403, method)
+      assert.equal(nextCalls, 0, method)
+    }
+
+    const allowed = createContext('/periscope/api/clear', 'POST')
+    allowed.request.request.headers[PERISCOPE_REQUEST_HEADER] = PERISCOPE_REQUEST_HEADER_VALUE
+    allowed.request.request.headers['sec-fetch-site'] = 'same-origin'
+    let allowedNextCalls = 0
+
+    await protectDashboardMutation(allowed, async () => {
+      allowedNextCalls += 1
+    })
+
+    assert.equal(allowedNextCalls, 1)
+  })
+
+  test('reject same-site and cross-site mutation fetches even with the dashboard header', async ({
+    assert,
+  }) => {
+    for (const fetchSite of ['same-site', 'cross-site']) {
+      const context = createContext('/periscope/api/monitored-tags/slow', 'PUT')
+      context.request.request.headers[PERISCOPE_REQUEST_HEADER] = PERISCOPE_REQUEST_HEADER_VALUE
+      context.request.request.headers['sec-fetch-site'] = fetchSite
+      let nextCalls = 0
+
+      await protectDashboardMutation(context, async () => {
+        nextCalls += 1
+      })
+
+      assert.equal(context.response.getStatus(), 403, fetchSite)
+      assert.equal(nextCalls, 0, fetchSite)
+    }
+  })
+
+  test('expose Shield request tokens without caching and degrade to the header fallback', ({
+    assert,
+  }) => {
+    const config = defineConfig({ storage: { driver: 'memory' } })
+    const { store } = createRecorder(config)
+    const controller = new DashboardController(store, config, {
+      nodeEnv: 'development',
+      periscopeEnabled: () => undefined,
+    })
+    const withoutShield = createContext('/periscope/api/csrf-token')
+    const withShield = createContext('/periscope/api/csrf-token')
+    Object.assign(withShield.request, { csrfToken: 'shield-token' })
+
+    assert.deepEqual(controller.csrfToken(withoutShield), { token: null })
+    assert.deepEqual(controller.csrfToken(withShield), { token: 'shield-token' })
+    assert.equal(withShield.response.getHeaders()['cache-control'], 'no-store')
   })
 })
 
@@ -482,6 +601,18 @@ test.group('Dashboard static routes', () => {
     assert.equal(
       router.match('/periscope/api/entries/mail-id/eml', 'GET', true)?.route.pattern,
       '/periscope/api/entries/:uuid/eml'
+    )
+    assert.equal(
+      router.match('/periscope/api/csrf-token', 'GET', true)?.route.pattern,
+      '/periscope/api/csrf-token'
+    )
+    assert.equal(
+      router.match('/periscope/api/monitored-tags/slow', 'PUT', true)?.route.pattern,
+      '/periscope/api/monitored-tags/:tag'
+    )
+    assert.equal(
+      router.match('/periscope/api/monitored-tags/slow', 'DELETE', true)?.route.pattern,
+      '/periscope/api/monitored-tags/:tag'
     )
     assert.equal(spa?.route.pattern, '/periscope/*')
   })

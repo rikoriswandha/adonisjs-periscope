@@ -13,7 +13,8 @@ import { createPeriscopeTables, dropPeriscopeTables } from 'adonisjs-periscope/s
  * \`src/storage/database_schema.ts\`, next to the \`src/storage/sql.ts\` codecs that read and write
  * those columns, and this migration is a thin call into it. Copying the DDL here would leave the
  * driver free to be upgraded while your tables stayed on the old shape — with a shared function
- * the two cannot drift, and \`npm update periscope\` plus a fresh migration is enough to move.
+ * the two cannot drift, and \`npm update adonisjs-periscope\` plus a fresh migration is enough to
+ * move.
  *
  * \`content\` and \`tags\` are plain TEXT on every dialect, holding the JSON Periscope wrote. That is
  * on purpose, and it is not an oversight to "fix" by switching postgres to \`jsonb\`: \`jsonb\`

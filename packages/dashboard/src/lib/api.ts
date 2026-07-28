@@ -9,14 +9,25 @@ import type {
 } from '@/types'
 
 export class ApiError extends Error {
-  constructor(
-    message: string,
-    readonly status: number
-  ) {
+  readonly status: number
+
+  constructor(message: string, status: number) {
     super(message)
     this.name = 'ApiError'
+    this.status = status
   }
 }
+
+const MUTATING_METHODS: Record<string, true> = {
+  POST: true,
+  PUT: true,
+  PATCH: true,
+  DELETE: true,
+}
+const PERISCOPE_REQUEST_HEADER = 'x-periscope-request'
+const PERISCOPE_REQUEST_HEADER_VALUE = 'dashboard'
+
+let csrfTokenPromise: Promise<string | null> | undefined
 
 function endpoint(path: string): URL {
   const pageUrl = new URL(window.location.href)
@@ -29,6 +40,13 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers)
   if (options.body && !headers.has('content-type')) {
     headers.set('content-type', 'application/json')
+  }
+
+  const method = (options.method ?? 'GET').toUpperCase()
+  if (MUTATING_METHODS[method] === true) {
+    headers.set(PERISCOPE_REQUEST_HEADER, PERISCOPE_REQUEST_HEADER_VALUE)
+    const token = await csrfToken()
+    if (token !== null) headers.set('x-csrf-token', token)
   }
 
   const response = await fetch(endpoint(path), {
@@ -51,6 +69,19 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   if (response.status === 204) return undefined as T
   return (await response.json()) as T
+}
+
+async function csrfToken(): Promise<string | null> {
+  if (csrfTokenPromise === undefined) {
+    csrfTokenPromise = request<{ token: string | null }>('csrf-token')
+      .then(({ token }) => token)
+      .catch((cause) => {
+        csrfTokenPromise = undefined
+        throw cause
+      })
+  }
+
+  return csrfTokenPromise
 }
 
 function appendFilter(

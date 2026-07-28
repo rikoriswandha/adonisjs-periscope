@@ -11,8 +11,11 @@ import fc from 'fast-check'
 import {
   DEFAULT_REDACT_HEADERS,
   DEFAULT_REDACT_KEYS,
+  DEFAULT_REDACT_VALUE_PATTERNS,
+  REDACT_EMAIL_PATTERN,
   Redactor,
 } from '../../../src/recorder/redactor.ts'
+import { SERIALIZER_DEFAULTS } from '../../../src/recorder/serializer.ts'
 import type { ResolvedPeriscopeConfig } from '../../../src/types.ts'
 
 /**
@@ -24,6 +27,7 @@ function redactor(overrides: Partial<ResolvedPeriscopeConfig['redact']> = {}): R
   return new Redactor({
     keys: [...DEFAULT_REDACT_KEYS],
     headers: [...DEFAULT_REDACT_HEADERS],
+    valuePatterns: [...DEFAULT_REDACT_VALUE_PATTERNS],
     replacement: '[REDACTED]',
     ...overrides,
   })
@@ -124,22 +128,16 @@ test.group('Redactor | keys', () => {
     assert.deepEqual(cursor, { password: '[REDACTED]' })
   })
 
-  test('return non-plain values by identity', ({ assert }) => {
-    class Model {
-      id = 1
-    }
-
+  test('return opaque built-in values by identity', ({ assert }) => {
     const date = new Date('2026-07-25T00:00:00.000Z')
     const buffer = Buffer.from('payload')
-    const model = new Model()
     const callback = () => 'noop'
     const map = new Map([['k', 'v']])
 
-    const result = redactor().redact({ date, buffer, model, callback, map, count: 3, flag: false })
+    const result = redactor().redact({ date, buffer, callback, map, count: 3, flag: false })
 
     assert.strictEqual(result.date, date)
     assert.strictEqual(result.buffer, buffer)
-    assert.strictEqual(result.model, model)
     assert.strictEqual(result.callback, callback)
     assert.strictEqual(result.map, map)
     assert.strictEqual(result.count, 3)
@@ -154,15 +152,35 @@ test.group('Redactor | keys', () => {
     assert.isNull(redactor().redact(null))
   })
 
-  test('never inspect a class instance holding a secret', ({ assert }) => {
+  test('serialize class-instance fields before applying key and value redaction', ({ assert }) => {
     class Credentials {
       password = 'x'
+      diagnostic = 'Bearer abcdefghijklmnop'
     }
 
     const credentials = new Credentials()
     const result = redactor().redact({ credentials })
 
-    assert.strictEqual(result.credentials, credentials)
+    assert.deepEqual(result.credentials, {
+      __class: 'Credentials',
+      password: '[REDACTED]',
+      diagnostic: '[REDACTED]',
+    })
+    assert.equal(credentials.password, 'x')
+    assert.equal(credentials.diagnostic, 'Bearer abcdefghijklmnop')
+  })
+
+  test('scan a truncated class field without exceeding the serializer ceiling', ({ assert }) => {
+    class Diagnostic {
+      message = `Bearer abcdefghijklmnop${'x'.repeat(SERIALIZER_DEFAULTS.maxBytes)}`
+    }
+
+    const result = redactor().redact({ diagnostic: new Diagnostic() })
+
+    assert.deepEqual(result.diagnostic, {
+      __class: 'Diagnostic',
+      message: '[REDACTED][Truncated]',
+    })
   })
 
   test('replace a cycle with the circular marker instead of hanging', ({ assert }) => {
@@ -262,10 +280,10 @@ test.group('Redactor | keys', () => {
     assert.deepEqual(result, { password: '***' })
   })
 
-  test('disable key redaction when the key list is empty', ({ assert }) => {
+  test('disable every redaction mode when keys and value patterns are empty', ({ assert }) => {
     const input = { password: 'x', nested: { api_key: 'y' } }
 
-    const result = redactor({ keys: [] }).redact(input)
+    const result = redactor({ keys: [], valuePatterns: false }).redact(input)
 
     assert.strictEqual(result, input)
   })
@@ -328,6 +346,99 @@ test.group('Redactor | keys', () => {
     assert.deepEqual(Object.getOwnPropertyDescriptor(first, '__proto__')?.value, {
       pin: '[REDACTED]',
     })
+  })
+})
+
+test.group('Redactor | values', () => {
+  test('scrub bearer credentials and compact JWTs', ({ assert }) => {
+    const jwt =
+      'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c'
+
+    assert.equal(
+      redactor().redact('authorization: Bearer abcdefghijklmnop'),
+      'authorization: [REDACTED]'
+    )
+    assert.equal(redactor().redact(`cookie: ${jwt}`), 'cookie: [REDACTED]')
+  })
+
+  test('scrub common OpenAI, GitHub and AWS access-key shapes', ({ assert }) => {
+    const result = redactor().redact([
+      'OpenAI sk-1234567890abcdef',
+      'GitHub ghp_1234567890abcdefghijklmnopqrstuv',
+      'AWS AKIAIOSFODNN7EXAMPLE',
+    ])
+
+    assert.deepEqual(result, ['OpenAI [REDACTED]', 'GitHub [REDACTED]', 'AWS [REDACTED]'])
+  })
+
+  test('scrub passwords from query strings and URL connection strings', ({ assert }) => {
+    const result = redactor().redact({
+      query: 'https://example.test/callback?password=hunter2&safe=yes',
+      connection: 'postgres://periscope:s3cret@db.internal/app',
+      settings: 'Server=db.internal;Password=s3cret;Encrypt=true',
+    })
+
+    assert.deepEqual(result, {
+      query: 'https://example.test/callback?[REDACTED]&safe=yes',
+      connection: '[REDACTED]db.internal/app',
+      settings: 'Server=db.internal;[REDACTED];Encrypt=true',
+    })
+  })
+
+  test('scrub Luhn-valid payment cards but retain unrelated long numbers', ({ assert }) => {
+    const result = redactor().redact({
+      formatted: 'card 4111 1111 1111 1111 accepted',
+      compact: 'card 5555555555554444 accepted',
+      invalid: 'reference 4111111111111112',
+    })
+
+    assert.deepEqual(result, {
+      formatted: 'card [REDACTED] accepted',
+      compact: 'card [REDACTED] accepted',
+      invalid: 'reference 4111111111111112',
+    })
+  })
+
+  test('leave email addresses visible by default and scrub them when opted in', ({ assert }) => {
+    const value = 'from ada.lovelace@example.test'
+
+    assert.equal(redactor().redact(value), value)
+    assert.equal(
+      redactor({
+        valuePatterns: [...DEFAULT_REDACT_VALUE_PATTERNS, REDACT_EMAIL_PATTERN],
+      }).redact(value),
+      'from [REDACTED]'
+    )
+  })
+
+  test('honour custom patterns globally without sharing their lastIndex', ({ assert }) => {
+    const pattern = /internal-[a-z]+/
+    pattern.lastIndex = 7
+
+    assert.equal(
+      redactor({ valuePatterns: [pattern] }).redact('internal-one/internal-two'),
+      '[REDACTED]/[REDACTED]'
+    )
+    assert.equal(pattern.lastIndex, 7)
+  })
+
+  test('disable value scanning without disabling key redaction', ({ assert }) => {
+    const bearer = 'Bearer abcdefghijklmnop'
+
+    assert.deepEqual(redactor({ valuePatterns: false }).redact({ bearer, password: 'x' }), {
+      bearer,
+      password: '[REDACTED]',
+    })
+  })
+
+  test('skip scanning strings beyond the serializer byte ceiling', ({ assert }) => {
+    const value = `Bearer abcdefghijklmnop${'x'.repeat(SERIALIZER_DEFAULTS.maxBytes)}`
+
+    assert.strictEqual(redactor().redact(value), value)
+  })
+
+  test('treat the configured replacement as literal text', ({ assert }) => {
+    assert.equal(redactor({ replacement: '$&' }).redact('Bearer abcdefghijklmnop'), '$&')
   })
 })
 

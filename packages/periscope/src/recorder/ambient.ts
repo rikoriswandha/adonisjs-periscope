@@ -31,7 +31,7 @@ export type AmbientBatchOptions = {
 }
 
 /**
- * The batch of last resort (plan P1.2).
+ * The batch of last resort.
  *
  * A watcher can fire at any moment — a scheduled job logs, a cache warms on boot, an unhandled
  * rejection surfaces between requests. None of that sits inside a `BatchScope.run`, so

@@ -228,7 +228,7 @@ test.group('Dashboard live HTTP API', () => {
       router.match('/periscope/api/monitored-tags/slow', 'DELETE', true)?.route.pattern,
       '/periscope/api/monitored-tags/:tag'
     )
-    assert.equal(streamRoute?.middleware.all().size, 1)
-    assert.equal(monitoredTagsRoute?.middleware.all().size, 1)
+    assert.equal(streamRoute?.middleware.all().size, 2)
+    assert.equal(monitoredTagsRoute?.middleware.all().size, 2)
   })
 })

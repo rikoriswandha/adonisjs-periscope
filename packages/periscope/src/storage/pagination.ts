@@ -54,6 +54,51 @@ export function parseCursor(cursor: string | undefined): bigint | null {
 }
 
 /**
+ * A durable entry cursor uses the row's primary key as a deterministic tie-breaker. Sequence
+ * values are process-local, so two workers may legitimately stamp the same value.
+ */
+export type EntryCursor = {
+  sequence: bigint
+  uuid: string | null
+}
+
+/**
+ * Encode the composite ordering key of an entry. The UUID is URI-escaped so custom store
+ * implementations remain free to use identifiers containing the separator.
+ */
+export function encodeEntryCursor(sequence: bigint, uuid: string): string {
+  return `${sequence}:${encodeURIComponent(uuid)}`
+}
+
+/**
+ * Parse a composite entry cursor. Decimal-only cursors emitted by older releases remain valid;
+ * they page strictly below their sequence and therefore preserve the old behaviour.
+ */
+export function parseEntryCursor(cursor: string | undefined): EntryCursor | null {
+  if (cursor === undefined) {
+    return null
+  }
+
+  const separator = cursor.indexOf(':')
+  if (separator === -1) {
+    return CURSOR_PATTERN.test(cursor) ? { sequence: BigInt(cursor), uuid: null } : null
+  }
+
+  const sequence = cursor.slice(0, separator)
+  const encodedUuid = cursor.slice(separator + 1)
+  if (!CURSOR_PATTERN.test(sequence) || encodedUuid === '') {
+    return null
+  }
+
+  try {
+    const uuid = decodeURIComponent(encodedUuid)
+    return uuid === '' ? null : { sequence: BigInt(sequence), uuid }
+  } catch {
+    return null
+  }
+}
+
+/**
  * Clamp a requested page size into `[1, MAX_PAGE_SIZE]`, falling back to the default for a
  * missing, non-finite or non-positive request. A `limit: 0` that was honoured literally would
  * page forever, so it is treated as "unspecified".

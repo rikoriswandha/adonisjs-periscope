@@ -3,7 +3,7 @@
 | Routes file
 |--------------------------------------------------------------------------
 |
-| Each phase adds only the routes needed for an observable end-to-end fixture.
+| This file contains only the routes needed for observable end-to-end fixtures.
 |
 | Controllers are lazily imported so the dev-server can hot-replace them.
 |
@@ -48,7 +48,7 @@ router.get('/fanout', [FanoutController, 'handle']).as('fanout')
 /**
  * Exercises every watcher backed by an installed playground integration.
  */
-router.get('/wave2', [Wave2Controller, 'handle']).as('wave2')
+router.get('/watchers', [Wave2Controller, 'handle']).as('watchers')
 
 /**
  * Exercises the opt-in watchers: session, redis command traces and job/schedule lifecycles.

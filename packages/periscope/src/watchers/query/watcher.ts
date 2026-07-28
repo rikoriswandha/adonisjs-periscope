@@ -81,11 +81,11 @@ function isPeriscopeTraffic(driver: StorageDriverName, sql: string): boolean {
  * Lucid only emits `db:query` when the connection's top-level `debug` option is true. The public
  * counters intentionally measure events observed here rather than entries eventually persisted,
  * so tests and host diagnostics can distinguish missing Lucid instrumentation from recorder caps
- * or a paused store. The P7.4 init hook performs the actionable boot-time check directly against
+ * or a paused store. The init hook performs the actionable boot-time check directly against
  * each resolved Lucid connection's `debug` flag.
  *
- * **No call site is recorded, and cannot be.** The plan (P3.3) asks for a dev-only capture of the
- * application frame that issued the query, via `Error.captureStackTrace` at record time. That
+ * **No call site is recorded, and cannot be.** An earlier design proposed a dev-only capture of
+ * the application frame that issued the query, via `Error.captureStackTrace` at record time. That
  * works only if the listener runs on the caller's stack, and it does not: `QueryReporter` emits
  * after the query settles, Emittery dispatches every listener a microtask later, and by then the
  * stack is `Emittery.emit` over `processTicksAndRejections` with no application frame left on it.

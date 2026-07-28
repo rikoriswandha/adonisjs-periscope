@@ -7,7 +7,7 @@ import { BaseEvent } from '@adonisjs/core/events'
  * called by the core app provider during boot, so `FanoutRequested.dispatch()`
  * works without threading the emitter through by hand.
  *
- * Periscope's EventWatcher (P3.6) ignores framework-prefixed event names
+ * Periscope's EventWatcher ignores framework-prefixed event names
  * (`http:`, `db:`, `mail:`, …); a class event is recorded under its constructor
  * name, so this one is guaranteed to show up.
  */

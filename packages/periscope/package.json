@@ -5,6 +5,23 @@
   "type": "module",
   "license": "MIT",
   "author": "Riko Prasetyo",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rikoriswandha/adonisjs-periscope.git",
+    "directory": "packages/periscope"
+  },
+  "bugs": {
+    "url": "https://github.com/rikoriswandha/adonisjs-periscope/issues"
+  },
+  "homepage": "https://github.com/rikoriswandha/adonisjs-periscope#readme",
+  "keywords": [
+    "adonisjs",
+    "debugging",
+    "monitoring",
+    "observability",
+    "periscope",
+    "telescope"
+  ],
   "engines": {
     "node": ">=24"
   },
@@ -42,7 +59,7 @@
     "postcompile": "npm run copy:templates && npm run index:commands",
     "copy:templates": "node --input-type=module -e \"import { cpSync } from 'node:fs'; cpSync('stubs', 'build/stubs', { recursive: true })\"",
     "index:commands": "adonis-kit index build/commands",
-    "prepack": "node --input-type=module -e \"import { cpSync } from 'node:fs'; cpSync('../../README.md', 'README.md')\"",
+    "prepack": "npm run build && npm -w @periscope/dashboard run build && node --input-type=module -e \"import { cpSync } from 'node:fs'; cpSync('../../README.md', 'README.md')\"",
     "build": "npm run clean && npm run compile",
     "test": "node --import=@poppinss/ts-exec --enable-source-maps bin/test.ts",
     "bench:overhead": "node --import=@poppinss/ts-exec --enable-source-maps tests/bench/overhead.bench.ts",
@@ -55,11 +72,11 @@
     "@adonisjs/bouncer": "^4.0.0",
     "@adonisjs/cache": "^2.0.0",
     "@adonisjs/core": "^7.0.0",
-    "@adonisjs/lucid": ">=22.0.0",
+    "@adonisjs/lucid": "^22.0.0",
     "@adonisjs/mail": "^10.0.0",
     "@adonisjs/redis": "^10.0.0",
     "@adonisjs/session": "^8.0.0",
-    "@opentelemetry/api": ">=1.9.0",
+    "@opentelemetry/api": "^1.9.0",
     "bullmq": "^5.0.0"
   },
   "peerDependenciesMeta": {

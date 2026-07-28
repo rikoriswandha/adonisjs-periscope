@@ -17,7 +17,7 @@ const POLL_INTERVAL_MS = 10
 const POLL_TIMEOUT_MS = 2_000
 const execFileAsync = promisify(execFile)
 const PLAYGROUND_ROOT = fileURLToPath(new URL('../..', import.meta.url))
-const WAVE2_USER_EMAIL = 'wave2@periscope.test'
+const WAVE2_USER_EMAIL = 'integration@periscope.test'
 
 /**
  * One page of everything recorded so far. Small enough to be the whole store, since every test
@@ -335,20 +335,20 @@ test.group('periscope watchers (playground wiring)', (group) => {
     await recorder.store.setFlag(Flag.DUMP_OPEN, '1')
     await sleep(1_100)
 
-    const response = await client.get('/wave2')
+    const response = await client.get('/watchers')
     response.assertStatus(200)
     response.assertBodyContains({
-      cache: { missed: true, phase: 6 },
-      model: { fullName: 'Wave 2 Updated' },
+      cache: { missed: true, scenario: 'integration' },
+      model: { fullName: 'Integration Updated' },
       gate: { allowed: true },
-      dump: { phase: 6 },
+      dump: { scenario: 'integration' },
       httpClient: { status: 200 },
     })
 
     await recorder.flush()
-    const recorded = await waitForRequestBatches('/wave2', 200)
+    const recorded = await waitForRequestBatches('/watchers', 200)
     const batch = recorded.batches[0]!
-    assertRequestBatch(assert, batch, '/wave2', 200)
+    assertRequestBatch(assert, batch, '/watchers', 200)
 
     const caches = batch.filter((entry) => entry.type === EntryType.CACHE)
     assert.sameMembers(
@@ -359,13 +359,13 @@ test.group('periscope watchers (playground wiring)', (group) => {
     const cacheHit = caches.find((entry) => entry.content.operation === 'hit')
     assert.deepInclude(cacheSet!.content, {
       store: 'default',
-      key: 'wave2:fixture',
-      value: { phase: 6, password: '[REDACTED]' },
+      key: 'integration:fixture',
+      value: { scenario: 'integration', password: '[REDACTED]' },
     })
     assert.deepInclude(cacheHit!.content, {
       store: 'default',
-      key: 'wave2:fixture',
-      value: { phase: 6, password: '[REDACTED]' },
+      key: 'integration:fixture',
+      value: { scenario: 'integration', password: '[REDACTED]' },
     })
 
     const models = batch.filter((entry) => entry.type === EntryType.MODEL)
@@ -381,13 +381,13 @@ test.group('periscope watchers (playground wiring)', (group) => {
       primaryKey: 'id',
     })
     assert.deepInclude(created!.content.attributes, {
-      fullName: 'Wave 2 Fixture',
+      fullName: 'Integration Fixture',
       email: WAVE2_USER_EMAIL,
       password: '[REDACTED]',
     })
     assert.deepInclude(updated!.content, {
       model: 'User',
-      dirty: { fullName: 'Wave 2 Updated' },
+      dirty: { fullName: 'Integration Updated' },
     })
     const deleted = models.find((entry) => entry.content.action === 'delete')
     assert.deepInclude(deleted!.content.attributes, {
@@ -410,7 +410,9 @@ test.group('periscope watchers (playground wiring)', (group) => {
 
     const dumps = batch.filter((entry) => entry.type === EntryType.DUMP)
     assert.lengthOf(dumps, 1)
-    assert.deepEqual(dumps[0]!.content.values, [{ phase: 6, password: '[REDACTED]' }])
+    assert.deepEqual(dumps[0]!.content.values, [
+      { scenario: 'integration', password: '[REDACTED]' },
+    ])
     const dumpCaller = dumps[0]!.content.caller
     if (
       !dumpCaller ||
@@ -438,7 +440,7 @@ test.group('periscope watchers (playground wiring)', (group) => {
     const outboundUrl = new URL(outbound[0]!.content.url as string)
     assert.equal(outboundUrl.pathname, '/')
     assert.equal(outboundUrl.searchParams.get('token'), '[REDACTED]')
-    assert.equal(outboundUrl.searchParams.get('phase'), '[REDACTED]')
+    assert.equal(outboundUrl.searchParams.get('scenario'), '[REDACTED]')
     assert.deepInclude(outbound[0]!.content, {
       method: 'GET',
       status: 200,
@@ -446,12 +448,12 @@ test.group('periscope watchers (playground wiring)', (group) => {
     })
     assert.deepInclude(outbound[0]!.content.requestHeaders, {
       'authorization': '[REDACTED]',
-      'x-wave2-probe': 'true',
+      'x-periscope-probe': 'true',
     })
 
     await execFileAsync(
       process.execPath,
-      ['ace.js', 'wave2:exercise', 'phase-six', '--password=wave2-command-secret'],
+      ['ace.js', 'playground:exercise', 'integration', '--password=command-secret'],
       {
         cwd: PLAYGROUND_ROOT,
         env: { ...process.env, NODE_ENV: 'test' },
@@ -465,8 +467,8 @@ test.group('periscope watchers (playground wiring)', (group) => {
     const commands = allEntries.filter((entry) => entry.type === EntryType.COMMAND)
     assert.lengthOf(commands, 1)
     assert.deepInclude(commands[0]!.content, {
-      command: 'wave2:exercise',
-      args: ['phase-six'],
+      command: 'playground:exercise',
+      args: ['integration'],
       flags: { password: '[REDACTED]' },
       isMain: true,
       exitCode: 0,
