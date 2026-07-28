@@ -27,9 +27,9 @@ import type {
 
 import { stubsRoot } from './stubs/main.ts'
 
-const PROVIDER_PATH = 'periscope/provider'
-const COMMANDS_PATH = 'periscope/commands'
-const REQUEST_MIDDLEWARE_PATH = 'periscope/middleware/request_watcher'
+const PROVIDER_PATH = 'adonisjs-periscope/provider'
+const COMMANDS_PATH = 'adonisjs-periscope/commands'
+const REQUEST_MIDDLEWARE_PATH = 'adonisjs-periscope/middleware/request_watcher'
 const PROVIDER_ENVIRONMENTS = ['web', 'console', 'test'] as const
 const DEFAULT_DASHBOARD_PATH = '/periscope'
 
@@ -229,7 +229,7 @@ function providerRegistrationKind(
     return isStandardProviderEntry(periscopeEntry.getText(), PROVIDER_PATH) ? 'standard' : 'custom'
   }
 
-  return /\bimport\(\s*(['\"])periscope\/provider\1\s*\)/.test(rcFile.getFullText())
+  return /\bimport\(\s*(['"])adonisjs-periscope\/provider\1\s*\)/.test(rcFile.getFullText())
     ? 'custom'
     : 'missing'
 }
@@ -514,7 +514,7 @@ function warnExceptionHandler(command: Configure, composedExpression?: string) {
   command.logger.warning(
     "Periscope left app/exceptions/handler.ts unchanged. Add the runtime import below, then keep the handler constructor locally named and replace its current default export with a wrapped one. For a default-exported class, give an anonymous class a name and remove the class's export default modifiers first:"
   )
-  command.logger.log("import { withPeriscope } from 'periscope/exception_reporter'")
+  command.logger.log("import { withPeriscope } from 'adonisjs-periscope/exception_reporter'")
   command.logger.log(
     `export default withPeriscope(${composedExpression ?? 'HttpExceptionHandler'})`
   )
@@ -524,7 +524,8 @@ function reporterSpecifiers(file: SourceFile) {
   return file
     .getImportDeclarations()
     .filter(
-      (declaration) => declaration.getModuleSpecifierValue() === 'periscope/exception_reporter'
+      (declaration) =>
+        declaration.getModuleSpecifierValue() === 'adonisjs-periscope/exception_reporter'
     )
     .flatMap((declaration) =>
       declaration
@@ -543,7 +544,7 @@ function hasWithPeriscopeConflict(file: SourceFile) {
     return declaration.getNamedImports().some((specifier) => {
       const localName = specifier.getAliasNode()?.getText() ?? specifier.getName()
       const isExpectedReporterImport =
-        declaration.getModuleSpecifierValue() === 'periscope/exception_reporter' &&
+        declaration.getModuleSpecifierValue() === 'adonisjs-periscope/exception_reporter' &&
         specifier.getName() === 'withPeriscope' &&
         !specifier.getAliasNode()
       return localName === 'withPeriscope' && !isExpectedReporterImport
@@ -582,7 +583,7 @@ function ensureRuntimeReporterImport(file: SourceFile) {
 
   const valueReporterImport = file.getImportDeclarations().find((declaration) => {
     return (
-      declaration.getModuleSpecifierValue() === 'periscope/exception_reporter' &&
+      declaration.getModuleSpecifierValue() === 'adonisjs-periscope/exception_reporter' &&
       !declaration.isTypeOnly() &&
       !declaration.getNamespaceImport()
     )
@@ -591,7 +592,7 @@ function ensureRuntimeReporterImport(file: SourceFile) {
     valueReporterImport.addNamedImport('withPeriscope')
   } else {
     file.addImportDeclaration({
-      moduleSpecifier: 'periscope/exception_reporter',
+      moduleSpecifier: 'adonisjs-periscope/exception_reporter',
       namedImports: ['withPeriscope'],
     })
   }
@@ -714,7 +715,7 @@ function printChecklist(
     `${complete(outcomes.provider) ? '[x]' : '[ ]'} Keep the environment-scoped Periscope provider immediately after core app/hash providers`
   )
   command.logger.log(
-    `${complete(outcomes.middleware) ? '[x]' : '[ ]'} Keep periscope/middleware/request_watcher first in server.use([...])`
+    `${complete(outcomes.middleware) ? '[x]' : '[ ]'} Keep adonisjs-periscope/middleware/request_watcher first in server.use([...])`
   )
   command.logger.log(
     outcomes.shield === 'not-applicable'
@@ -752,7 +753,7 @@ function printChecklist(
   )
 
   command.logger.log(
-    "[ ] Optional: register periscopeDoctor() from 'periscope/hooks' in adonisrc.ts hooks.init to check Node, migrations, Lucid debug, dashboard routes, and middleware ordering"
+    "[ ] Optional: register periscopeDoctor() from 'adonisjs-periscope/hooks' in adonisrc.ts hooks.init to check Node, migrations, Lucid debug, dashboard routes, and middleware ordering"
   )
 }
 

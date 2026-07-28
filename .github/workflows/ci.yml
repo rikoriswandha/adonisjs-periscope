@@ -52,13 +52,13 @@ jobs:
         run: npm ci
 
       # `npm run typecheck` fans out to every workspace, and the playground is a
-      # real consumer: it imports `periscope/provider`, `periscope/services/recorder`
-      # and `periscope`, all of which resolve through the package's `exports` map
+      # real consumer: it imports `adonisjs-periscope/provider`,
+      # `adonisjs-periscope/services/recorder`, and `adonisjs-periscope`, all of which resolve
       # into `build/`. On a clean checkout `build/` does not exist, so without this
       # step the job fails on unresolved modules rather than on a type error. Same
       # reason the test job below builds before running the playground suite.
       - name: Build periscope (the playground typechecks against the built package)
-        run: npm -w periscope run build
+        run: npm -w adonisjs-periscope run build
 
       - name: tsc --noEmit
         run: npm run typecheck
@@ -124,20 +124,21 @@ jobs:
           fi
 
       - name: Unit tests (packages/periscope)
-        run: npm -w periscope run test
+        run: npm -w adonisjs-periscope run test
         env:
           PERISCOPE_PG_URL: postgres://periscope:periscope@127.0.0.1:5432/periscope
 
       - name: Unit tests (packages/dashboard)
         run: npm -w @periscope/dashboard run test
 
-      # The playground consumes `periscope` through its published `exports` map, which points at
-      # `build/`. Without this the app cannot even resolve `periscope/provider` and every
-      # integration test fails on an import error rather than on anything meaningful. The unit
+      # The playground consumes `adonisjs-periscope` through its published `exports` map, which
+      # points at `build/`. Without this the app cannot even resolve
+      # `adonisjs-periscope/provider`, and every integration test fails on an import error rather
+      # than on anything meaningful. The unit
       # tests above deliberately run first, against `src/`, so a compile problem is reported as a
       # compile problem.
       - name: Build periscope (the playground imports the built package)
-        run: npm -w periscope run build
+        run: npm -w adonisjs-periscope run build
 
       - name: Integration tests (playground, booted app)
         run: npm -w playground run test
@@ -168,9 +169,9 @@ jobs:
       - name: Install Core ${{ matrix.adonis }} and Lucid ${{ matrix.lucid }}
         shell: bash
         run: |
-          npm pkg set "devDependencies.@adonisjs/core=${{ matrix.adonis }}" -w periscope
+          npm pkg set "devDependencies.@adonisjs/core=${{ matrix.adonis }}" -w adonisjs-periscope
           npm pkg set "dependencies.@adonisjs/core=${{ matrix.adonis }}" -w playground
-          npm pkg set "devDependencies.@adonisjs/lucid=${{ matrix.lucid }}" -w periscope
+          npm pkg set "devDependencies.@adonisjs/lucid=${{ matrix.lucid }}" -w adonisjs-periscope
           npm pkg set "dependencies.@adonisjs/lucid=${{ matrix.lucid }}" -w playground
           npm install --package-lock=false
 
@@ -190,7 +191,7 @@ jobs:
           fi
 
       - name: Build periscope (the playground imports the built package)
-        run: npm -w periscope run build
+        run: npm -w adonisjs-periscope run build
 
       - name: ModelWatcher functional spec (booted playground)
         run: npm -w playground test -- --files="functional/periscope_watchers.spec.ts"

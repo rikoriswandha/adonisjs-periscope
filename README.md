@@ -22,8 +22,8 @@ Bouncer.
 Install and configure the package:
 
 ```sh
-npm install periscope
-node ace add periscope
+npm install adonisjs-periscope
+node ace add adonisjs-periscope
 ```
 
 The configure hook creates `config/periscope.ts`, registers the provider early in `adonisrc.ts`,
@@ -51,7 +51,7 @@ downstream work:
 ```ts
 // start/kernel.ts
 server.use([
-  () => import('periscope/middleware/request_watcher'),
+  () => import('adonisjs-periscope/middleware/request_watcher'),
   // other server middleware
 ])
 ```
@@ -61,7 +61,7 @@ The exception reporter preserves the application's existing handler and records 
 ```ts
 // app/exceptions/handler.ts
 import { ExceptionHandler } from '@adonisjs/core/http'
-import { withPeriscope } from 'periscope/exception_reporter'
+import { withPeriscope } from 'adonisjs-periscope/exception_reporter'
 
 class HttpExceptionHandler extends ExceptionHandler {}
 
@@ -77,7 +77,7 @@ to observe.
 starts with safe local defaults:
 
 ```ts
-import { defineConfig } from 'periscope/periscope_config'
+import { defineConfig } from 'adonisjs-periscope/periscope_config'
 
 export default defineConfig({
   applicationName: 'billing-api',
@@ -165,7 +165,7 @@ import {
   DEFAULT_REDACT_HEADERS,
   DEFAULT_REDACT_KEYS,
   defineConfig,
-} from 'periscope/periscope_config'
+} from 'adonisjs-periscope/periscope_config'
 
 export default defineConfig({
   enabledIn: ['development', 'test', 'production'],
@@ -245,7 +245,7 @@ Queue integrations use the exported `QueueWatcherAdapter` contract. The BullMQ r
 observes queue events without replacing application workers:
 
 ```ts
-import { BullQueueAdapter, defineConfig } from 'periscope'
+import { BullQueueAdapter, defineConfig } from 'adonisjs-periscope'
 
 export default defineConfig({
   watchers: {
@@ -293,8 +293,8 @@ idempotent `cleanup()`. A custom application watcher can subscribe to a domain s
 existing entry type to `Recorder.record()`:
 
 ```ts
-import { EntryType, IncomingEntry, type Watcher } from 'periscope'
-import type { Recorder } from 'periscope'
+import { EntryType, IncomingEntry, type Watcher } from 'adonisjs-periscope'
+import type { Recorder } from 'adonisjs-periscope'
 
 export class PaymentWatcher implements Watcher {
   readonly name = 'payment'

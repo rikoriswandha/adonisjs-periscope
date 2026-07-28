@@ -157,21 +157,21 @@ test.group('Configure', () => {
     assert.include(config, "driver: 'sqlite-local'")
     assert.notInclude(config, 'connection: "')
     assert.lengthOf(await fs.readDir('database/migrations'), 0)
-    assert.equal(count(rcFile, "import('periscope/provider')"), 1)
-    assert.equal(count(rcFile, "import('periscope/commands')"), 1)
+    assert.equal(count(rcFile, "import('adonisjs-periscope/provider')"), 1)
+    assert.equal(count(rcFile, "import('adonisjs-periscope/commands')"), 1)
     assert.include(rcFile, "environment: ['web', 'console', 'test']")
     assert.isBelow(
-      rcFile.indexOf("import('periscope/provider')"),
+      rcFile.indexOf("import('adonisjs-periscope/provider')"),
       rcFile.indexOf("import('@adonisjs/lucid/database_provider')")
     )
     assert.match(
       kernel,
-      /server\.use\(\[\s*\(\) => import\('periscope\/middleware\/request_watcher'\)/
+      /server\.use\(\[\s*\(\) => import\('adonisjs-periscope\/middleware\/request_watcher'\)/
     )
     assert.equal(count(shield, '/periscope/api/flags/:name'), 1)
     assert.equal(count(shield, '/periscope/api/clear'), 1)
     assert.notInclude(shield, '/periscope/*')
-    assert.equal(count(handler, "from 'periscope/exception_reporter'"), 1)
+    assert.equal(count(handler, "from 'adonisjs-periscope/exception_reporter'"), 1)
     assert.equal(count(handler, 'export default withPeriscope(HttpExceptionHandler)'), 1)
     assert.equal(first.promptCalls.choice, 1)
     assert.equal(first.promptCalls.confirm, 1)
@@ -198,9 +198,9 @@ test.group('Configure', () => {
     const rerunShield = await fs.contents('config/shield.ts')
     const rerunHandler = await fs.contents('app/exceptions/handler.ts')
     assert.strictEqual(rerunConfig, config)
-    assert.equal(count(rerunRcFile, "import('periscope/provider')"), 1)
-    assert.equal(count(rerunRcFile, "import('periscope/commands')"), 1)
-    assert.equal(count(rerunKernel, "import('periscope/middleware/request_watcher')"), 1)
+    assert.equal(count(rerunRcFile, "import('adonisjs-periscope/provider')"), 1)
+    assert.equal(count(rerunRcFile, "import('adonisjs-periscope/commands')"), 1)
+    assert.equal(count(rerunKernel, "import('adonisjs-periscope/middleware/request_watcher')"), 1)
     assert.equal(count(rerunShield, '/periscope/api/flags/:name'), 1)
     assert.equal(count(rerunShield, '/periscope/api/clear'), 1)
     assert.strictEqual(rerunHandler, handler)
@@ -233,7 +233,7 @@ test.group('Configure', () => {
       .map((log) => log.message)
       .join('\n')
     assert.include(logs, '--- app/exceptions/handler.ts')
-    assert.include(logs, "import { withPeriscope } from 'periscope/exception_reporter'")
+    assert.include(logs, "import { withPeriscope } from 'adonisjs-periscope/exception_reporter'")
     assert.include(logs, 'export default withPeriscope(HttpExceptionHandler)')
   })
 
@@ -287,7 +287,7 @@ test.group('Configure', () => {
   }) => {
     await createFixture(fs)
     const customRc = `import { defineConfig } from '@adonisjs/core/app'
-const periscopeProvider = () => import('periscope/provider')
+const periscopeProvider = () => import('adonisjs-periscope/provider')
 export default defineConfig({
   providers: [() => import('@adonisjs/core/providers/app_provider'), periscopeProvider],
 })
@@ -329,8 +329,8 @@ export default compose(HttpExceptionHandler)
     await configure(invocation.command)
 
     const rcFile = await fs.contents('adonisrc.ts')
-    assert.equal(count(rcFile, "import('periscope/provider')"), 1)
-    assert.equal(count(rcFile, "import('periscope/commands')"), 1)
+    assert.equal(count(rcFile, "import('adonisjs-periscope/provider')"), 1)
+    assert.equal(count(rcFile, "import('adonisjs-periscope/commands')"), 1)
     assert.strictEqual(await fs.contents('start/kernel.ts'), customKernel)
     assert.strictEqual(await fs.contents('config/shield.ts'), customShield)
     assert.strictEqual(await fs.contents('app/exceptions/handler.ts'), customHandler)
@@ -340,10 +340,10 @@ export default compose(HttpExceptionHandler)
       .getLogs()
       .map((log) => log.message)
       .join('\n')
-    assert.include(logs, "() => import('periscope/middleware/request_watcher')")
+    assert.include(logs, "() => import('adonisjs-periscope/middleware/request_watcher')")
     assert.include(logs, `ctx.route?.pattern === "/scope/api/flags/:name"`)
     assert.include(logs, `ctx.route?.pattern === "/scope/api/clear"`)
-    assert.include(logs, "import { withPeriscope } from 'periscope/exception_reporter'")
+    assert.include(logs, "import { withPeriscope } from 'adonisjs-periscope/exception_reporter'")
     assert.include(logs, 'export default withPeriscope(compose(HttpExceptionHandler))')
     assert.include(logs, "environment: ['web', 'console', 'test']")
   })
@@ -376,7 +376,7 @@ export default class HttpExceptionHandler extends ExceptionHandler {}
     const handler = await fs.contents('app/exceptions/handler.ts')
     assert.notInclude(handler, 'export default class HttpExceptionHandler')
     assert.include(handler, 'class HttpExceptionHandler extends ExceptionHandler')
-    assert.equal(count(handler, "from 'periscope/exception_reporter'"), 1)
+    assert.equal(count(handler, "from 'adonisjs-periscope/exception_reporter'"), 1)
     assert.equal(count(handler, 'export default withPeriscope(HttpExceptionHandler)'), 1)
     assert.equal(first.promptCalls.confirm, 1)
     assert.isTrue(
@@ -423,7 +423,7 @@ export default class extends ExceptionHandler {}
 
 server.use([
   () => import("@adonisjs/core/bodyparser_middleware"),
-  () => import("periscope/middleware/request_watcher"),
+  () => import("adonisjs-periscope/middleware/request_watcher"),
 ])
 `
     )
@@ -432,9 +432,9 @@ server.use([
     await configure(first.command)
 
     const reordered = await fs.contents('start/kernel.ts')
-    assert.equal(count(reordered, 'periscope/middleware/request_watcher'), 1)
+    assert.equal(count(reordered, 'adonisjs-periscope/middleware/request_watcher'), 1)
     assert.isBelow(
-      reordered.indexOf('periscope/middleware/request_watcher'),
+      reordered.indexOf('adonisjs-periscope/middleware/request_watcher'),
       reordered.indexOf('@adonisjs/core/bodyparser_middleware')
     )
 
@@ -445,8 +445,8 @@ server.use([
     const duplicateKernel = `import server from '@adonisjs/core/services/server'
 
 server.use([
-  () => import('periscope/middleware/request_watcher'),
-  () => import("periscope/middleware/request_watcher"),
+  () => import('adonisjs-periscope/middleware/request_watcher'),
+  () => import("adonisjs-periscope/middleware/request_watcher"),
 ])
 `
     await fs.create('start/kernel.ts', duplicateKernel)
@@ -463,7 +463,7 @@ server.use([
 const enabled = true
 
 server.use([
-  () => enabled ? import('periscope/middleware/request_watcher') : import('@adonisjs/core/bodyparser_middleware'),
+  () => enabled ? import('adonisjs-periscope/middleware/request_watcher') : import('@adonisjs/core/bodyparser_middleware'),
 ])
 `
     await fs.create('start/kernel.ts', customKernel)
@@ -546,7 +546,7 @@ server.use([
     await fs.create(
       'app/exceptions/handler.ts',
       `import { ExceptionHandler } from '@adonisjs/core/http'
-import type { withPeriscope } from 'periscope/exception_reporter'
+import type { withPeriscope } from 'adonisjs-periscope/exception_reporter'
 
 class HttpExceptionHandler extends ExceptionHandler {}
 export default HttpExceptionHandler
@@ -560,7 +560,7 @@ export default HttpExceptionHandler
     assert.notInclude(declarationResult, 'import type { withPeriscope }')
     assert.include(
       declarationResult,
-      "import { withPeriscope } from 'periscope/exception_reporter'"
+      "import { withPeriscope } from 'adonisjs-periscope/exception_reporter'"
     )
     assert.include(declarationResult, 'export default withPeriscope(HttpExceptionHandler)')
 
@@ -572,7 +572,7 @@ export default HttpExceptionHandler
     await fs.create(
       'app/exceptions/handler.ts',
       `import { ExceptionHandler } from '@adonisjs/core/http'
-import { type withPeriscope } from 'periscope/exception_reporter'
+import { type withPeriscope } from 'adonisjs-periscope/exception_reporter'
 
 class HttpExceptionHandler extends ExceptionHandler {}
 export default HttpExceptionHandler

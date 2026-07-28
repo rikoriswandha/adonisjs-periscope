@@ -4,7 +4,7 @@
   })
 }}}
 import { BaseSchema } from '@adonisjs/lucid/schema'
-import { createPeriscopeTables, dropPeriscopeTables } from 'periscope/storage_schema'
+import { createPeriscopeTables, dropPeriscopeTables } from 'adonisjs-periscope/storage_schema'
 
 /**
  * Periscope's four tables, for the \`database\` storage driver.

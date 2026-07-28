@@ -88,15 +88,15 @@ Run the smallest command that exercises the changed contract while iterating:
 
 ```sh
 # One package unit or storage test
-npm -w periscope test -- --files="unit/recorder/redactor.spec.ts"
-npm -w periscope test -- --files="storage/sqlite_local_store.spec.ts"
+npm -w adonisjs-periscope test -- --files="unit/recorder/redactor.spec.ts"
+npm -w adonisjs-periscope test -- --files="storage/sqlite_local_store.spec.ts"
 
 # Dashboard tests and build
 npm -w @periscope/dashboard test
 npm -w @periscope/dashboard run build
 
 # Booted playground integration
-npm -w periscope run build
+npm -w adonisjs-periscope run build
 npm -w playground run migrate
 npm -w playground test
 

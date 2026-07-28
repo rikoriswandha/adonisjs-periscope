@@ -10,11 +10,11 @@ import app from '@adonisjs/core/services/app'
 import { Recorder } from './recorder.ts'
 
 /**
- * The container service behind the `periscope/services/recorder` subpath.
+ * The container service behind the `adonisjs-periscope/services/recorder` subpath.
  *
  * ```ts
- * import recorder from 'periscope/services/recorder'
- * import { EntryType, IncomingEntry } from 'periscope'
+ * import recorder from 'adonisjs-periscope/services/recorder'
+ * import { EntryType, IncomingEntry } from 'adonisjs-periscope'
  *
  * recorder.record(IncomingEntry.make(EntryType.EVENT, { name: 'order.placed' }))
  * ```

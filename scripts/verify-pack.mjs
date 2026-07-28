@@ -8,7 +8,7 @@ const destination = mkdtempSync(join(tmpdir(), 'periscope-pack-'))
 try {
   const packed = spawnSync(
     process.platform === 'win32' ? 'npm.cmd' : 'npm',
-    ['pack', '--workspace', 'periscope', '--json', '--pack-destination', destination],
+    ['pack', '--workspace', 'adonisjs-periscope', '--json', '--pack-destination', destination],
     { cwd: new URL('..', import.meta.url), encoding: 'utf8' }
   )
 

@@ -9,7 +9,8 @@
  * The package's main entry point. It re-exports the public surface that exists today; each phase
  * adds to it as watchers, storage drivers and the dashboard land.
  *
- * Subpath exports (`periscope/services/recorder`, `periscope/periscope_config`, `periscope/dump`,
+ * Subpath exports (`adonisjs-periscope/services/recorder`, `adonisjs-periscope/periscope_config`,
+ * `adonisjs-periscope/dump`,
  * …) stay the idiomatic import for AdonisJS applications; this barrel exists for the pieces an
  * extension author composes — custom watchers, custom stores, hooks.
  */

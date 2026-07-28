@@ -222,7 +222,7 @@ Pipeline order exactly as architecture §6.1: muted → enabled/paused → filte
 
 **Deliverables:**
 
-- `src/watchers/request/middleware.ts` — server middleware, exported at `periscope/middleware/request_watcher`:
+- `src/watchers/request/middleware.ts` — server middleware, exported at `adonisjs-periscope/middleware/request_watcher`:
 
 ```ts
 export default class PeriscopeMiddleware {
@@ -343,7 +343,7 @@ Simple 2.5 s polling on index screens with new-rows-pill ("12 new entries — cl
 
 **Done when:** command tests via Ace kernel; paused flag actually stops recording within one cache window (integration).
 
-**🏁 Phase 5 demo:** brand-new v7 app → `npm i periscope && node ace add periscope && node ace serve` → working dashboard in under 2 minutes. Record this as the README gif.
+**🏁 Phase 5 demo:** brand-new v7 app → `npm i adonisjs-periscope && node ace add adonisjs-periscope && node ace serve` → working dashboard in under 2 minutes. Record this as the README gif.
 
 ---
 

@@ -3,7 +3,7 @@
 }}}
 // Add \`DEFAULT_REDACT_KEYS\` / \`DEFAULT_REDACT_HEADERS\` to this import to extend, rather than
 // replace, the redaction lists Periscope ships with — see the \`redact\` block below.
-import { defineConfig } from 'periscope/periscope_config'
+import { defineConfig } from 'adonisjs-periscope/periscope_config'
 
 export default defineConfig({
   /**
@@ -119,7 +119,7 @@ export default defineConfig({
      * underscores, hyphens and spaces, so \`apiKey\`, \`api_key\` and \`API-KEY\` all match \`apikey\`.
      *
      * This list REPLACES the shipped defaults rather than extending them. To add to them,
-     * import and spread \`DEFAULT_REDACT_KEYS\` from 'periscope/periscope_config':
+     * import and spread \`DEFAULT_REDACT_KEYS\` from 'adonisjs-periscope/periscope_config':
      *
      *   keys: [...DEFAULT_REDACT_KEYS, 'internal_reference'],
      */

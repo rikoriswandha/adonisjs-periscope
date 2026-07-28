@@ -10,7 +10,7 @@ import { basename, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const CONFIG_EXTENSIONS = ['.ts', '.js', '.mts', '.mjs', '.cts', '.cjs'] as const
-const REQUEST_MIDDLEWARE_PATH = 'periscope/middleware/request_watcher'
+const REQUEST_MIDDLEWARE_PATH = 'adonisjs-periscope/middleware/request_watcher'
 const DEFAULT_MIGRATIONS_PATH = 'database/migrations'
 let configImportVersion = 0
 
@@ -571,7 +571,7 @@ async function middlewareCheck(appRoot: string): Promise<DoctorCheck> {
   }
 
   const directFirst =
-    /^(?:async\s*)?\(\s*\)\s*=>\s*import\s*\(\s*(['"])periscope\/middleware\/request_watcher\1\s*\)\s*$/.test(
+    /^(?:async\s*)?\(\s*\)\s*=>\s*import\s*\(\s*(['"])adonisjs-periscope\/middleware\/request_watcher\1\s*\)\s*$/.test(
       first
     )
 

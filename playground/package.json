@@ -41,7 +41,7 @@
     "@vinejs/vine": "^4.4.0",
     "better-sqlite3": "^12.10.0",
     "luxon": "^3.7.2",
-    "periscope": "*",
+    "adonisjs-periscope": "*",
     "reflect-metadata": "^0.2.2"
   },
   "devDependencies": {
