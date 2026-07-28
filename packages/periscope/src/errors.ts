@@ -8,7 +8,7 @@
 /**
  * Periscope's error types.
  *
- * Implementation plan §0, invariant 1 says Periscope never throws into host-app code paths.
+ * The core invariant says Periscope never throws into host-app code paths.
  * That invariant is about the *recording* path — watchers, the recorder pipeline and flushes,
  * all of which run inside `safeguard()`. Configuration and wiring are the deliberate exception:
  * a misconfigured Periscope must fail loudly at boot rather than silently record nothing, so

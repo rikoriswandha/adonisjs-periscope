@@ -6,9 +6,9 @@
  */
 
 /**
- * The shared storage contract suite (implementation plan P1.4).
+ * The shared storage contract suite.
  *
- * Every driver Periscope ships — `memory` now, `sqlite-local` and `database` in P2 — must behave
+ * Every driver Periscope ships must behave
  * identically from the dashboard's point of view, so the behaviour is specified once, here, and
  * each driver's own spec file only supplies a factory. The file is deliberately named
  * `contract.ts` and not `*.spec.ts`: the Japa runner globs `tests/**\/*.spec.ts`, so this module
@@ -93,10 +93,9 @@ async function findOrFail(store: PeriscopeStore, uuid: string): Promise<StoredEn
 }
 
 /**
- * Size of the scale fixture used by the pruning tests. A thousand entries is the number the
- * implementation plan names, and it is the point of those tests: a driver that deletes row by
- * row, or that builds one `in (...)` list out of every doomed uuid, starts to hurt here in a way
- * it never does against the five-entry fixtures above.
+ * Size of the scale fixture used by the pruning tests. A thousand entries exposes whether a
+ * driver deletes row by row or builds one `in (...)` list out of every doomed uuid, which starts
+ * to hurt here in a way it never does against the five-entry fixtures above.
  */
 const SCALE_ENTRY_COUNT = 1_000
 

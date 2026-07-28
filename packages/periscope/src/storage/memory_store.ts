@@ -114,8 +114,7 @@ function matchesQuery(entry: StoredEntry, query: EntryQuery, cursor: bigint | nu
 }
 
 /**
- * The in-process storage driver (implementation plan P1.4) — the `memory` value of
- * `StorageDriverName`.
+ * The in-process storage driver — the `memory` value of `StorageDriverName`.
  *
  * It is both Periscope's test double and a driver applications actually run: zero dependencies,
  * zero configuration, and perfectly adequate for a single-process dev server or an ephemeral CI

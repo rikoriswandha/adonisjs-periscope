@@ -7,7 +7,7 @@ import reactHooks from 'eslint-plugin-react-hooks'
  * cannot be installed alongside the ESLint 10 used across this monorepo. The rules that
  * actually matter for a Vite SPA live in `eslint-plugin-react-hooks`, which does support
  * ESLint 10, so those are applied directly. Revisit when eslint-plugin-react ships ESLint 10
- * support (dashboard UI work starts in Phase 4).
+ * support (the dashboard UI applies the rules directly).
  */
 const SOURCE_FILES = ['src/**/*.{ts,tsx}']
 

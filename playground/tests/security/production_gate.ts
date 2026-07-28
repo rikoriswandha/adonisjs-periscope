@@ -1,5 +1,5 @@
 /*
- * Booted Phase 8 security drill. It intentionally runs outside Japa because NODE_ENV and the
+ * Booted security drill. It intentionally runs outside Japa because NODE_ENV and the
  * provider's process-wide listener registrations must be fixed before the application imports.
  */
 

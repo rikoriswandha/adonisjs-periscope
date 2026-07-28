@@ -6,7 +6,7 @@
  */
 
 /**
- * Implementation plan §0, invariant 1: "Periscope never throws into host-app code paths".
+ * Core invariant: "Periscope never throws into host-app code paths".
  *
  * Every watcher, hook and recorder entry point runs inside `safeguard`. A failure inside
  * Periscope is reported to an internal logger and then dropped — the host application never

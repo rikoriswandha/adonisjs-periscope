@@ -7,7 +7,7 @@
 | (`packages/periscope/stubs/config/periscope.stub`) so that drift between what an application
 | gets from `node ace add periscope` and what the playground exercises shows up here first.
 |
-| Phase 2 makes `sqlite-local` the zero-config default, so that is what the fixture runs on: the
+| `sqlite-local` is the zero-config default, so that is what the fixture runs on: the
 | demo command and the functional tests both prove entries survive in `tmp/periscope.sqlite`
 | rather than in a ring buffer that dies with the process.
 |
@@ -30,7 +30,7 @@ export default defineConfig({
 
   storage: {
     /**
-     * The shipped default. The Phase 8 benchmark switches only its isolated child process to the
+     * The shipped default. The benchmark switches only its isolated child process to the
      * bounded memory driver: the gate measures watcher/recorder hot-path overhead without folding
      * host-specific filesystem latency into every run. Storage persistence and failure behavior
      * have separate sqlite and postgres gates.

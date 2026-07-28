@@ -267,7 +267,7 @@ test.group('WatcherRegistry', () => {
     assert.equal(emitter.listenerCount('application:event'), 0)
   })
 
-  test('register the shipped watcher set within the Phase 6 startup budget', async ({ assert }) => {
+  test('register the shipped watcher set within the startup budget', async ({ assert }) => {
     /**
      * ModelWatcher's one-time optional Lucid import is prepared at module evaluation above.
      */

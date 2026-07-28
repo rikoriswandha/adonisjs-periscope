@@ -14,7 +14,7 @@
  * `db:query`, and a query watcher that recorded it would hand the recorder new entries to flush —
  * which would emit more SQL, without bound.
  *
- * The playground's own Phase 3 suite cannot prove this: it runs the `sqlite-local` driver, whose
+ * The playground's own integration suite cannot prove this: it runs the `sqlite-local` driver, whose
  * writes never touch Lucid at all, so "no Periscope SQL was recorded" holds there for the boring
  * reason that no Periscope SQL exists. Here it holds for the reason that matters.
  *

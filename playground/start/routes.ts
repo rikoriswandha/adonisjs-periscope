@@ -46,7 +46,7 @@ router.post('/echo', [EchoController, 'handle']).as('echo')
 router.get('/fanout', [FanoutController, 'handle']).as('fanout')
 
 /**
- * Exercises every Phase 6 watcher backed by an installed playground integration.
+ * Exercises every watcher backed by an installed playground integration.
  */
 router.get('/wave2', [Wave2Controller, 'handle']).as('wave2')
 

@@ -27,13 +27,12 @@ The workspace has three parts:
   `packages/periscope/build/dashboard`.
 - `playground`: the booted AdonisJS integration fixture used by functional and security checks.
 
-`docs/IMPLEMENTATION_PLAN.md` records the staged architecture and acceptance criteria. Keep it as a
-historical implementation record; describe current user-facing behavior in `README.md` and public
-TypeScript documentation.
+`docs/ARCHITECTURE.md` describes the runtime pipeline, module layout, and design invariants.
+Describe current user-facing behavior in `README.md` and public TypeScript documentation.
 
 ## Architecture and invariants
 
-The runtime path is:
+The runtime path (see `docs/ARCHITECTURE.md` for the full picture) is:
 
 ```text
 host signal -> watcher -> IncomingEntry -> Recorder -> PeriscopeStore -> JSON/SSE API -> dashboard

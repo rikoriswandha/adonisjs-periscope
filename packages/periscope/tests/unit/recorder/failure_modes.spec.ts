@@ -1,7 +1,7 @@
 /*
  * periscope
  *
- * Phase 8 failure-mode drills that cross component boundaries. Unit tests for the individual
+ * Cross-component failure-mode drills. Unit tests for the individual
  * serializer cases live in serializer.spec.ts; this file exercises a real failed driver from a
  * host HTTP request so a storage outage can never become an application outage.
  */
@@ -56,7 +56,7 @@ function close(server: Server): Promise<void> {
   })
 }
 
-test.group('Recorder | Phase 8 failure drills', (group) => {
+test.group('Recorder | failure drills', (group) => {
   group.each.teardown(() => setInternalLogger(null))
 
   test('keep the host serving when sqlite closes immediately before flush', async ({

@@ -6,8 +6,8 @@
  */
 
 /**
- * The `database` storage driver (implementation plan P2.1): Periscope's tables living inside the
- * application's own Lucid connection.
+ * The `database` storage driver: Periscope's tables living inside the application's own Lucid
+ * connection.
  *
  * Two constraints shape everything below.
  *

@@ -319,7 +319,7 @@ test.group('periscope watchers (playground wiring)', (group) => {
     assert.isFalse(events.some((entry) => entry.content.name === 'db:query'))
     assertNoPeriscopeTraffic(assert, recorded.entries)
   })
-  test('GET /wave2 exercises every Phase 6 watcher with redaction and clean state', async ({
+  test('exercises every integration-backed watcher with redaction and clean state', async ({
     client,
     assert,
     cleanup,

@@ -6,7 +6,7 @@
  */
 
 /**
- * The `database` driver (implementation plan P2.1), against two real dialects.
+ * The `database` driver, tested against two real dialects.
  *
  * SQLite always runs. Postgres runs whenever `PERISCOPE_PG_URL` names a reachable server, and CI
  * always provides one — a driver whose whole job is to be dialect-neutral cannot be trusted on

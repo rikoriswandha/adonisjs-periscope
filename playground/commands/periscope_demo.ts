@@ -6,20 +6,15 @@ import recorder from 'adonisjs-periscope/services/recorder'
 import { BatchScope, EntryType, IncomingEntry } from 'adonisjs-periscope'
 
 /**
- * The Phase 1 demo from the implementation plan:
- *
- * > "a script in playground records 3 fake entries in a scope, flushes to memory store, prints
- * >  the batch."
- *
- * It is the smallest end-to-end proof that the whole pipeline is wired: the provider resolved
- * `config/periscope.ts`, built the configured store and bound the recorder; `BatchScope`
+ * Records demo entries through the recorder into the configured store, then reads them back and
+ * prints per-type counts. It is an end-to-end proof that the provider resolved
+ * `config/periscope.ts`, built the configured store, and bound the recorder: `BatchScope`
  * correlates entries recorded across async boundaries into one batch; the recorder redacts,
- * tags, caps and stamps them; and the store reads them back in timeline order.
+ * tags, caps, and stamps them; and the store reads them back in timeline order.
  *
- * Phase 2 adds the other half of the plan's demo — "writes batches through the recorder into
- * sqlite-local" — by printing the per-type counts read back out of the store and the file they
- * came from. Run the command twice: the counts grow, which is the whole difference between the
- * `sqlite-local` driver and the ring buffer it replaced as the default.
+ * With the default `sqlite-local` driver, entries persist in the store between runs, so the
+ * printed counts grow each time the command runs rather than resetting as they would with a ring
+ * buffer.
  *
  * Run it with `node ace periscope:demo`.
  */

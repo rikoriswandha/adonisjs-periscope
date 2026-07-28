@@ -8,7 +8,7 @@
 import type { ResolvedPeriscopeConfig } from '../types.ts'
 
 /**
- * Implementation plan P1.3: deep key-deny-list scrubbing.
+ * Deep key-deny-list scrubbing.
  *
  * Redaction is the last line of defence between a host application's secrets and Periscope's
  * storage. It runs inside the recorder pipeline *before* an entry is buffered (architecture

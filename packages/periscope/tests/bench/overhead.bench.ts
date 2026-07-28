@@ -1,7 +1,7 @@
 /*
  * periscope
  *
- * Phase 8 performance gate. This file is intentionally executable instead of a Japa spec:
+ * Performance gate. This file is intentionally executable instead of a Japa spec:
  * latency and soak measurements need an isolated playground process, not the test runner's heap.
  */
 

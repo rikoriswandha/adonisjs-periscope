@@ -227,7 +227,7 @@ test.group('defineConfig | merging', () => {
     assert.deepEqual(config.watchers.http_client, DEFAULTS.watchers.http_client)
   })
 
-  test('resolve every Phase 6 watcher override into its dense shape', ({ assert }) => {
+  test('resolve every watcher override into its dense shape', ({ assert }) => {
     const config = defineConfig({
       watchers: {
         command: { enabled: false, ignore: ['health:check'] },
@@ -477,7 +477,7 @@ test.group('defineConfig | validation', () => {
   })
 
   /**
-   * `serialization` was a phase 1 config block that nothing read: `safeSerialize` has always
+   * `serialization` was a config block that nothing read: `safeSerialize` has always
    * fallen back to its own `SERIALIZER_DEFAULTS`. Lowering `maxBytes` therefore changed nothing,
    * which is worse than a rejection — so the key is gone and writing it is now a plain typo.
    */
@@ -571,7 +571,7 @@ test.group('defineConfig | validation', () => {
     )
   })
 
-  test('reject invalid Phase 6 watcher-specific options', ({ assert }) => {
+  test('reject invalid watcher-specific options', ({ assert }) => {
     assert.include(
       rejectionOf({ watchers: { command: { ignore: 'periscope:clear' } } }).paths,
       'watchers.command.ignore'

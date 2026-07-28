@@ -6,7 +6,7 @@
  */
 
 /**
- * The DDL behind the `database` storage driver (implementation plan P2.1).
+ * The DDL behind the `database` storage driver.
  *
  * This module exists so the shipped migration stub and everything that has to build the same
  * tables without a booted application — the driver's own test suite, most obviously — express
@@ -61,7 +61,7 @@ const FLAG_NAME_LENGTH = 191
  * hands the tracked builder back to `BaseSchema`, which awaits it for real.
  *
  * `content` and `tags` are TEXT on every dialect. That is a deliberate departure from the
- * implementation plan's "jsonb on postgres, text elsewhere", and the reason is that `jsonb`
+ * initial "jsonb on postgres, text elsewhere" design, and the reason is that `jsonb`
  * parses what it is handed and rejects two escapes ordinary captured payloads contain: `\u0000`,
  * a NUL anywhere in a body, header or query string, and a lone surrogate such as `"\ud83d"`,
  * which is what redaction or truncation leaves behind after cutting an emoji in half. Postgres

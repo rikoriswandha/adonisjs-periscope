@@ -6,7 +6,7 @@
  */
 
 /**
- * Implementation plan P1.5 — configuration.
+ * Periscope configuration.
  *
  * `config/periscope.ts` is written by the application as a sparse object and handed to
  * {@link defineConfig}, which deep-merges it over the defaults, validates every value and

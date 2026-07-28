@@ -410,21 +410,19 @@ npm test
 npm run build
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for architecture invariants, focused test commands, security
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the runtime pipeline and module layout, and
+[CONTRIBUTING.md](CONTRIBUTING.md) for architecture invariants, focused test commands, security
 review requirements, and benchmark gates.
 
 ## Release policy
 
-Releases use Changesets and publish the `periscope` package from GitHub Actions with npm
+Releases use Changesets and publish the `adonisjs-periscope` package from GitHub Actions with npm
 provenance. CI builds a real tarball and rejects it unless the provider, package entry point,
 dashboard HTML, and hashed dashboard assets are present. The compatibility matrix covers the
 oldest supported and latest AdonisJS 7 and Lucid 22 releases.
 
-The stability sequence is intentionally gated: publish `0.1.x`, dogfood it in at least two real
-applications for at least two weeks, then advance through minor releases as integrations settle.
-Publish `1.0.0` only after that field window has no unresolved data-loss, boot, authorization, or
-packaging defects. Every user-facing change after the initial release requires `npm run changeset`;
-the release PR owns versioning, and merging it owns publication.
+Every user-facing change requires `npm run changeset`; the release PR owns versioning, and merging
+it owns publication.
 
 ## License
 

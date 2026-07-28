@@ -263,8 +263,8 @@ function openDatabase(path: string): DatabaseHandle {
 }
 
 /**
- * The `sqlite-local` storage driver (implementation plan P2.2): a dedicated better-sqlite3 file,
- * usually `tmp/periscope.sqlite`.
+ * The `sqlite-local` storage driver: a dedicated better-sqlite3 file, usually
+ * `tmp/periscope.sqlite`.
  *
  * This is the zero-config default. It talks to better-sqlite3 directly rather than through Lucid
  * or knex, which is the whole point of it: an API-only application with no database of its own

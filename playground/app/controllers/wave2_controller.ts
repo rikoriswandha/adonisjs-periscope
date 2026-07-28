@@ -13,7 +13,7 @@ const USER_EMAIL = 'wave2@periscope.test'
 
 export default class Wave2Controller {
   /**
-   * Exercise every Phase 6 watcher from one request-scoped batch. The fixture uses the installed
+   * Exercise every integration-backed watcher from one request-scoped batch. The fixture uses the installed
    * integrations rather than emitting their framework events by hand, and removes all mutable
    * database and cache state before returning.
    */

@@ -84,7 +84,7 @@ test.group('periscope recorder (playground wiring)', (group) => {
 
     /**
      * `batch()` is timeline order, so the sequences must be strictly ascending — the property the
-     * batch-detail screen renders against in Phase 4.
+     * batch-detail screen renders against.
      */
     const sequences = entries.map((entry) => entry.sequence)
     assert.deepEqual(

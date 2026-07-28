@@ -831,10 +831,10 @@ export type ResolvedDashboardConfig = {
  * defaults by {@link defineConfig}.
  *
  * There is deliberately no `serialization` block here. Serialisation limits live on
- * {@link safeSerialize}'s own `SERIALIZER_DEFAULTS`, and nothing in phase 1 calls it — the
- * watchers that will are phases 3 to 6. Per rule 1 above, the key comes back the day a watcher
- * needs to override those defaults, not before; deep-merging over the defaults makes adding it
- * then a non-breaking change to an application's config file.
+ * {@link safeSerialize}'s own `SERIALIZER_DEFAULTS`, and no current caller needs to override
+ * them. Per rule 1 above, the key comes back the day a watcher needs to override those defaults,
+ * not before; deep-merging over the defaults makes adding it then a non-breaking change to an
+ * application's config file.
  */
 export type PeriscopeConfig = {
   /**

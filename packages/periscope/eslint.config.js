@@ -8,7 +8,7 @@
 import { configPkg } from '@adonisjs/eslint-config'
 
 /**
- * Enforcement of implementation plan §0, invariant 3:
+ * Enforcement of the "No outbound telemetry" invariant:
  *
  *   "No outbound network calls anywhere in the package (lint rule banning `fetch`/`http.request`
  *    outside the HttpClientWatcher's *subscription* code)."
@@ -24,7 +24,7 @@ import { configPkg } from '@adonisjs/eslint-config'
  * this config cannot catch.
  */
 const NETWORK_BAN_MESSAGE =
-  'Outbound network access is banned in Periscope (implementation plan §0, invariant 3). ' +
+  'Outbound network access is banned in Periscope. ' +
   'Only src/watchers/http_client/** may reference network modules, and only to subscribe to ' +
   'diagnostics_channel events.'
 

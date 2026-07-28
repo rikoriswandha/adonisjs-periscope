@@ -15,7 +15,7 @@ const loggerConfig = defineConfig({
 
       /**
        * Minimum level to output. Kept at "info" so `/fanout`'s warn is always
-       * emitted — Phase 3's LogWatcher records warn and above by default.
+       * emitted — LogWatcher records warn and above by default.
        */
       level: env.get('LOG_LEVEL'),
 

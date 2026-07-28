@@ -8,8 +8,7 @@
 import { Stream } from 'node:stream'
 
 /**
- * Implementation plan P1.3 — the value serialiser shared by the recorder and, from P3 onwards,
- * by the event, dump and job watchers.
+ * The value serialiser shared by the recorder and the event, dump and job watchers.
  *
  * {@link safeSerialize} takes a value Periscope does not own — a controller's response body, an
  * event payload, an exception's `cause`, whatever a `dump()` call was handed — and returns a
