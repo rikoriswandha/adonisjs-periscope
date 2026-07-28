@@ -540,9 +540,11 @@ export function AppShell() {
                 <SelectPopup>
                   {(status?.applications ?? []).map((application) => (
                     <SelectItem key={application.name} value={application.name}>
-                      <span className="min-w-0 flex-1 truncate">{application.name}</span>
-                      <span className="font-mono text-2xs tabular-nums text-muted-foreground">
-                        {application.entries.toLocaleString()}
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate">{application.name}</span>
+                        <span className="font-mono text-2xs tabular-nums text-muted-foreground">
+                          {application.entries.toLocaleString()}
+                        </span>
                       </span>
                     </SelectItem>
                   ))}
