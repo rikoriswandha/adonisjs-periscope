@@ -5,7 +5,7 @@
  * file that was distributed with this source code.
  */
 
-import { closeSync, constants, mkdirSync, openSync } from 'node:fs'
+import { closeSync, constants, mkdirSync, openSync, rmSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 import Database from 'better-sqlite3'
@@ -194,8 +194,38 @@ function placeholders(rows: number, columns: number): string {
  * start with the path in the message.
  */
 function openDatabase(path: string): DatabaseHandle {
+  try {
+    return openDatabaseOnce(path)
+  } catch (error) {
+    /*
+     * A torn WAL sidecar pair is the one open failure that heals itself. An ungraceful kill — or
+     * anything that deletes the database file but not its `-wal`/`-shm` companions — leaves
+     * sidecars SQLite cannot reconcile with the main file, and every reopen fails with an I/O
+     * error from then on: the store is bricked until a human deletes two files they have never
+     * heard of. The sidecars carry nothing SQLite could still recover in that state, and this
+     * file holds debug telemetry whose loss costs nothing, so remove them and try once more.
+     * Any second failure — and every non-I/O failure — propagates as the storage error below.
+     */
+    const cause = error instanceof Error ? error.cause : undefined
+    const code =
+      cause && typeof cause === 'object' && 'code' in cause && typeof cause.code === 'string'
+        ? cause.code
+        : undefined
+
+    if (code?.startsWith('SQLITE_IOERR')) {
+      rmSync(`${path}-wal`, { force: true })
+      rmSync(`${path}-shm`, { force: true })
+
+      return openDatabaseOnce(path)
+    }
+
+    throw error
+  }
+}
+
+function openDatabaseOnce(path: string): DatabaseHandle {
   /*
-   * Declared out here so the catch can reach it. Everything after `new Database` — three pragmas
+   * Declared out here so the catch can reach it. Everything after `new Database` — the pragmas
    * and the schema — can throw on a file that exists but is not a database, or is a database an
    * older, incompatible run left behind, and a handle abandoned inside the try keeps its file
    * descriptor and its SQLite lock for the life of the process. The boot that failed is then
@@ -231,6 +261,14 @@ function openDatabase(path: string): DatabaseHandle {
      * torn tail, and losing it costs nothing anyone will notice.
      */
     db.pragma('synchronous = NORMAL')
+
+    /*
+     * WAL is truncated back to this size at checkpoint instead of being left at its high-water
+     * mark. Without a limit a sustained write burst leaves a large `-wal` file — and its resident
+     * pages — behind for the rest of the process's life; 4 MiB comfortably covers the batches one
+     * checkpoint interval accumulates.
+     */
+    db.pragma('journal_size_limit = 4194304')
 
     /*
      * Foreign keys are off by default in SQLite and are per connection, not per file. Turning

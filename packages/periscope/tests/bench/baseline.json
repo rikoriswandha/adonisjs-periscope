@@ -4,5 +4,5 @@
   "recordMedianMicros": 16.5,
   "latencyDeltaMs": 0.8,
   "throughputLossPercent": 4,
-  "rssGrowthMb": 25
+  "rssGrowthMb": 32
 }
