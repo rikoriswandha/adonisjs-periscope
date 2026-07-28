@@ -101,9 +101,10 @@ export default defineConfig({
 
       /**
        * Lower this to flag tighter latency regressions, or raise it when expensive queries are
-       * expected and should not dominate the `slow` filter.
+       * expected and should not dominate the `slow` filter. The playground keeps it low so the
+       * `/slow` probe clears it by a wide margin even on fast CI hardware.
        */
-      slowMs: 100,
+      slowMs: 25,
 
       /**
        * Enable this when bound values must never be retained, even after Periscope's recursive

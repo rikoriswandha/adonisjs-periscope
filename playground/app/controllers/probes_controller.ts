@@ -9,12 +9,13 @@ import BoomException from '#exceptions/boom_exception'
  * burns time by doing real, fixed work instead of faking a delay: a recursive
  * CTE walks this many rows and hashes a random blob on each one.
  *
- * The *workload* is deterministic; the resulting wall-clock (~150 ms on a
- * modern laptop) is hardware dependent. That is good enough — Periscope only
- * needs the query to clear its "slow query" threshold, not to hit an exact
- * duration.
+ * The *workload* is deterministic; the resulting wall-clock (~400 ms on a
+ * modern laptop, still well over 100 ms on a fast CI runner) is hardware
+ * dependent. That is good enough — Periscope only needs the query to clear
+ * its "slow query" threshold (25 ms in the playground config) with a wide
+ * margin, not to hit an exact duration.
  */
-const SLOW_QUERY_ITERATIONS = 150_000
+const SLOW_QUERY_ITERATIONS = 400_000
 
 const SLOW_QUERY = `WITH RECURSIVE seq(n) AS (
   SELECT 1
