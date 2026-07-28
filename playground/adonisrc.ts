@@ -29,7 +29,7 @@ export default defineConfig({
     () => import('@adonisjs/mail/commands'),
     () => import('@adonisjs/cache/commands'),
     () => import('@adonisjs/bouncer/commands'),
-    () => import('periscope/commands'),
+    () => import('adonisjs-periscope/commands'),
   ],
 
   /*
@@ -50,7 +50,7 @@ export default defineConfig({
      * watches have stopped producing entries.
      */
     {
-      file: () => import('periscope/provider'),
+      file: () => import('adonisjs-periscope/provider'),
       environment: ['web', 'console', 'test'],
     },
     {
@@ -74,7 +74,14 @@ export default defineConfig({
   | List of modules to import before starting the application.
   |
   */
-  preloads: [() => import('#start/routes'), () => import('#start/kernel')],
+  preloads: [
+    () => import('#start/routes'),
+    () => import('#start/kernel'),
+    {
+      file: () => import('#start/showcase_seed'),
+      environment: ['web'],
+    },
+  ],
 
   /*
   |--------------------------------------------------------------------------

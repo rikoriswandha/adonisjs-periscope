@@ -13,7 +13,9 @@
 |
 */
 
-import { defineConfig } from 'periscope/periscope_config'
+import { defineConfig } from 'adonisjs-periscope/periscope_config'
+
+import { demoQueue } from '../app/periscope/demo_queue_adapter.js'
 
 const benchmarking = process.env.PERISCOPE_BENCH_STORAGE === 'memory'
 
@@ -197,6 +199,26 @@ export default defineConfig({
 
     http_client: {
       enabled: !benchmarking,
+    },
+
+    /**
+     * The opt-in integrations. They subscribe to nothing by default; the playground turns them
+     * all on so `/showcase` and the session routes can prove them end-to-end.
+     */
+    session: {
+      enabled: !benchmarking,
+      captureValues: !benchmarking,
+    },
+
+    redis: {
+      enabled: !benchmarking,
+      captureArguments: !benchmarking,
+    },
+
+    job_schedule: {
+      enabled: !benchmarking,
+      adapters: [demoQueue.adapter],
+      capturePayload: !benchmarking,
     },
   },
 

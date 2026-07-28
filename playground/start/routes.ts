@@ -16,6 +16,7 @@ const EchoController = () => import('#controllers/echo_controller')
 const FanoutController = () => import('#controllers/fanout_controller')
 const SessionController = () => import('#controllers/session_controller')
 const Wave2Controller = () => import('#controllers/wave2_controller')
+const ShowcaseController = () => import('#controllers/showcase_controller')
 
 router.get('/', () => ({ hello: 'periscope playground' })).as('home')
 
@@ -48,6 +49,11 @@ router.get('/fanout', [FanoutController, 'handle']).as('fanout')
  * Exercises every Phase 6 watcher backed by an installed playground integration.
  */
 router.get('/wave2', [Wave2Controller, 'handle']).as('wave2')
+
+/**
+ * Exercises the opt-in watchers: session, redis command traces and job/schedule lifecycles.
+ */
+router.get('/showcase', [ShowcaseController, 'handle']).as('showcase')
 
 /**
  * Auth-less session stub.
