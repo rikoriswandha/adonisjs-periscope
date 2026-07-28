@@ -419,13 +419,8 @@ export function RequestBatchPage() {
                   </p>
                 )}
               </div>
-              <div className="shrink-0 text-left sm:text-right">
-                <div className="text-xs text-muted-foreground">Recorded</div>
-                <time className="text-sm font-medium" dateTime={requestEntry.createdAt}>
-                  {formatDateTime(requestEntry.createdAt)}
-                </time>
+              <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
                 <Button
-                  className="mt-2"
                   render={<a download href={api.getBatchExportUrl(batchId)} />}
                   size="sm"
                   variant="outline"
@@ -433,6 +428,12 @@ export function RequestBatchPage() {
                   <Download aria-hidden="true" />
                   Export JSON
                 </Button>
+                <div className="text-left sm:text-right">
+                  <div className="text-xs text-muted-foreground">Recorded</div>
+                  <time className="text-sm font-medium" dateTime={requestEntry.createdAt}>
+                    {formatDateTime(requestEntry.createdAt)}
+                  </time>
+                </div>
               </div>
             </div>
             {requestEntry.tags.length > 0 && (

@@ -86,12 +86,32 @@ export class StaticController {
     this.#sendIndex(response)
   }
 
-  spa({ response }: HttpContext) {
+  /**
+   * The SPA is built with `base: './'`, so a hard refresh on a nested route
+   * (e.g. `/requests/:id`) makes the browser request `.../requests/assets/*`.
+   * Serve anything under an `assets/` segment as an asset instead of falling
+   * back to index.html, which would break strict MIME checking.
+   */
+  spa({ params, response }: HttpContext) {
+    const wildcard = params['*']
+    const segments = Array.isArray(wildcard) ? wildcard : String(wildcard ?? '').split('/')
+    const assetsIndex = segments.lastIndexOf('assets')
+
+    if (assetsIndex !== -1 && assetsIndex < segments.length - 1) {
+      this.#sendAsset(response, segments.slice(assetsIndex + 1).join('/'))
+      return
+    }
+
     this.#sendIndex(response)
   }
 
   asset({ params, response }: HttpContext) {
-    const asset = resolveStaticPath(resolve(this.#dashboardRoot, 'assets'), params['*'])
+    const wildcard = params['*']
+    this.#sendAsset(response, Array.isArray(wildcard) ? wildcard.join('/') : wildcard)
+  }
+
+  #sendAsset(response: HttpContext['response'], relativePath: unknown) {
+    const asset = resolveStaticPath(resolve(this.#dashboardRoot, 'assets'), relativePath)
 
     if (asset === null) {
       response.notFound()
