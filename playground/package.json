@@ -8,6 +8,7 @@
     "start": "node --import=@poppinss/ts-exec bin/server.ts",
     "build": "node ace build",
     "migrate": "node ace migration:run",
+    "predev": "npm -w @rikology/adonisjs-periscope run build && npm -w @periscope/dashboard run build",
     "dev": "npm run migrate && node ace serve --hmr",
     "test": "node ace test",
     "security:production": "node --import=@poppinss/ts-exec --enable-source-maps tests/security/production_gate.ts",

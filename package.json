@@ -14,7 +14,7 @@
   ],
   "scripts": {
     "build": "npm -w @rikology/adonisjs-periscope run build && npm -w @periscope/dashboard run build",
-    "dev": "npm run build && npm -w playground run dev",
+    "dev": "npm -w playground run dev",
     "test": "npm -w @rikology/adonisjs-periscope run test && npm -w @periscope/dashboard run test && npm -w @rikology/adonisjs-periscope run build && npm -w playground run test",
     "lint": "npm -w @rikology/adonisjs-periscope run lint && npm -w @periscope/dashboard run lint && npm -w playground run lint",
     "typecheck": "npm -w @rikology/adonisjs-periscope run typecheck && npm -w @periscope/dashboard run typecheck && npm -w playground run typecheck",
