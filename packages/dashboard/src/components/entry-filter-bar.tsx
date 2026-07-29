@@ -5,13 +5,15 @@ import { useSearchParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { DatePicker } from '@/components/ui/date-picker'
 import { Input } from '@/components/ui/input'
 import {
-  dateTimeLocalValue,
+  endOfLocalDayIso,
   entryUrlFilterState,
-  isoDateTime,
   normalizeExactTag,
+  parseFilterDate,
   presetTimeRange,
+  startOfLocalDayIso,
 } from '@/lib/global-search'
 
 const presets = [
@@ -24,8 +26,8 @@ export function EntryFilterBar() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [tagInput, setTagInput] = useState('')
   const { tags, from, to } = entryUrlFilterState(searchParams)
-  const fromInput = dateTimeLocalValue(from)
-  const toInput = dateTimeLocalValue(to)
+  const fromDate = parseFilterDate(from)
+  const toDate = parseFilterDate(to)
   const activeMinutes =
     from && to ? Math.round((new Date(to).getTime() - new Date(from).getTime()) / 60_000) : null
 
@@ -149,38 +151,32 @@ export function EntryFilterBar() {
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <label className="flex items-center gap-2 text-2xs text-muted-foreground">
             From
-            <Input
+            <DatePicker
               aria-label="Entries created from"
-              max={toInput || undefined}
-              nativeInput
-              onChange={(event) => {
+              disabled={toDate ? { after: toDate } : undefined}
+              onChange={(date) => {
                 const next = new URLSearchParams(searchParams)
-                const value = isoDateTime(event.target.value)
-                if (value) next.set('from', value)
+                if (date) next.set('from', startOfLocalDayIso(date))
                 else next.delete('from')
                 setSearchParams(next)
               }}
-              size="sm"
-              type="datetime-local"
-              value={fromInput}
+              placeholder="From date"
+              value={fromDate}
             />
           </label>
           <label className="flex items-center gap-2 text-2xs text-muted-foreground">
             To
-            <Input
+            <DatePicker
               aria-label="Entries created through"
-              min={fromInput || undefined}
-              nativeInput
-              onChange={(event) => {
+              disabled={fromDate ? { before: fromDate } : undefined}
+              onChange={(date) => {
                 const next = new URLSearchParams(searchParams)
-                const value = isoDateTime(event.target.value)
-                if (value) next.set('to', value)
+                if (date) next.set('to', endOfLocalDayIso(date))
                 else next.delete('to')
                 setSearchParams(next)
               }}
-              size="sm"
-              type="datetime-local"
-              value={toInput}
+              placeholder="To date"
+              value={toDate}
             />
           </label>
         </div>

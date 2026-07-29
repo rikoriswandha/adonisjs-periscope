@@ -67,18 +67,20 @@ export function globalSearchFilters(searchParams: URLSearchParams): EntryFilters
   }
 }
 
-export function dateTimeLocalValue(value: string | undefined): string {
-  if (!value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  const pad = (part: number) => String(part).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
-}
-
-export function isoDateTime(value: string): string | undefined {
+export function parseFilterDate(value: string | undefined): Date | undefined {
   if (!value) return undefined
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? undefined : date.toISOString()
+  return Number.isNaN(date.getTime()) ? undefined : date
+}
+
+export function startOfLocalDayIso(date: Date): string {
+  const next = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  return next.toISOString()
+}
+
+export function endOfLocalDayIso(date: Date): string {
+  const next = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999)
+  return next.toISOString()
 }
 
 export function presetTimeRange(
