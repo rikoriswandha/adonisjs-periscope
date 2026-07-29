@@ -23,9 +23,9 @@
     "security:production": "npm -w @rikology/adonisjs-periscope run build && npm -w playground run migrate && npm -w playground run security:production",
     "security": "npm run security:audit && npm run security:production",
     "format": "prettier --write .",
-    "release": "npm run pack:test && npm -w @rikology/adonisjs-periscope run release",
+    "release": "npm run pack:test && node scripts/release.mjs",
     "pack:test": "node scripts/verify-pack.mjs",
-    "release:dry": "npm -w @rikology/adonisjs-periscope exec -- release-it --dry-run"
+    "release:dry": "node scripts/release.mjs --dry-run"
   },
   "devDependencies": {
     "@adonisjs/prettier-config": "^1.5.0",

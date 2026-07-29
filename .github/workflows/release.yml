@@ -13,6 +13,11 @@ on:
           - minor
           - major
         default: ''
+      provenance:
+        description: Publish with npm provenance (disable for registries without OIDC)
+        required: false
+        type: boolean
+        default: true
 
 concurrency:
   group: release-main
@@ -50,11 +55,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_PROVENANCE: 'true'
+          NPM_CONFIG_PROVENANCE: ${{ inputs.provenance }}
         run: |
           npm run pack:test
           if [ -n "${{ inputs.increment }}" ]; then
-            npm -w @rikology/adonisjs-periscope exec -- release-it "${{ inputs.increment }}" --ci
+            node scripts/release.mjs "${{ inputs.increment }}" --ci
           else
-            npm -w @rikology/adonisjs-periscope exec -- release-it --ci
+            node scripts/release.mjs --ci
           fi

@@ -65,7 +65,7 @@
     "test": "node --import=@poppinss/ts-exec --enable-source-maps bin/test.ts",
     "bench:overhead": "node --import=@poppinss/ts-exec --enable-source-maps tests/bench/overhead.bench.ts",
     "format": "prettier --write .",
-    "release": "release-it"
+    "release": "node ../../scripts/release.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0"

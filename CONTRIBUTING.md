@@ -208,7 +208,11 @@ Publish only `@rikology/adonisjs-periscope`. Prefer conventional commits (`feat:
 ```sh
 npm run release:dry    # preview changelog and next version
 npm run release        # pack check, bump, changelog, tag, GitHub release, npm publish
+
+# Disable provenance for Verdaccio or other non-OIDC registries
+NPM_CONFIG_PROVENANCE=false npm run release
 ```
 
-CI can also publish through the **Release** workflow (`workflow_dispatch`). Do not hand-edit
-`packages/periscope/package.json` version or `CHANGELOG.md` for a normal release.
+CI can also publish through the **Release** workflow (`workflow_dispatch`), including a provenance
+toggle. Do not hand-edit `packages/periscope/package.json` version or `CHANGELOG.md` for a normal
+release.

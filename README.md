@@ -492,19 +492,24 @@ review requirements, and benchmark gates.
 ## Release policy
 
 Releases use [release-it](https://github.com/release-it/release-it) with conventional commits and
-publish `@rikology/adonisjs-periscope` with npm provenance. CI builds a real tarball and rejects it
-unless the provider, package entry point, dashboard HTML, and hashed dashboard assets are present.
-The compatibility matrix covers the oldest supported and latest AdonisJS 7 and Lucid 22 releases.
+publish `@rikology/adonisjs-periscope` with npm provenance by default. CI builds a real tarball and
+rejects it unless the provider, package entry point, dashboard HTML, and hashed dashboard assets are
+present. The compatibility matrix covers the oldest supported and latest AdonisJS 7 and Lucid 22
+releases.
 
 From a clean `main` branch:
 
 ```sh
 npm run release        # interactive bump, changelog, tag, GitHub release, npm publish
 npm run release:dry    # preview without writing or publishing
+
+# Registries without OIDC provenance (e.g. Verdaccio):
+NPM_CONFIG_PROVENANCE=false npm run release
 ```
 
-Or run the **Release** GitHub Action (`workflow_dispatch`) and optionally choose patch/minor/major.
-With no increment selected, release-it picks the bump from conventional commits since the last tag.
+Or run the **Release** GitHub Action (`workflow_dispatch`) and optionally choose patch/minor/major
+and whether to publish with provenance. With no increment selected, release-it picks the bump from
+conventional commits since the last tag.
 
 ## License
 
