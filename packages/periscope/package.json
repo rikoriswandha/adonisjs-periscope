@@ -64,7 +64,8 @@
     "build": "npm run clean && npm run compile",
     "test": "node --import=@poppinss/ts-exec --enable-source-maps bin/test.ts",
     "bench:overhead": "node --import=@poppinss/ts-exec --enable-source-maps tests/bench/overhead.bench.ts",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "release": "release-it"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0"
@@ -152,5 +153,30 @@
     "pg": "^8.22.0",
     "typescript": "~6.0.3"
   },
-  "prettier": "@adonisjs/prettier-config"
+  "prettier": "@adonisjs/prettier-config",
+  "release-it": {
+    "git": {
+      "requireCleanWorkingDir": true,
+      "requireUpstream": true,
+      "commitMessage": "chore(release): ${version}",
+      "tagAnnotation": "v${version}",
+      "push": true,
+      "tagName": "v${version}"
+    },
+    "github": {
+      "release": true
+    },
+    "npm": {
+      "publish": true,
+      "skipChecks": true
+    },
+    "plugins": {
+      "@release-it/conventional-changelog": {
+        "preset": {
+          "name": "angular"
+        },
+        "infile": "CHANGELOG.md"
+      }
+    }
+  }
 }

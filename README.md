@@ -491,13 +491,20 @@ review requirements, and benchmark gates.
 
 ## Release policy
 
-Releases use Changesets and publish the `@rikology/adonisjs-periscope` package from GitHub Actions with npm
-provenance. CI builds a real tarball and rejects it unless the provider, package entry point,
-dashboard HTML, and hashed dashboard assets are present. The compatibility matrix covers the
-oldest supported and latest AdonisJS 7 and Lucid 22 releases.
+Releases use [release-it](https://github.com/release-it/release-it) with conventional commits and
+publish `@rikology/adonisjs-periscope` with npm provenance. CI builds a real tarball and rejects it
+unless the provider, package entry point, dashboard HTML, and hashed dashboard assets are present.
+The compatibility matrix covers the oldest supported and latest AdonisJS 7 and Lucid 22 releases.
 
-Every user-facing change requires `npm run changeset`; the release PR owns versioning, and merging
-it owns publication.
+From a clean `main` branch:
+
+```sh
+npm run release        # interactive bump, changelog, tag, GitHub release, npm publish
+npm run release:dry    # preview without writing or publishing
+```
+
+Or run the **Release** GitHub Action (`workflow_dispatch`) and optionally choose patch/minor/major.
+With no increment selected, release-it picks the bump from conventional commits since the last tag.
 
 ## License
 

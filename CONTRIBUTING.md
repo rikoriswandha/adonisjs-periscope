@@ -198,3 +198,17 @@ Keep a change reviewable and state:
 
 Do not commit generated `build`, playground `tmp`, SQLite, coverage, or benchmark scratch files.
 Dashboard assets are produced by the release build and verified from the package output.
+
+
+## Releases
+
+Publish only `@rikology/adonisjs-periscope`. Prefer conventional commits (`feat:`, `fix:`,
+`perf:`, breaking changes with `BREAKING CHANGE:`) so release-it can choose the next version.
+
+```sh
+npm run release:dry    # preview changelog and next version
+npm run release        # pack check, bump, changelog, tag, GitHub release, npm publish
+```
+
+CI can also publish through the **Release** workflow (`workflow_dispatch`). Do not hand-edit
+`packages/periscope/package.json` version or `CHANGELOG.md` for a normal release.

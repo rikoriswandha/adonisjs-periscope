@@ -23,16 +23,16 @@
     "security:production": "npm -w @rikology/adonisjs-periscope run build && npm -w playground run migrate && npm -w playground run security:production",
     "security": "npm run security:audit && npm run security:production",
     "format": "prettier --write .",
-    "changeset": "changeset",
-    "version-packages": "changeset version",
-    "release": "npm run pack:test && changeset publish",
-    "pack:test": "node scripts/verify-pack.mjs"
+    "release": "npm run pack:test && npm -w @rikology/adonisjs-periscope run release",
+    "pack:test": "node scripts/verify-pack.mjs",
+    "release:dry": "npm -w @rikology/adonisjs-periscope exec -- release-it --dry-run"
   },
   "devDependencies": {
     "@adonisjs/prettier-config": "^1.5.0",
-    "@changesets/cli": "^2.29.7",
+    "@release-it/conventional-changelog": "^12.0.0",
     "eslint": "^10.4.0",
     "prettier": "^3.8.3",
+    "release-it": "^21.0.0",
     "typescript": "~6.0.3"
   },
   "prettier": "@adonisjs/prettier-config"
