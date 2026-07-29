@@ -15,6 +15,9 @@ export type CommandEntryContent = {
   isMain: boolean
   exitCode: number
   durationMs: number
+  /**
+   * Bounded, redacted text rendered through the command's Ace UI.
+   */
   output?: string
   error?: unknown
 }

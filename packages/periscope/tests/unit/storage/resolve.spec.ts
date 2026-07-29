@@ -22,6 +22,7 @@ import { MemoryStore } from '../../../src/storage/memory_store.ts'
 import { SqliteLocalStore } from '../../../src/storage/sqlite_local_store.ts'
 import { PeriscopeStorageError } from '../../../src/errors.ts'
 import { makeStoredEntry } from '../../storage/contract.ts'
+import { createApp } from '../../helpers/app_factory.ts'
 import type { DatabaseConfig } from '@adonisjs/lucid/types/database'
 import type { PeriscopeStore, ResolvedPeriscopeConfig } from '../../../src/types.ts'
 import type { StoreContext } from '../../../src/storage/resolve.ts'
@@ -33,12 +34,13 @@ import type { StoreContext } from '../../../src/storage/resolve.ts'
  */
 async function createContext(): Promise<StoreContext & { root: string }> {
   const root = await mkdtemp(join(tmpdir(), 'periscope-resolve-'))
+  const { app } = await createApp()
 
   getActiveTest()?.cleanup(async () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  return { root, tmpPath: (...paths: string[]) => join(root, ...paths) }
+  return { root, app, tmpPath: (...paths: string[]) => join(root, ...paths) }
 }
 
 /**
@@ -235,6 +237,33 @@ test.group('createStore | database', () => {
      * must not pay for one just because Lucid happens to be installed.
      */
     assert.equal(resolved, 0)
+  })
+})
+
+test.group('createStore | custom', () => {
+  test('resolve a custom store factory with the application and resolved config', async ({
+    assert,
+  }) => {
+    const context = await createContext()
+    const customStore = new MemoryStore()
+    let received:
+      Parameters<NonNullable<ResolvedPeriscopeConfig['storage']['factory']>>[0] | undefined
+    const config = defineConfig({
+      storage: {
+        driver: 'custom',
+        factory: async (factoryContext) => {
+          received = factoryContext
+          return customStore
+        },
+      },
+    })
+
+    const store = await createStore(config, context)
+    closeAfterTest(store)
+
+    assert.strictEqual(store, customStore)
+    assert.strictEqual(received?.app, context.app)
+    assert.strictEqual(received?.config, config)
   })
 })
 

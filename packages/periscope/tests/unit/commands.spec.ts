@@ -6,14 +6,20 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { getActiveTest, test } from '@japa/runner'
 import { Kernel } from '@adonisjs/core/ace'
 
 import PeriscopeClear from '../../commands/clear.ts'
+import PeriscopeExport from '../../commands/export.ts'
 import PeriscopePause from '../../commands/pause.ts'
 import PeriscopePrune from '../../commands/prune.ts'
 import PeriscopeResume from '../../commands/resume.ts'
+import { ensureDurableStorage } from '../../commands/_ensure_durable_storage.ts'
+import { serializeBatchExport } from '../../src/batch_export.ts'
 import { defineConfig } from '../../src/define_config.ts'
 import { IncomingEntry } from '../../src/entry.ts'
 import { BatchScope } from '../../src/recorder/context.ts'
@@ -149,6 +155,22 @@ test.group('Periscope commands', () => {
     assert.isNull(await recorder.store.find(query.uuid))
   })
 
+  test('scope pruning to the selected application', async ({ assert }) => {
+    const { kernel, recorder } = await createHarness()
+    const createdAt = new Date(Date.now() - 25 * 60 * 60 * 1_000)
+    const alpha = makeStoredEntry({ application: 'alpha', createdAt })
+    const beta = makeStoredEntry({ application: 'beta', createdAt })
+    await recorder.store.save([alpha, beta])
+
+    const command = await kernel.create(PeriscopePrune, ['--hours=24', '--application=alpha'])
+    await command.exec()
+
+    command.assertSucceeded()
+    assert.equal(command.application, 'alpha')
+    assert.isNull(await recorder.store.find(alpha.uuid))
+    assert.deepEqual(await recorder.store.find(beta.uuid), beta)
+  })
+
   test('reject invalid --hours values without touching the store', async ({ assert }) => {
     for (const hours of ['0', '-1', 'Infinity']) {
       const { kernel, recorder } = await createHarness()
@@ -194,6 +216,75 @@ test.group('Periscope commands', () => {
     assert.isNull(await recorder.store.find(entry.uuid))
     assert.deepEqual(await recorder.store.monitoredTags(), ['important'])
     assert.equal(await recorder.store.getFlag(Flag.PAUSED), '1')
+  })
+
+  test('scope clearing to the selected application', async ({ assert }) => {
+    const { kernel, recorder } = await createHarness()
+    const alpha = makeStoredEntry({ application: 'alpha' })
+    const beta = makeStoredEntry({ application: 'beta' })
+    await recorder.store.save([alpha, beta])
+
+    const command = await kernel.create(PeriscopeClear, ['--application=alpha'])
+    await command.exec()
+
+    command.assertSucceeded()
+    command.assertLog(
+      command.logger.prepareSuccess('Cleared Periscope entries for application "alpha"'),
+      'stdout'
+    )
+    assert.equal(command.application, 'alpha')
+    assert.isNull(await recorder.store.find(alpha.uuid))
+    assert.deepEqual(await recorder.store.find(beta.uuid), beta)
+  })
+
+  test('export the versioned batch JSON to stdout through a muted store read', async ({
+    assert,
+  }) => {
+    const { kernel, recorder } = await createHarness()
+    const batchId = randomUUID()
+    const entry = makeStoredEntry({
+      batchId,
+      application: 'shop',
+      content: { method: 'GET', url: '/orders' },
+    })
+    await recorder.store.save([entry])
+
+    const muted: boolean[] = []
+    const batch = recorder.store.batch.bind(recorder.store)
+    recorder.store.batch = async (id) => {
+      muted.push(BatchScope.current()?.muted === true)
+      return batch(id)
+    }
+
+    const command = await kernel.create(PeriscopeExport, [`--batch=${batchId}`])
+    await command.exec()
+
+    const json = serializeBatchExport(batchId, [entry])
+    if (json === null) {
+      throw new Error('expected a non-empty batch export')
+    }
+
+    const directory = await mkdtemp(join(tmpdir(), 'periscope-export-'))
+    const out = join(directory, 'batch.json')
+    getActiveTest()?.cleanup(() => rm(directory, { force: true, recursive: true }))
+    const fileCommand = await kernel.create(PeriscopeExport, [`--batch=${batchId}`, `--out=${out}`])
+    await fileCommand.exec()
+
+    command.assertSucceeded()
+    command.assertLog(json, 'stdout')
+    fileCommand.assertSucceeded()
+    assert.equal(await readFile(out, 'utf8'), json)
+    assert.deepEqual(muted, [true, true])
+    assert.deepInclude(JSON.parse(json), {
+      format: 'periscope.batch',
+      version: 1,
+      batchId,
+      application: 'shop',
+    })
+    assert.deepInclude(PeriscopeExport.serialize(), {
+      commandName: 'periscope:export',
+      options: { startApp: true },
+    })
   })
 
   test('pause and resume idempotently through muted store operations', async ({ assert }) => {
@@ -254,12 +345,17 @@ test.group('Periscope commands', () => {
     recorder.store.deleteFlag = async () => {
       touched.push('resume')
     }
+    recorder.store.batch = async () => {
+      touched.push('export')
+      return []
+    }
 
     const commands = [
       await kernel.create(PeriscopePrune, []),
       await kernel.create(PeriscopeClear, []),
       await kernel.create(PeriscopePause, []),
       await kernel.create(PeriscopeResume, []),
+      await kernel.create(PeriscopeExport, ['--batch=test']),
     ]
 
     assert.equal(config.storage.driver, 'memory')
@@ -270,10 +366,19 @@ test.group('Periscope commands', () => {
       command.assertFailed()
       assert.instanceOf(command.error, Error)
       assert.include(command.error.message, 'storage.driver "memory"')
-      assert.include(command.error.message, 'Set storage.driver to "sqlite-local" or "database"')
+      assert.include(command.error.message, '"sqlite-local", "database", or a durable "custom"')
     }
 
     assert.deepEqual(touched, [])
+  })
+
+  test('allow maintenance commands with a custom durable store', async ({ assert }) => {
+    const config = defineConfig({
+      storage: { driver: 'custom', factory: () => new MemoryStore() },
+    })
+    const { app } = await createApp({ environment: 'console', config: { periscope: config } })
+
+    assert.doesNotThrow(() => ensureDurableStorage(app))
   })
 
   test('propagate pause and resume to an enabled recorder after one cache window', async ({

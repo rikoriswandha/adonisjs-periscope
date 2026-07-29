@@ -35,6 +35,7 @@ type ContextOptions = {
   query?: Record<string, unknown>
   payload?: Record<string, unknown>
   headers?: Record<string, string>
+  responseHeaders?: Record<string, string | string[]>
   status?: number
   headersSent?: boolean
   finished?: boolean
@@ -51,12 +52,17 @@ type ContextOptions = {
  * the unit under test behind unrelated resolver, logger and routing machinery.
  */
 function makeHttpContext(options: ContextOptions = {}): HttpContext {
+  const headers = options.headers ?? { accept: 'text/html' }
+  const responseHeaders = options.responseHeaders ?? {}
+
   const request: Record<string, unknown> = {
     method: () => options.method ?? 'GET',
     url: () => options.url ?? '/users/42',
     qs: () => options.query ?? {},
     all: () => options.payload ?? {},
-    headers: () => options.headers ?? { accept: 'application/json' },
+    headers: () => headers,
+    header: (name: string) =>
+      Object.entries(headers).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1],
     ip: () => '127.0.0.1',
     hostname: () => 'localhost',
   }
@@ -73,6 +79,10 @@ function makeHttpContext(options: ContextOptions = {}): HttpContext {
       headersSent: options.headersSent ?? true,
       finished: options.finished ?? true,
       getStatus: () => options.status ?? 200,
+      getHeader: (name: string) =>
+        Object.entries(responseHeaders).find(
+          ([key]) => key.toLowerCase() === name.toLowerCase()
+        )?.[1],
       hasContent: hasResponseBody,
       getBody: () => options.responseBody,
       hasStream: false,
@@ -91,11 +101,13 @@ type WatcherOptions = {
   dashboardPath?: string
   slowMs?: number
   captureResponse?: boolean
+  captureInertia?: boolean
   responseSizeLimitKb?: number
   captureSession?: boolean
   sampleRate?: number
   keepAlways?: KeepAlwaysHook
   monitoredTags?: string[]
+  ignorePaths?: string[]
 }
 
 async function makeWatcher(options: WatcherOptions = {}) {
@@ -111,8 +123,10 @@ async function makeWatcher(options: WatcherOptions = {}) {
       request: {
         slowMs: options.slowMs,
         captureResponse: options.captureResponse,
+        captureInertia: options.captureInertia,
         responseSizeLimitKb: options.responseSizeLimitKb,
         captureSession: options.captureSession,
+        ignorePaths: options.ignorePaths,
       },
     },
   })
@@ -138,11 +152,16 @@ function settleScheduledCompletion(): Promise<void> {
 }
 
 test.group('RequestWatcher', () => {
-  test('record one completed request with its final method, URL, status and duration', async ({
+  test('record one completed document request with its final method, URL, status and duration', async ({
     assert,
   }) => {
     const { emitter, middleware, store } = await makeWatcher()
-    const ctx = makeHttpContext({ method: 'POST', url: '/orders', status: 201 })
+    const ctx = makeHttpContext({
+      method: 'POST',
+      url: '/orders',
+      status: 201,
+      headers: { accept: 'text/html, application/json' },
+    })
     const downstreamValue = await middleware.handle(ctx, async () => 'controller result')
 
     assert.equal(downstreamValue, 'controller result')
@@ -156,6 +175,156 @@ test.group('RequestWatcher', () => {
     assert.equal(page.data[0].content.url, '/orders')
     assert.equal(page.data[0].content.status, 201)
     assert.equal(page.data[0].content.durationMs, 1_025)
+    assert.deepEqual(
+      page.data[0].tags.filter((tag) => tag.startsWith('kind:')),
+      ['kind:document']
+    )
+  })
+
+  test('classify an Inertia XHR as inertia by precedence', async ({ assert }) => {
+    const { emitter, middleware, store } = await makeWatcher()
+    const ctx = makeHttpContext({
+      headers: {
+        'X-Inertia': 'true',
+        'X-Requested-With': 'XMLHttpRequest',
+        'accept': 'application/json',
+      },
+    })
+
+    await middleware.handle(ctx, async () => {})
+    await emitter.emit('http:request_completed', { ctx, duration: [0, 1_000_000] })
+    await settleScheduledCompletion()
+
+    const page = await store.list({ type: EntryType.REQUEST })
+    assert.deepEqual(
+      page.data[0].tags.filter((tag) => tag.startsWith('kind:')),
+      ['kind:inertia']
+    )
+  })
+
+  test('summarize captured Inertia JSON without retaining prop values in the summary', async ({
+    assert,
+  }) => {
+    const { emitter, middleware, store } = await makeWatcher()
+    const ctx = makeHttpContext({
+      responseHeaders: { 'X-Inertia': 'true' },
+      responseBody: {
+        component: 'Users/Show',
+        props: { user: { email: 'private@example.test' }, flash: 'private message' },
+        url: '/users/42',
+      },
+    })
+
+    await middleware.handle(ctx, async () => {})
+    await emitter.emit('http:request_completed', { ctx, duration: [0, 1_000_000] })
+    await settleScheduledCompletion()
+
+    const page = await store.list({ type: EntryType.REQUEST })
+    assert.deepEqual(page.data[0].content.inertia, {
+      component: 'Users/Show',
+      propKeys: ['user', 'flash'],
+    })
+  })
+
+  test('omit Inertia metadata for ordinary JSON responses and when extraction is disabled', async ({
+    assert,
+  }) => {
+    const ordinary = await makeWatcher()
+    const ordinaryContext = makeHttpContext({
+      responseBody: { component: 'Users/Show', props: { user: 'private' } },
+    })
+    await ordinary.middleware.handle(ordinaryContext, async () => {})
+    await ordinary.emitter.emit('http:request_completed', {
+      ctx: ordinaryContext,
+      duration: [0, 1_000_000],
+    })
+    await settleScheduledCompletion()
+
+    const disabled = await makeWatcher({ captureInertia: false })
+    const disabledContext = makeHttpContext({
+      responseHeaders: { 'X-Inertia': 'true' },
+      responseBody: { component: 'Users/Show', props: { user: 'private' } },
+    })
+    await disabled.middleware.handle(disabledContext, async () => {})
+    await disabled.emitter.emit('http:request_completed', {
+      ctx: disabledContext,
+      duration: [0, 1_000_000],
+    })
+    await settleScheduledCompletion()
+
+    const ordinaryPage = await ordinary.store.list({ type: EntryType.REQUEST })
+    const disabledPage = await disabled.store.list({ type: EntryType.REQUEST })
+    assert.notProperty(ordinaryPage.data[0].content, 'inertia')
+    assert.notProperty(disabledPage.data[0].content, 'inertia')
+  })
+
+  test('classify static paths and asset response content types as assets before XHR', async ({
+    assert,
+  }) => {
+    const { emitter, middleware, store } = await makeWatcher()
+    const pathAsset = makeHttpContext({
+      url: '/build/app.mjs?version=42',
+      headers: { accept: 'application/json' },
+    })
+    const contentTypeAsset = makeHttpContext({
+      url: '/avatar',
+      headers: { 'x-requested-with': 'XMLHttpRequest' },
+      responseHeaders: { 'Content-Type': 'image/png; charset=utf-8' },
+    })
+
+    await middleware.handle(pathAsset, async () => {})
+    await emitter.emit('http:request_completed', {
+      ctx: pathAsset,
+      duration: [0, 1_000_000],
+    })
+    await middleware.handle(contentTypeAsset, async () => {})
+    await emitter.emit('http:request_completed', {
+      ctx: contentTypeAsset,
+      duration: [0, 1_000_000],
+    })
+    await settleScheduledCompletion()
+
+    const page = await store.list({ type: EntryType.REQUEST })
+    assert.lengthOf(page.data, 2)
+    for (const entry of page.data) {
+      assert.deepEqual(
+        entry.tags.filter((tag) => tag.startsWith('kind:')),
+        ['kind:asset']
+      )
+    }
+  })
+
+  test('classify both X-Requested-With and JSON-first Accept requests as XHR', async ({
+    assert,
+  }) => {
+    const { emitter, middleware, store } = await makeWatcher()
+    const requestedWith = makeHttpContext({
+      headers: { 'x-requested-with': 'XmlHttpRequest' },
+    })
+    const acceptsJson = makeHttpContext({
+      headers: { accept: 'Application/JSON; q=0.9, text/html' },
+    })
+
+    await middleware.handle(requestedWith, async () => {})
+    await emitter.emit('http:request_completed', {
+      ctx: requestedWith,
+      duration: [0, 1_000_000],
+    })
+    await middleware.handle(acceptsJson, async () => {})
+    await emitter.emit('http:request_completed', {
+      ctx: acceptsJson,
+      duration: [0, 1_000_000],
+    })
+    await settleScheduledCompletion()
+
+    const page = await store.list({ type: EntryType.REQUEST })
+    assert.lengthOf(page.data, 2)
+    for (const entry of page.data) {
+      assert.deepEqual(
+        entry.tags.filter((tag) => tag.startsWith('kind:')),
+        ['kind:xhr']
+      )
+    }
   })
 
   test('refuse and mute dashboard requests instead of re-homing their entries as ambient', async ({
@@ -179,6 +348,32 @@ test.group('RequestWatcher', () => {
 
     const page = await store.list()
     assert.lengthOf(page.data, 0)
+  })
+
+  test('ignore anchored request path globs and mute their nested entries', async ({ assert }) => {
+    const { emitter, middleware, recorder, store } = await makeWatcher({
+      ignorePaths: ['/assets/*'],
+    })
+    const ignored = makeHttpContext({ url: '/assets/app.js?version=42' })
+
+    await middleware.handle(ignored, async () => {
+      recorder.record(IncomingEntry.make(EntryType.QUERY, { sql: 'select ignored asset' }))
+    })
+    await emitter.emit('http:request_completed', { ctx: ignored, duration: [0, 1_000_000] })
+
+    assert.isTrue(isIgnoredRequest(ignored))
+    assert.isUndefined(findRequestBatch(ignored))
+
+    const recorded = makeHttpContext({ url: '/assets-other' })
+    await middleware.handle(recorded, async () => {})
+    await emitter.emit('http:request_completed', { ctx: recorded, duration: [0, 1_000_000] })
+    await settleScheduledCompletion()
+    await recorder.flush()
+
+    const page = await store.list()
+    assert.lengthOf(page.data, 1)
+    assert.equal(page.data[0].type, EntryType.REQUEST)
+    assert.equal(page.data[0].content.url, '/assets-other')
   })
 
   test('treat a root-mounted dashboard as covering every request path', async ({ assert }) => {
@@ -218,7 +413,9 @@ test.group('RequestWatcher', () => {
     })
   })
 
-  test('tag status, method and the inclusive slow-threshold boundary', async ({ assert }) => {
+  test('tag status, status class, method and the inclusive slow-threshold boundary', async ({
+    assert,
+  }) => {
     const { emitter, middleware, store } = await makeWatcher({ slowMs: 10 })
     const ctx = makeHttpContext({ method: 'PATCH', status: 422 })
 
@@ -227,7 +424,7 @@ test.group('RequestWatcher', () => {
     await settleScheduledCompletion()
 
     const page = await store.list({ type: EntryType.REQUEST })
-    assert.includeMembers(page.data[0].tags, ['status:422', 'method:PATCH', 'slow'])
+    assert.includeMembers(page.data[0].tags, ['status:422', 'status:4xx', 'method:PATCH', 'slow'])
   })
 
   test('consume a parked batch exactly once when completion is emitted twice', async ({

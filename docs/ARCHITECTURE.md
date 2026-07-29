@@ -38,11 +38,14 @@ host signal -> watcher -> IncomingEntry -> Recorder -> PeriscopeStore -> JSON/SS
    or dashboard hooks are installed.
 2. Construct the configured store and bind the `Recorder` class as a container singleton. The
    `@rikology/adonisjs-periscope/services/recorder` subpath resolves that same class binding.
-3. Register the enabled watchers from `src/watchers/registry.ts`. Optional integrations (Lucid,
-   Mail, Cache, Bouncer, Redis, Session, BullMQ) register only when the host package is
-   installed and the watcher is enabled.
+3. Register the enabled watchers from `src/watchers/registry.ts`, followed by any
+   `watchers.custom` factories. Optional integrations (Lucid, Mail, Cache, Bouncer, Edge,
+   health checks, Transmit, Redis, Session, BullMQ, `@adonisjs/queue`) register only when the
+   host package is installed and the watcher is enabled.
 4. Mount the dashboard routes and authorization middleware below `dashboard.path`.
-5. On shutdown, clean up watchers, flush pending work, and close the store.
+5. When `storage.retention` is configured, start an unref'd prune interval after ready.
+6. On shutdown, stop the retention timer, clean up watchers, flush pending work, and close the
+   store.
 
 The `configure.ts` hook (run by `node ace add @rikology/adonisjs-periscope`) publishes the config stub,
 registers the provider, inserts the request middleware first in the server middleware stack,
@@ -71,9 +74,12 @@ Signal sources by watcher:
 | `gate`         | Bouncer authorization events                                  |
 | `dump`         | The exported `dump()` helper                                  |
 | `http_client`  | Node diagnostics channel for Undici                           |
-| `job_schedule` | Pluggable `QueueWatcherAdapter` instances; `bull_queue_adapter.ts` observes BullMQ via `QueueEvents` |
+| `view`         | Edge `onRender` renderer hook                                 |
+| `health_check` | Patched `HealthChecks.prototype.run` from `@adonisjs/core`    |
+| `job_schedule` | Pluggable `QueueWatcherAdapter` instances; `bull_queue_adapter.ts` observes BullMQ via `QueueEvents`, `adonis_queue_adapter.ts` observes `@adonisjs/queue` tracing channels |
 | `redis`        | `@adonisjs/redis` diagnostics channel                         |
 | `session`      | `@adonisjs/session` lifecycle events                          |
+| `transmit`     | `@adonisjs/transmit` `on('broadcast')` hook plus a patched `broadcastExcept` |
 
 The HTTP client watcher only *observes* diagnostics events; the package itself has no outbound
 network capability, and CI lints package source against network APIs.
@@ -106,7 +112,8 @@ commands run in a muted scope so Periscope never records its own work.
 ## Storage
 
 `src/storage/` provides three implementations of the single `PeriscopeStore` contract
-(save/find/list, counts, exception grouping, clear/prune, monitored tags, flags, `close()`):
+(save/find/list, counts, exception grouping, clear/prune, monitored tags, flags, `close()`),
+plus a `custom` driver that delegates construction to `storage.factory`:
 
 | Store              | File                    | Notes                                                    |
 | ------------------ | ----------------------- | -------------------------------------------------------- |
@@ -114,18 +121,23 @@ commands run in a muted scope so Periscope never records its own work.
 | `SqliteLocalStore` | `sqlite_local_store.ts` | Dedicated `better-sqlite3` database, WAL mode, chunked and indexed operations; no Lucid dependency |
 | `DatabaseStore`    | `database_store.ts`     | Any supported Lucid connection using the package migration (`database_schema.ts`) |
 
-All stores enforce `storage.maxEntries` and share ordering, pagination, tag, flag, clear, and
-prune semantics — the storage test suite runs the same contract against each driver. Every row
-carries `applicationName`, which lets one shared database serve several applications with
-scoped counts, exception groups, and clears.
+All stores enforce `storage.maxEntries` and share ordering, pagination, tag, text-search,
+time-range, flag, clear, and prune semantics — the storage test suite runs the same contract
+against each driver. `SqliteLocalStore` accelerates text search with a trigger-maintained
+trigram FTS5 index and falls back to escaped `LIKE`; the other drivers scan or `LIKE` portably.
+Every row carries `applicationName`, which lets one shared database serve several applications
+with scoped counts, exception groups, clears, and prunes.
 
 ## HTTP layer and dashboard
 
 `src/http/routes.ts` mounts everything below `dashboard.path`:
 
 - `controllers/entries_controller.ts`, `exception_groups_controller.ts`, and
-  `monitored_tags_controller.ts` serve the JSON API.
-- `stream_controller.ts` serves the SSE live feed with a connection cap.
+  `monitored_tags_controller.ts` serve the JSON API, including text/time-range/multi-tag entry
+  filters, single-entry lookup, and batch export; `dashboard_controller.ts` serves status,
+  counts, flags, clear, and the bounded `GET /api/stats` overview aggregates.
+- `stream_controller.ts` serves the SSE live feed with a configurable connection cap
+  (`dashboard.sseMaxClients`).
 - `static_controller.ts` serves the built dashboard assets with path-traversal protection.
 - `middleware/authorize.ts` re-runs the environment gate and `dashboard.authorize` on every
   JSON request and each SSE connection. A denied or disabled request reveals no asset or API
@@ -138,10 +150,12 @@ iframe with an empty `sandbox` and a `no-referrer` policy.
 
 ## Commands
 
-`commands/` provides `periscope:clear`, `periscope:prune`, `periscope:pause`, and
-`periscope:resume`. They boot the application, operate on the configured store, and keep their
-own work out of the recorded timeline. Pause state is persisted through the store and expires
-unless refreshed; `_ensure_durable_storage.ts` guards commands that require a durable driver.
+`commands/` provides `periscope:clear`, `periscope:prune`, `periscope:export`,
+`periscope:pause`, and `periscope:resume`. They boot the application, operate on the configured
+store, and keep their own work out of the recorded timeline. Clear and prune accept
+`--application` scoping; export writes versioned `periscope.batch` JSON. Pause state is
+persisted through the store until resumed; `_ensure_durable_storage.ts` guards commands that
+require a durable driver.
 
 ## Design invariants
 
@@ -151,7 +165,8 @@ The load-bearing rules, enforced by tests and CI (see CONTRIBUTING for the full 
 2. Disabled means inert — the gate is evaluated before any construction or hook installation.
 3. Correlation is batch-wide, and sampling is decided once per batch.
 4. Values are redacted and bounded before they enter recorder memory.
-5. Retention is bounded by per-batch caps and `storage.maxEntries`.
+5. Retention is bounded by per-batch caps, `storage.maxEntries`, and optional age-based
+   `storage.retention` pruning.
 6. Periscope never records itself.
 7. All stores obey one portable contract.
 8. Every dashboard request is authorized individually.

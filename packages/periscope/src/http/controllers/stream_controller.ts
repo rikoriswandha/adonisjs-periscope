@@ -13,7 +13,7 @@ import type { HttpContext } from '@adonisjs/core/http'
 import type { Recorder } from '../../recorder/recorder.ts'
 import type { FlushedEvent } from '../../types.ts'
 
-const MAX_STREAM_CLIENTS = 5
+const DEFAULT_MAX_STREAM_CLIENTS = 5
 const KEEPALIVE_INTERVAL_MS = 15_000
 const CONNECTED_FRAME = ': connected\n\n'
 const KEEPALIVE_FRAME = ': keepalive\n\n'
@@ -24,21 +24,35 @@ type StreamClient = {
   disconnect: () => void
 }
 
+type StreamControllerOptions = {
+  keepaliveIntervalMs?: number
+  maxClients?: number
+}
+
 /**
- * Fans recorder flush notifications out to the bounded set of live dashboard connections.
+ * Fans recorder flush events out to the bounded set of live dashboard connections.
  */
 export class StreamController {
   readonly #clients = new Set<StreamClient>()
   #unsubscribeFlushed?: () => void
   #keepalive?: NodeJS.Timeout
+  readonly #keepaliveIntervalMs: number
+  readonly #maxClients: number
 
   constructor(
     private readonly recorder: Pick<Recorder, 'subscribeFlushed'>,
-    private readonly keepaliveIntervalMs = KEEPALIVE_INTERVAL_MS
-  ) {}
+    options: number | StreamControllerOptions = {}
+  ) {
+    this.#keepaliveIntervalMs =
+      typeof options === 'number' ? options : (options.keepaliveIntervalMs ?? KEEPALIVE_INTERVAL_MS)
+    this.#maxClients =
+      typeof options === 'number'
+        ? DEFAULT_MAX_STREAM_CLIENTS
+        : (options.maxClients ?? DEFAULT_MAX_STREAM_CLIENTS)
+  }
 
   stream({ request, response }: HttpContext): void {
-    if (this.#clients.size >= MAX_STREAM_CLIENTS) {
+    if (this.#clients.size >= this.#maxClients) {
       response.header('Retry-After', '5')
       response.tooManyRequests({ error: 'Too many active Periscope stream clients' })
       return
@@ -98,7 +112,7 @@ export class StreamController {
     if (this.#keepalive === undefined) {
       this.#keepalive = setInterval(
         () => this.#writeFrame(KEEPALIVE_FRAME),
-        this.keepaliveIntervalMs
+        this.#keepaliveIntervalMs
       )
       this.#keepalive.unref()
     }

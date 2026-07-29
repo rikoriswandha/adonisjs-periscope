@@ -126,7 +126,7 @@ export function createPeriscopeTables(schema: PeriscopeSchemaBuilder): Periscope
     table.index(['batch_id', 'sequence', 'uuid'], 'periscope_entries_batch_id_index')
     table.index(['family_hash'], 'periscope_entries_family_hash_index')
 
-    // Pruning's only predicate.
+    // Shared by pruning and inclusive created-at range filters.
     table.index(['created_at'], 'periscope_entries_created_at_index')
   })
 
@@ -156,8 +156,8 @@ export function createPeriscopeTables(schema: PeriscopeSchemaBuilder): Periscope
     table.string('name', FLAG_NAME_LENGTH).notNullable().primary()
     table.text('value').notNullable()
 
-    // Epoch milliseconds, nullable for a flag that never expires. Expiry is evaluated lazily on
-    // read, so nothing sweeps this column.
+    // Epoch milliseconds, nullable for a flag that never expires. Expiry is evaluated on read
+    // and swept opportunistically by read, trim, and prune maintenance.
     table.bigint('expires_at').nullable()
   })
 

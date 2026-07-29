@@ -23,8 +23,10 @@
  */
 
 import type { HttpContext } from '@adonisjs/core/http'
+import type { ApplicationService } from '@adonisjs/core/types'
 
 import type { IncomingEntry } from './entry.ts'
+import type { WatcherContext } from './watchers/context.ts'
 
 /**
  * Every kind of entry Periscope can record. Watchers are added across phases 1 to 6, but the
@@ -43,10 +45,12 @@ export const EntryType = {
   MODEL: 'model',
   GATE: 'gate',
   DUMP: 'dump',
+  VIEW: 'view',
   HTTP_CLIENT: 'http_client',
   SCHEDULE: 'schedule',
   JOB: 'job',
-  NOTIFICATION: 'notification',
+  HEALTH_CHECK: 'health_check',
+  BROADCAST: 'broadcast',
   REDIS: 'redis',
   SESSION: 'session',
 } as const
@@ -232,6 +236,22 @@ export type EntryQuery = {
    * Exact tag match, for example `status:500` or `Auth:42`.
    */
   tag?: string
+  /**
+   * Exact tags an entry must carry. Multiple tags use AND semantics. When `tag` is also set, it
+   * is merged into this list.
+   */
+  tags?: string[]
+
+  /**
+   * Case-insensitive substring search over the serialized entry content.
+   */
+  text?: string
+
+  /**
+   * Inclusive ISO-datetime bounds on `createdAt`.
+   */
+  from?: string
+  to?: string
 
   familyHash?: string
   batchId?: string
@@ -312,6 +332,11 @@ export type PruneOptions = {
    * Never delete `exception` entries, however old. Backs `periscope:prune --keep-exceptions`.
    */
   keepExceptions?: boolean
+
+  /**
+   * Delete only entries owned by this application. Omit to prune every application.
+   */
+  application?: string
 }
 
 /**
@@ -434,17 +459,32 @@ export interface PeriscopeStore {
    */
   close(): Promise<void>
 }
+/**
+ * Values available when an application-defined storage factory is invoked.
+ */
+export type PeriscopeStoreFactoryContext = {
+  app: ApplicationService
+  config: ResolvedPeriscopeConfig
+}
 
 /**
- * Names of the shipped storage drivers.
+ * Builds an application-defined storage driver during provider boot.
+ */
+export type PeriscopeStoreFactory = (
+  context: PeriscopeStoreFactoryContext
+) => PeriscopeStore | Promise<PeriscopeStore>
+
+/**
+ * Storage driver selectors: three shipped drivers plus the application-defined extension seam.
  *
  * - `memory` — ring buffer, lost on restart. The zero-dependency driver and the test double.
  * - `sqlite-local` — a dedicated better-sqlite3 file under `tmp/`. The zero-config default:
  *   durable across restarts without touching the application's own database.
  * - `database` — the application's own Lucid connection. Requires `@adonisjs/lucid`, its
  *   provider registered, and the Periscope tables created by the shipped migration.
+ * - `custom` — an application-defined durable store returned by `storage.factory`.
  */
-export type StorageDriverName = 'memory' | 'sqlite-local' | 'database'
+export type StorageDriverName = 'memory' | 'sqlite-local' | 'database' | 'custom'
 
 /**
  * Well-known flag names, so the recorder, the commands and the dashboard agree on spelling.
@@ -495,6 +535,7 @@ export type QueueJobEvent = {
   payload?: unknown
   attempts?: number
   scheduledAt?: Date
+  durationMs?: number
 }
 
 export type QueueJobResult = QueueJobEvent & {
@@ -508,11 +549,18 @@ export interface QueueWatcherObserver {
   failed(event: QueueJobResult): void
   scheduled(event: QueueJobEvent): void
 }
+export type QueueWatcherRegistrationOptions = {
+  /**
+   * Include application-owned job payloads and completed results in lifecycle events.
+   */
+  capturePayload: boolean
+}
 
 export interface QueueWatcherAdapter {
   readonly name: string
   register(
-    observer: QueueWatcherObserver
+    observer: QueueWatcherObserver,
+    options?: QueueWatcherRegistrationOptions
   ): void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
 }
 
@@ -538,6 +586,10 @@ export interface Watcher {
    */
   cleanup?(): void | Promise<void>
 }
+/**
+ * Builds an application-defined watcher from the same dependency object as shipped watchers.
+ */
+export type PeriscopeWatcherFactory = (context: WatcherContext) => Watcher
 
 /**
  * The shipped watcher catalogue. Each value is also the watcher's config key and its
@@ -555,8 +607,11 @@ export const WatcherName = {
   MODEL: 'model',
   GATE: 'gate',
   DUMP: 'dump',
+  VIEW: 'view',
   HTTP_CLIENT: 'http_client',
   JOB_SCHEDULE: 'job_schedule',
+  HEALTH_CHECK: 'health_check',
+  TRANSMIT: 'transmit',
   REDIS: 'redis',
   SESSION: 'session',
 } as const
@@ -588,6 +643,12 @@ export type WatchersConfig = {
     enabled?: boolean
 
     /**
+     * Request URL paths to ignore. A `*` matches any run of characters, so `/assets/*` drops
+     * requests below that directory.
+     */
+    ignorePaths?: string[]
+
+    /**
      * Requests at or above this many milliseconds are tagged `slow`. Defaults to 1 000.
      */
     slowMs?: number
@@ -597,6 +658,12 @@ export type WatchersConfig = {
      * file downloads are recorded as a marker. Defaults to `true`.
      */
     captureResponse?: boolean
+
+    /**
+     * Extract the Inertia component and top-level prop names from captured JSON responses.
+     * Response capture must also be enabled. Defaults to `true`.
+     */
+    captureInertia?: boolean
 
     /**
      * Ceiling on the stored response preview, in kilobytes. Defaults to 64.
@@ -667,6 +734,11 @@ export type WatchersConfig = {
      * Command names to ignore in addition to Periscope's own commands.
      */
     ignore?: string[]
+
+    /**
+     * Capture the text rendered through Ace's UI logger. Defaults to `true`.
+     */
+    captureOutput?: boolean
   }
 
   mail?: {
@@ -704,12 +776,41 @@ export type WatchersConfig = {
     enabled?: boolean
   }
 
+  view?: {
+    enabled?: boolean
+
+    /**
+     * Capture top-level render data keys without reading their values. Defaults to `true`.
+     */
+    captureDataKeys?: boolean
+  }
+
   http_client?: {
     enabled?: boolean
+
+    /**
+     * Tag outbound requests taking at least this many milliseconds as slow. Defaults to 1000.
+     */
+    slowMs?: number
+  }
+  health_check?: {
+    enabled?: boolean
+  }
+  transmit?: {
+    enabled?: boolean
+
+    /**
+     * Capture broadcast payload summaries. Defaults to `false` because payloads are application
+     * data and may be sensitive.
+     */
+    capturePayload?: boolean
   }
   job_schedule?: {
     enabled?: boolean
     adapters?: QueueWatcherAdapter[]
+    /**
+     * Capture job payloads and completed results. Defaults to `false`.
+     */
     capturePayload?: boolean
   }
   redis?: {
@@ -720,6 +821,10 @@ export type WatchersConfig = {
     enabled?: boolean
     captureValues?: boolean
   }
+  /**
+   * Application-defined watcher factories, registered after all enabled shipped watchers.
+   */
+  custom?: PeriscopeWatcherFactory[]
 }
 
 /**
@@ -730,8 +835,10 @@ export type ResolvedWatchersConfig = {
     enabled: boolean
     slowMs: number
     captureResponse: boolean
+    captureInertia: boolean
     responseSizeLimitKb: number
     captureSession: boolean
+    ignorePaths: string[]
   }
   query: {
     enabled: boolean
@@ -754,6 +861,7 @@ export type ResolvedWatchersConfig = {
   command: {
     enabled: boolean
     ignore: string[]
+    captureOutput: boolean
   }
   mail: {
     enabled: boolean
@@ -773,8 +881,20 @@ export type ResolvedWatchersConfig = {
   dump: {
     enabled: boolean
   }
+  view: {
+    enabled: boolean
+    captureDataKeys: boolean
+  }
   http_client: {
     enabled: boolean
+    slowMs: number
+  }
+  health_check: {
+    enabled: boolean
+  }
+  transmit: {
+    enabled: boolean
+    capturePayload: boolean
   }
   job_schedule: {
     enabled: boolean
@@ -789,6 +909,7 @@ export type ResolvedWatchersConfig = {
     enabled: boolean
     captureValues: boolean
   }
+  custom: PeriscopeWatcherFactory[]
 }
 
 /**
@@ -820,12 +941,19 @@ export type DashboardConfig = {
    * Defaults to 5.
    */
   nPlusOneThreshold?: number
+
+  /**
+   * Maximum number of simultaneous server-sent event connections to the live dashboard stream.
+   * Defaults to 5.
+   */
+  sseMaxClients?: number
 }
 
 export type ResolvedDashboardConfig = {
   path: string
   authorize: DashboardAuthorize
   nPlusOneThreshold: number
+  sseMaxClients: number
 }
 
 /**
@@ -869,9 +997,24 @@ export type PeriscopeConfig = {
     connection?: string
 
     /**
+     * Build the store for the `custom` driver. Required with `driver: 'custom'` and rejected for
+     * every shipped driver.
+     */
+    factory?: PeriscopeStoreFactory
+
+    /**
      * Hard ceiling on stored entries. The oldest are trimmed away past it. Defaults to 10 000.
      */
     maxEntries?: number
+
+    /**
+     * Periodically delete entries older than the configured number of hours. Exception entries
+     * may be retained independently.
+     */
+    retention?: {
+      hours: number
+      keepExceptions?: boolean
+    }
   }
 
   recording?: {
@@ -950,9 +1093,9 @@ export type PeriscopeConfig = {
   }
 
   /**
-   * Per-watcher switches and options. Every watcher is on by default; a watcher turned off here
-   * subscribes to nothing at all, which is the difference between "records nothing" and "costs
-   * nothing".
+   * Per-watcher switches and options. Job/schedule, Redis, session, and transmit integrations are
+   * off by default; the other shipped watchers are on. A watcher turned off here subscribes to
+   * nothing at all, which is the difference between "records nothing" and "costs nothing".
    */
   watchers?: WatchersConfig
 
@@ -971,7 +1114,12 @@ export type ResolvedPeriscopeConfig = {
   storage: {
     driver: StorageDriverName
     connection?: string
+    factory?: PeriscopeStoreFactory
     maxEntries: number
+    retention?: {
+      hours: number
+      keepExceptions?: boolean
+    }
   }
   recording: {
     /**

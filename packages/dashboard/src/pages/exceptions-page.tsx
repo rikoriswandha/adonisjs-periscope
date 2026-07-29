@@ -2,7 +2,7 @@ import { ArrowDown, ArrowUpRight, CircleAlert, Inbox, RefreshCw, Route } from 'l
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 
-import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
+import { EntryDetailDrawer, EntryDetailScope } from '@/components/entry-detail-drawer'
 import { JsonTree } from '@/components/json-tree'
 import { PageHeader } from '@/components/page-header'
 import { StackTrace } from '@/components/stack-trace'
@@ -22,6 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import type { RegisteredEntryDetailProps } from '@/entry-type-registry'
 import { useDashboard } from '@/dashboard-context'
 import { usePolling } from '@/hooks/use-polling'
 import { walkCursorPages } from '@/hooks/walk-cursor-pages'
@@ -33,6 +34,84 @@ import type { ExceptionContent, ExceptionGroup, StoredEntry } from '@/types'
 
 function exceptionContent(entry: StoredEntry): ExceptionContent {
   return entry.content as ExceptionContent
+}
+
+function ExceptionOccurrenceContent({ entry }: { entry: StoredEntry }) {
+  const content = exceptionContent(entry)
+
+  return (
+    <>
+      {content.request && (
+        <section className="rounded-md border bg-muted/25 p-3">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <Route aria-hidden="true" className="size-4 text-primary" />
+            {content.request.method} {content.request.url}
+          </div>
+          {content.request.route && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {content.request.route.pattern}
+              {content.request.route.name ? ` · ${content.request.route.name}` : ''}
+            </p>
+          )}
+        </section>
+      )}
+
+      <StackTrace
+        codeFrame={content.codeFrame}
+        fallback={content.stack}
+        frames={content.frames ?? []}
+      />
+
+      {content.context !== undefined && (
+        <JsonTree label="Exception context" value={content.context} />
+      )}
+
+      <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
+        <div>
+          <dt className="text-xs text-muted-foreground">Family hash</dt>
+          <dd
+            className="mt-0.5 truncate font-mono text-xs"
+            title={entry.familyHash ?? undefined}
+          >
+            {entry.familyHash ?? 'Unavailable'}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Sequence</dt>
+          <dd className="mt-0.5 truncate font-mono text-xs">{entry.sequence}</dd>
+        </div>
+      </dl>
+
+      <Button
+        render={<Link to={`/requests/${encodeURIComponent(entry.batchId)}`} />}
+        variant="outline"
+      >
+        <ArrowUpRight aria-hidden="true" />
+        Open request batch
+      </Button>
+    </>
+  )
+}
+
+export function ExceptionEntryDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
+  const content = exceptionContent(entry)
+  return (
+    <EntryDetailDrawer
+      description={formatDateTime(entry.createdAt)}
+      meta={
+        <>
+          <StatusBadge status={content.status} />
+          {content.code && <Badge variant="secondary">{content.code}</Badge>}
+        </>
+      }
+      onOpenChange={(nextOpen) => !nextOpen && onClose()}
+      open={open}
+      tags={entry.tags}
+      title={`${content.name}: ${truncate(content.message, 100)}`}
+    >
+      <ExceptionOccurrenceContent entry={entry} />
+    </EntryDetailDrawer>
+  )
 }
 
 export function ExceptionsPage() {
@@ -488,7 +567,8 @@ export function ExceptionsPage() {
         </div>
       )}
 
-      <EntryDetailDrawer
+      <EntryDetailScope entry={selectedOccurrence}>
+        <EntryDetailDrawer
         description={
           selectedOccurrence ? formatDateTime(selectedOccurrence.createdAt) : 'Exception occurrence'
         }
@@ -515,30 +595,7 @@ export function ExceptionsPage() {
             )}
             {current && selectedOccurrence && (
               <>
-                {current.request && (
-                  <section className="rounded-md border bg-muted/25 p-3">
-                    <div className="flex items-center gap-2 text-sm font-semibold">
-                      <Route aria-hidden="true" className="size-4 text-primary" />
-                      {current.request.method} {current.request.url}
-                    </div>
-                    {current.request.route && (
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {current.request.route.pattern}
-                        {current.request.route.name ? ` · ${current.request.route.name}` : ''}
-                      </p>
-                    )}
-                  </section>
-                )}
-
-                <StackTrace
-                  codeFrame={current.codeFrame}
-                  fallback={current.stack}
-                  frames={current.frames ?? []}
-                />
-
-                {current.context !== undefined && (
-                  <JsonTree label="Exception context" value={current.context} />
-                )}
+                <ExceptionOccurrenceContent entry={selectedOccurrence} />
 
                 <section className="overflow-hidden rounded-lg border">
                   <div className="flex items-center justify-between border-b px-3 py-2">
@@ -593,28 +650,12 @@ export function ExceptionsPage() {
                   )}
                 </section>
 
-                <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
-                  <div>
-                    <dt className="text-xs text-muted-foreground">Family hash</dt>
-                    <dd
-                      className="mt-0.5 truncate font-mono text-xs"
-                      title={selectedGroup.familyHash}
-                    >
-                      {selectedGroup.familyHash}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-muted-foreground">Sequence</dt>
-                    <dd className="mt-0.5 truncate font-mono text-xs">
-                      {selectedOccurrence.sequence}
-                    </dd>
-                  </div>
-                </dl>
               </>
             )}
           </>
         )}
-      </EntryDetailDrawer>
+        </EntryDetailDrawer>
+      </EntryDetailScope>
     </div>
   )
 }

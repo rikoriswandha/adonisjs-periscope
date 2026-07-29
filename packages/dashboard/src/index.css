@@ -185,11 +185,61 @@ input,
 }
 
 .dark {
-  --destructive-foreground: var(--color-red-400);
-  --info: var(--color-blue-500);
-  --info-foreground: var(--color-blue-400);
-  --success: var(--color-emerald-500);
-  --success-foreground: var(--color-emerald-400);
-  --warning: var(--color-amber-500);
-  --warning-foreground: var(--color-amber-400);
+  color-scheme: dark;
+
+  --background: oklch(0.18 0.015 260);
+  --foreground: oklch(0.92 0.01 255);
+  --card: oklch(0.205 0.017 260);
+  --card-foreground: var(--foreground);
+  --popover: oklch(0.22 0.018 260);
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.68 0.14 140);
+  --primary-foreground: oklch(0.16 0.03 145);
+  --secondary: oklch(0.26 0.018 260);
+  --secondary-foreground: oklch(0.9 0.012 255);
+  --muted: oklch(0.255 0.018 260);
+  --muted-foreground: oklch(0.72 0.025 255);
+  --accent: oklch(0.28 0.04 145);
+  --accent-foreground: oklch(0.88 0.055 145);
+  --destructive: oklch(0.64 0.2 27);
+  --destructive-foreground: oklch(0.76 0.13 25);
+  --border: oklch(0.32 0.02 260);
+  --input: oklch(0.36 0.022 260);
+  --ring: oklch(0.66 0.12 145);
+  --info: oklch(0.64 0.15 255);
+  --info-foreground: oklch(0.74 0.12 250);
+  --success: oklch(0.65 0.14 145);
+  --success-foreground: oklch(0.76 0.11 145);
+  --warning: oklch(0.72 0.14 78);
+  --warning-foreground: oklch(0.8 0.12 82);
+
+  --sidebar: oklch(0.16 0.016 260);
+  --sidebar-foreground: oklch(0.88 0.012 255);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: oklch(0.25 0.035 145);
+  --sidebar-accent-foreground: oklch(0.88 0.055 145);
+  --sidebar-border: oklch(0.29 0.02 260);
+  --sidebar-ring: var(--ring);
+
+  --chart-1: oklch(0.68 0.14 140);
+  --chart-2: oklch(0.68 0.14 255);
+  --chart-3: oklch(0.7 0.11 195);
+  --chart-4: oklch(0.75 0.12 78);
+  --chart-5: oklch(0.68 0.15 25);
+  --chart-background: var(--background);
+  --chart-foreground: var(--foreground);
+  --chart-foreground-muted: var(--muted-foreground);
+  --chart-line-primary: var(--chart-1);
+  --chart-line-secondary: var(--chart-2);
+  --chart-crosshair: var(--chart-2);
+  --chart-grid: oklch(0.31 0.018 260);
+  --chart-brush-border: var(--chart-grid);
+  --chart-tooltip-background: oklch(0.14 0.018 260 / 0.98);
+  --chart-tooltip-foreground: oklch(0.94 0.008 255);
+  --chart-tooltip-muted: oklch(0.72 0.025 255);
+  --chart-marker-background: var(--background);
+  --chart-marker-border: var(--border);
+  --chart-marker-foreground: var(--foreground);
+  --chart-label: var(--muted-foreground);
 }

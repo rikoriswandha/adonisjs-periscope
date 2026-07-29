@@ -62,6 +62,17 @@ export default defineConfig({
      * Default: 10_000
      */
     maxEntries: 10_000,
+
+    /**
+     * Automatically prune entries older than this many hours every fifteen minutes. Keep
+     * exceptions when historical failure context matters longer than routine telemetry.
+     *
+     * Default: disabled
+     */
+    // retention: {
+    //   hours: 48,
+    //   keepExceptions: true,
+    // },
   },
 
   recording: {
@@ -150,6 +161,19 @@ export default defineConfig({
     replacement: '[REDACTED]',
   },
 
+  hooks: {
+    /**
+     * Drop entries before they enter a batch. Filter hooks see the original entry before
+     * redaction, so never copy sensitive content into logs or other side channels.
+     */
+    // filter: [(entry) => entry.type !== 'log'],
+
+    /**
+     * Attach application-specific exact tags after redaction. Returned tags are de-duplicated.
+     */
+    // tag: [(entry) => (entry.type === 'request' ? ['application-traffic'] : [])],
+  },
+
   watchers: {
     request: {
       /**
@@ -171,6 +195,12 @@ export default defineConfig({
       captureResponse: true,
 
       /**
+       * Extract the component name and top-level prop keys from captured Inertia JSON responses.
+       * This never enables response capture by itself.
+       */
+      captureInertia: true,
+
+      /**
        * Lower this when response previews consume too much storage, or raise it when the useful
        * part of a large JSON or text response would otherwise be truncated.
        */
@@ -180,6 +210,12 @@ export default defineConfig({
        * Disable this when session state is too sensitive or noisy to attach to request entries.
        */
       captureSession: true,
+
+      /**
+       * Path patterns to skip recording entirely, matched against the request path. A \`*\`
+       * matches any run of characters, so \`/assets/*\` drops every compiled asset request.
+       */
+      ignorePaths: [],
     },
 
     query: {
@@ -257,6 +293,11 @@ export default defineConfig({
        */
       enabled: true,
       ignore: [],
+
+      /**
+       * Capture bounded, redacted text rendered by commands without changing terminal output.
+       */
+      captureOutput: true,
     },
 
     mail: {
@@ -297,11 +338,42 @@ export default defineConfig({
       enabled: true,
     },
 
+    view: {
+      /**
+       * Observe Edge template renders. Only the template name, timing, and optionally top-level
+       * data keys are retained; render data values are never read or stored.
+       */
+      enabled: true,
+      captureDataKeys: true,
+    },
+
     http_client: {
       /**
        * Disable this when outbound HTTP traffic is already observed elsewhere.
        */
       enabled: true,
+
+      /**
+       * Outbound requests taking at least this many milliseconds receive the exact \`slow\` tag.
+       */
+      slowMs: 1_000,
+    },
+
+    health_check: {
+      /**
+       * Observe readiness reports produced by HealthChecks.run(). Check messages are bounded and
+       * pass through the configured redaction pipeline.
+       */
+      enabled: true,
+    },
+
+    /**
+     * Transmit broadcasts are opt-in. Payloads remain excluded unless explicitly enabled because
+     * they contain arbitrary application data; captured summaries still pass through redaction.
+     */
+    transmit: {
+      enabled: false,
+      capturePayload: false,
     },
 
     /**
@@ -311,6 +383,10 @@ export default defineConfig({
     job_schedule: {
       enabled: false,
       adapters: [],
+      /**
+       * Capture job payloads and completed results. Disabled by default because both may contain
+       * arbitrary application data.
+       */
       capturePayload: false,
     },
 
@@ -345,5 +421,12 @@ export default defineConfig({
      */
     authorize: () =>
       process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test',
+
+    /**
+     * Maximum simultaneous browser connections to the live server-sent event stream.
+     *
+     * Default: 5
+     */
+    sseMaxClients: 5,
   },
 })

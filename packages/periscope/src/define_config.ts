@@ -43,6 +43,8 @@ import type {
   KeepAlwaysHook,
   LogLevelName,
   PeriscopeConfig,
+  PeriscopeStoreFactory,
+  PeriscopeWatcherFactory,
   QueueWatcherAdapter,
   ResolvedPeriscopeConfig,
   ResolvedWatchersConfig,
@@ -88,10 +90,15 @@ const TOP_LEVEL_KEYS = [
 ] as const
 
 /**
- * Drivers `storage.driver` accepts. Kept as an array rather than derived from a registry: the
- * shipped set is fixed at build time and the order here is the order shown in error messages.
+ * Drivers `storage.driver` accepts. Kept as an array because the selector set — including the
+ * `custom` factory seam — is fixed, and this order is shown in validation errors.
  */
-const STORAGE_DRIVERS: readonly StorageDriverName[] = ['memory', 'sqlite-local', 'database']
+const STORAGE_DRIVERS: readonly StorageDriverName[] = [
+  'memory',
+  'sqlite-local',
+  'database',
+  'custom',
+]
 
 /**
  * The driver an application gets when `config/periscope.ts` names none.
@@ -125,14 +132,15 @@ const DEFAULT_REPLACEMENT = '[REDACTED]'
 /**
  * Watcher defaults.
  *
- * The two thresholds are the interesting numbers. A second is the point at which a human
- * notices a page is slow, and 100 ms is the point at which a single query stops being noise in
- * a request that took 300 ms — both are the values Telescope settled on after years of
- * dashboards, and there is no reason to be original about them.
+ * The slow thresholds are the interesting numbers. A second is the point at which a human
+ * notices either an inbound or outbound request is slow, and 100 ms is the point at which a
+ * single query stops being noise in a request that took 300 ms — these are the values Telescope
+ * settled on after years of dashboards, and there is no reason to be original about them.
  */
 const DEFAULT_REQUEST_SLOW_MS = 1_000
 const DEFAULT_RESPONSE_SIZE_LIMIT_KB = 64
 const DEFAULT_QUERY_SLOW_MS = 100
+const DEFAULT_HTTP_CLIENT_SLOW_MS = 1_000
 
 /**
  * Recorded log levels start at `warn`. The destination runs after pino's own filter, so the
@@ -150,6 +158,7 @@ const CAPTURE_MODES: readonly CaptureMode[] = ['dev', 'always', 'never']
  */
 const DEFAULT_DASHBOARD_PATH = '/periscope'
 const DEFAULT_N_PLUS_ONE_THRESHOLD = 5
+const DEFAULT_SSE_MAX_CLIENTS = 5
 
 /**
  * Resolve the application through the request container instead of a process-global service.
@@ -543,8 +552,8 @@ function readEnum<T extends string>(
  * Resolves the `watchers` block.
  *
  * Core watchers are enabled by default. Integrations that observe session identifiers, Redis
- * commands, or external queue infrastructure are explicitly opt-in and subscribe to nothing
- * until enabled.
+ * commands, broadcasts, or external queue infrastructure are explicitly opt-in and subscribe to
+ * nothing until enabled.
  */
 function resolveWatchers(input: Record<string, unknown>, issues: string[]): ResolvedWatchersConfig {
   const watchers = readBlock(
@@ -562,10 +571,14 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
       'model',
       'gate',
       'dump',
+      'view',
       'http_client',
+      'health_check',
+      'transmit',
       'job_schedule',
       'redis',
       'session',
+      'custom',
     ],
     issues
   )
@@ -573,7 +586,15 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
   const request = readBlock(
     watchers,
     'request',
-    ['enabled', 'slowMs', 'captureResponse', 'responseSizeLimitKb', 'captureSession'],
+    [
+      'enabled',
+      'slowMs',
+      'captureResponse',
+      'captureInertia',
+      'responseSizeLimitKb',
+      'captureSession',
+      'ignorePaths',
+    ],
     issues,
     'watchers.request'
   )
@@ -593,13 +614,40 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
   )
   const log = readBlock(watchers, 'log', ['enabled', 'level'], issues, 'watchers.log')
   const event = readBlock(watchers, 'event', ['enabled', 'ignore'], issues, 'watchers.event')
-  const command = readBlock(watchers, 'command', ['enabled', 'ignore'], issues, 'watchers.command')
+  const command = readBlock(
+    watchers,
+    'command',
+    ['enabled', 'ignore', 'captureOutput'],
+    issues,
+    'watchers.command'
+  )
   const mail = readBlock(watchers, 'mail', ['enabled'], issues, 'watchers.mail')
   const cache = readBlock(watchers, 'cache', ['enabled', 'captureValues'], issues, 'watchers.cache')
   const model = readBlock(watchers, 'model', ['enabled', 'captureDirty'], issues, 'watchers.model')
   const gate = readBlock(watchers, 'gate', ['enabled', 'ignoreAbilities'], issues, 'watchers.gate')
   const dump = readBlock(watchers, 'dump', ['enabled'], issues, 'watchers.dump')
-  const httpClient = readBlock(watchers, 'http_client', ['enabled'], issues, 'watchers.http_client')
+  const view = readBlock(watchers, 'view', ['enabled', 'captureDataKeys'], issues, 'watchers.view')
+  const httpClient = readBlock(
+    watchers,
+    'http_client',
+    ['enabled', 'slowMs'],
+    issues,
+    'watchers.http_client'
+  )
+  const healthCheck = readBlock(
+    watchers,
+    'health_check',
+    ['enabled'],
+    issues,
+    'watchers.health_check'
+  )
+  const transmit = readBlock(
+    watchers,
+    'transmit',
+    ['enabled', 'capturePayload'],
+    issues,
+    'watchers.transmit'
+  )
   const jobSchedule = readBlock(
     watchers,
     'job_schedule',
@@ -621,6 +669,11 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
     issues,
     'watchers.session'
   )
+  const custom = readFunctionArray<PeriscopeWatcherFactory>(
+    'watchers.custom',
+    watchers.custom,
+    issues
+  )
 
   return {
     request: {
@@ -630,6 +683,8 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
         DEFAULT_REQUEST_SLOW_MS,
       captureResponse:
         readBoolean('watchers.request.captureResponse', request.captureResponse, issues) ?? true,
+      captureInertia:
+        readBoolean('watchers.request.captureInertia', request.captureInertia, issues) ?? true,
       responseSizeLimitKb:
         readInteger(
           'watchers.request.responseSizeLimitKb',
@@ -639,6 +694,8 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
         ) ?? DEFAULT_RESPONSE_SIZE_LIMIT_KB,
       captureSession:
         readBoolean('watchers.request.captureSession', request.captureSession, issues) ?? true,
+      ignorePaths:
+        readStringArray('watchers.request.ignorePaths', request.ignorePaths, issues) ?? [],
     },
     query: {
       enabled: readBoolean('watchers.query.enabled', query.enabled, issues) ?? true,
@@ -675,6 +732,8 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
     command: {
       enabled: readBoolean('watchers.command.enabled', command.enabled, issues) ?? true,
       ignore: readStringArray('watchers.command.ignore', command.ignore, issues) ?? [],
+      captureOutput:
+        readBoolean('watchers.command.captureOutput', command.captureOutput, issues) ?? true,
     },
     mail: {
       enabled: readBoolean('watchers.mail.enabled', mail.enabled, issues) ?? true,
@@ -696,8 +755,24 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
     dump: {
       enabled: readBoolean('watchers.dump.enabled', dump.enabled, issues) ?? true,
     },
+    view: {
+      enabled: readBoolean('watchers.view.enabled', view.enabled, issues) ?? true,
+      captureDataKeys:
+        readBoolean('watchers.view.captureDataKeys', view.captureDataKeys, issues) ?? true,
+    },
     http_client: {
       enabled: readBoolean('watchers.http_client.enabled', httpClient.enabled, issues) ?? true,
+      slowMs:
+        readInteger('watchers.http_client.slowMs', httpClient.slowMs, 0, issues) ??
+        DEFAULT_HTTP_CLIENT_SLOW_MS,
+    },
+    health_check: {
+      enabled: readBoolean('watchers.health_check.enabled', healthCheck.enabled, issues) ?? true,
+    },
+    transmit: {
+      enabled: readBoolean('watchers.transmit.enabled', transmit.enabled, issues) ?? false,
+      capturePayload:
+        readBoolean('watchers.transmit.capturePayload', transmit.capturePayload, issues) ?? false,
     },
     job_schedule: {
       enabled: readBoolean('watchers.job_schedule.enabled', jobSchedule.enabled, issues) ?? false,
@@ -717,6 +792,7 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
       captureValues:
         readBoolean('watchers.session.captureValues', session.captureValues, issues) ?? false,
     },
+    custom: custom ?? [],
   }
 }
 
@@ -776,7 +852,12 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
     )
   }
 
-  const storage = readBlock(input, 'storage', ['driver', 'connection', 'maxEntries'], issues)
+  const storage = readBlock(
+    input,
+    'storage',
+    ['driver', 'connection', 'factory', 'maxEntries', 'retention'],
+    issues
+  )
   const rawDriver = storage.driver
   let driver: StorageDriverName | undefined
 
@@ -793,9 +874,38 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
       driver = rawDriver as StorageDriverName
     }
   }
+  const selectedDriver = driver ?? DEFAULT_DRIVER
+  let factory: PeriscopeStoreFactory | undefined
+
+  if (selectedDriver === 'custom') {
+    factory = readFunction<PeriscopeStoreFactory>('storage.factory', storage.factory, issues)
+
+    if (storage.factory === undefined) {
+      issues.push('storage.factory: is required when storage.driver is "custom"')
+    }
+  } else if (storage.factory !== undefined) {
+    issues.push('storage.factory: is only accepted when storage.driver is "custom"')
+  }
 
   const connection = readNonEmptyString('storage.connection', storage.connection, issues)
   const maxEntries = readInteger('storage.maxEntries', storage.maxEntries, 1, issues)
+  const retention = readBlock(
+    storage,
+    'retention',
+    ['hours', 'keepExceptions'],
+    issues,
+    'storage.retention'
+  )
+  const retentionHours = readInteger('storage.retention.hours', retention.hours, 1, issues)
+  const retentionKeepExceptions = readBoolean(
+    'storage.retention.keepExceptions',
+    retention.keepExceptions,
+    issues
+  )
+
+  if (isPlainObject(storage.retention) && retention.hours === undefined) {
+    issues.push('storage.retention.hours: is required when storage.retention is configured')
+  }
 
   const recording = readBlock(
     input,
@@ -843,7 +953,7 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
   const dashboard = readBlock(
     input,
     'dashboard',
-    ['path', 'authorize', 'nPlusOneThreshold'],
+    ['path', 'authorize', 'nPlusOneThreshold', 'sseMaxClients'],
     issues
   )
   const dashboardPath = readNonEmptyString('dashboard.path', dashboard.path, issues)
@@ -858,6 +968,7 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
     1,
     issues
   )
+  const sseMaxClients = readInteger('dashboard.sseMaxClients', dashboard.sseMaxClients, 1, issues)
 
   if (dashboardPath !== undefined && !dashboardPath.startsWith('/')) {
     issues.push(`dashboard.path: must start with a slash; got ${describe(dashboardPath)}`)
@@ -868,7 +979,7 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
   }
 
   const resolvedStorage: ResolvedPeriscopeConfig['storage'] = {
-    driver: driver ?? DEFAULT_DRIVER,
+    driver: selectedDriver,
     maxEntries: maxEntries ?? DEFAULT_MAX_ENTRIES,
   }
 
@@ -879,6 +990,16 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
    */
   if (connection !== undefined) {
     resolvedStorage.connection = connection
+  }
+  if (factory !== undefined) {
+    resolvedStorage.factory = factory
+  }
+
+  if (retentionHours !== undefined) {
+    resolvedStorage.retention = {
+      hours: retentionHours,
+      ...(retentionKeepExceptions === undefined ? {} : { keepExceptions: retentionKeepExceptions }),
+    }
   }
 
   return {
@@ -910,6 +1031,7 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
       path: normalisePath(dashboardPath ?? DEFAULT_DASHBOARD_PATH),
       authorize: dashboardAuthorize ?? DEFAULT_DASHBOARD_AUTHORIZE,
       nPlusOneThreshold: nPlusOneThreshold ?? DEFAULT_N_PLUS_ONE_THRESHOLD,
+      sseMaxClients: sseMaxClients ?? DEFAULT_SSE_MAX_CLIENTS,
     },
   }
 }

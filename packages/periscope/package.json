@@ -43,7 +43,8 @@
     "./types": "./build/src/types.js",
     "./periscope_config": "./build/src/define_config.js",
     "./storage_schema": "./build/src/storage/database_schema.js",
-    "./watchers/bull_queue": "./build/src/watchers/job_schedule/bull_queue_adapter.js"
+    "./watchers/bull_queue": "./build/src/watchers/job_schedule/bull_queue_adapter.js",
+    "./watchers/adonis_queue": "./build/src/watchers/job_schedule/adonis_queue_adapter.js"
   },
   "files": [
     "build",
@@ -69,6 +70,7 @@
     "better-sqlite3": "^12.10.0"
   },
   "peerDependencies": {
+    "@adonisjs/queue": "^0.6.2",
     "@adonisjs/bouncer": "^4.0.0",
     "@adonisjs/cache": "^2.0.0",
     "@adonisjs/core": "^7.0.0",
@@ -76,10 +78,15 @@
     "@adonisjs/mail": "^10.0.0",
     "@adonisjs/redis": "^10.0.0",
     "@adonisjs/session": "^8.0.0",
+    "@adonisjs/transmit": "^3.0.0",
     "@opentelemetry/api": "^1.9.0",
-    "bullmq": "^5.0.0"
+    "bullmq": "^5.0.0",
+    "edge.js": "^6.4.0"
   },
   "peerDependenciesMeta": {
+    "@adonisjs/queue": {
+      "optional": true
+    },
     "@adonisjs/bouncer": {
       "optional": true
     },
@@ -98,14 +105,21 @@
     "@adonisjs/session": {
       "optional": true
     },
+    "@adonisjs/transmit": {
+      "optional": true
+    },
     "@opentelemetry/api": {
       "optional": true
     },
     "bullmq": {
       "optional": true
+    },
+    "edge.js": {
+      "optional": true
     }
   },
   "devDependencies": {
+    "@adonisjs/queue": "^0.6.2",
     "@adonisjs/assembler": "^8.4.0",
     "@adonisjs/bouncer": "^4.0.0",
     "@adonisjs/cache": "^2.1.0",

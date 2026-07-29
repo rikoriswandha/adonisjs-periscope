@@ -48,7 +48,10 @@ import {
   INSERT_CHUNK_SIZE,
   MONITORED_TAGS_TABLE,
   TAGS_TABLE,
+  entryContentLikePattern,
   encodeSequence,
+  parseEntryQueryDate,
+  resolveEntryQueryTags,
   toEntryRow,
   toStoredEntry,
   toTagRows,
@@ -159,10 +162,9 @@ export class DatabaseStore implements PeriscopeStore {
   /**
    * Apply every filter of a query, plus the cursor, to a builder over the entries table.
    *
-   * The tag filter is a subquery rather than a join. A join against the tag index would produce
-   * one row per matching tag, which is invisible for a single-tag filter but would silently
-   * duplicate entries the moment the query grew a second tag — and would break `limit + 1`
-   * pagination well before anyone noticed the duplicates.
+   * Tags are matched through a grouped subquery rather than a join. The grouping enforces
+   * multi-tag AND without duplicating entry rows, so `limit + 1` cursor pagination keeps exactly
+   * the same semantics under every filter combination.
    */
   #applyFilters(
     builder: DatabaseQueryBuilderContract<EntryRow>,
@@ -189,12 +191,34 @@ export class DatabaseStore implements PeriscopeStore {
       builder.where('should_display_on_index', query.displayOnIndex ? 1 : 0)
     }
 
-    if (query.tag !== undefined) {
-      const tag = query.tag
-
+    const tags = resolveEntryQueryTags(query)
+    if (tags.length === 1) {
       builder.whereIn('uuid', (subquery: DatabaseQueryBuilderContract<EntryRow>) => {
-        subquery.from(TAGS_TABLE).select('entry_uuid').where('tag', tag)
+        subquery.from(TAGS_TABLE).select('entry_uuid').where('tag', tags[0])
       })
+    } else if (tags.length > 1) {
+      builder.whereIn('uuid', (subquery: DatabaseQueryBuilderContract<EntryRow>) => {
+        subquery
+          .from(TAGS_TABLE)
+          .select('entry_uuid')
+          .whereIn('tag', [...tags])
+          .groupBy('entry_uuid')
+          .havingRaw('count(*) = ?', [tags.length])
+      })
+    }
+
+    if (query.text !== undefined) {
+      builder.whereRaw("lower(content) like ? escape '!'", [entryContentLikePattern(query.text)])
+    }
+
+    const from = parseEntryQueryDate(query.from)
+    if (from !== undefined) {
+      builder.where('created_at', '>=', from)
+    }
+
+    const to = parseEntryQueryDate(query.to)
+    if (to !== undefined) {
+      builder.where('created_at', '<=', to)
     }
 
     if (cursor !== null) {
@@ -523,6 +547,10 @@ export class DatabaseStore implements PeriscopeStore {
 
         if (keepExceptions) {
           builder.whereNot('type', EntryType.EXCEPTION)
+        }
+
+        if (options.application !== undefined) {
+          builder.where('application', options.application)
         }
       })
     })

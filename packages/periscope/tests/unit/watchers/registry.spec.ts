@@ -13,6 +13,7 @@ import { LoggerFactory } from '@adonisjs/core/factories/logger'
 import type { LoggerService } from '@adonisjs/core/types'
 
 import { defineConfig } from '../../../src/define_config.ts'
+import { IncomingEntry } from '../../../src/entry.ts'
 import { Recorder } from '../../../src/recorder/recorder.ts'
 import { MemoryStore } from '../../../src/storage/memory_store.ts'
 import { EntryType, WATCHER_NAMES } from '../../../src/types.ts'
@@ -39,6 +40,7 @@ type TestContext = ConstructorParameters<typeof WatcherRegistry>[0]
 
 const WATCHER_EVENTS: Record<WatcherName, string> = {
   job_schedule: 'test:job',
+  transmit: 'test:transmit',
   redis: 'adonisjs.redis.command',
   session: 'session:committed',
   request: 'http:request_completed',
@@ -52,10 +54,12 @@ const WATCHER_EVENTS: Record<WatcherName, string> = {
   model: 'test:model',
   gate: 'test:gate',
   dump: 'test:dump',
+  view: 'test:view',
   http_client: 'test:http_client',
+  health_check: 'test:health_check',
 }
 
-const OPT_IN_WATCHERS: readonly WatcherName[] = ['job_schedule', 'redis', 'session']
+const OPT_IN_WATCHERS: readonly WatcherName[] = ['transmit', 'job_schedule', 'redis', 'session']
 const DEFAULT_ENABLED_WATCHER_NAMES = WATCHER_NAMES.filter(
   (name) => !OPT_IN_WATCHERS.includes(name)
 )
@@ -131,6 +135,7 @@ function makeStructuralContext(enabled = true): TestContext {
     watchers: {
       exception: { captureProcessErrors: false },
       job_schedule: { enabled: true },
+      transmit: { enabled: true },
       redis: { enabled: true },
       session: { enabled: true },
     },
@@ -190,6 +195,66 @@ test.group('WatcherRegistry', () => {
       registry.watchers.map((watcher) => watcher.name),
       DEFAULT_ENABLED_WATCHER_NAMES.filter((name) => name !== 'query' && name !== 'log')
     )
+  })
+
+  test('register custom factories after shipped watchers and clean them up first', async ({
+    assert,
+  }) => {
+    const lifecycle: string[] = []
+    let receivedContext: TestContext | undefined
+    const { context, recorder, store } = await makeContext({
+      config: {
+        watchers: {
+          custom: [
+            (factoryContext) => {
+              receivedContext = factoryContext
+
+              return {
+                name: 'application',
+                register() {
+                  lifecycle.push('register:application')
+                  factoryContext.recorder.record(
+                    IncomingEntry.make(EntryType.EVENT, { source: 'custom' })
+                  )
+                },
+                cleanup() {
+                  lifecycle.push('cleanup:application')
+                },
+              }
+            },
+          ],
+        },
+      },
+    })
+    const enabledBuiltIns = WATCHER_NAMES.filter((name) => context.config.watchers[name].enabled)
+    const factories = fakeFactories((name) => ({
+      name,
+      register() {
+        lifecycle.push(`register:${name}`)
+      },
+      cleanup() {
+        lifecycle.push(`cleanup:${name}`)
+      },
+    }))
+    const registry = track(new WatcherRegistry(context, factories))
+
+    await registry.register()
+    await recorder.flush()
+
+    assert.strictEqual(receivedContext, context)
+    assert.deepEqual(lifecycle, [
+      ...enabledBuiltIns.map((name) => `register:${name}`),
+      'register:application',
+    ])
+    const listedEvents = await store.list({ type: EntryType.EVENT })
+    assert.equal(listedEvents.data[0].content.source, 'custom')
+
+    await registry.cleanup()
+
+    assert.deepEqual(lifecycle.slice(enabledBuiltIns.length + 1), [
+      'cleanup:application',
+      ...[...enabledBuiltIns].reverse().map((name) => `cleanup:${name}`),
+    ])
   })
 
   test('retain an early model watcher and reuse it during full registration', async ({
@@ -285,7 +350,7 @@ test.group('WatcherRegistry', () => {
     await registry.register()
     const elapsedMs = performance.now() - startedAt
 
-    assert.lengthOf(WATCHER_NAMES, 15)
+    assert.lengthOf(WATCHER_NAMES, 18)
     assert.deepEqual(constructed, WATCHER_NAMES)
     assert.deepEqual(registered, WATCHER_NAMES)
     assert.deepEqual(
@@ -359,6 +424,8 @@ test.group('WatcherRegistry', () => {
           model: { enabled: false },
           gate: { enabled: false },
           dump: { enabled: false },
+          view: { enabled: false },
+          health_check: { enabled: false },
           http_client: { enabled: false },
         },
       },
@@ -437,6 +504,7 @@ test.group('WatcherRegistry', () => {
         watchers: {
           exception: { captureProcessErrors: false },
           job_schedule: { enabled: true },
+          transmit: { enabled: true },
           redis: { enabled: true },
           session: { enabled: true },
         },

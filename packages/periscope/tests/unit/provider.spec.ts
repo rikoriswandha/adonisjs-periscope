@@ -17,6 +17,7 @@ import PeriscopeProvider from '../../providers/periscope_provider.ts'
 import { IncomingEntry } from '../../src/entry.ts'
 import { EntryType } from '../../src/types.ts'
 import { Recorder } from '../../src/recorder/recorder.ts'
+import { BatchScope } from '../../src/recorder/context.ts'
 import { defineConfig } from '../../src/define_config.ts'
 import { safeguard, setInternalLogger } from '../../src/safeguard.ts'
 import { MemoryStore } from '../../src/storage/memory_store.ts'
@@ -140,6 +141,37 @@ test.group('PeriscopeProvider', (group) => {
     assert.strictEqual(first, second)
   })
 
+  test('boot a custom store and record from a custom watcher', async ({ assert }) => {
+    const store = new MemoryStore()
+    const config = defineConfig({
+      storage: {
+        driver: 'custom',
+        factory: () => store,
+      },
+      watchers: {
+        custom: [
+          ({ recorder }) => ({
+            name: 'application',
+            register() {
+              recorder.record(IncomingEntry.make(EntryType.EVENT, { source: 'custom' }))
+            },
+          }),
+        ],
+      },
+    })
+    const { app, provider } = await createProvider({ periscope: config })
+
+    await provider.ready()
+    const recorder = await app.container.make(Recorder)
+    await recorder.flush()
+
+    assert.strictEqual(recorder.store, store)
+    const listed = await store.list({ type: EntryType.EVENT })
+    assert.equal(listed.data[0].content.source, 'custom')
+
+    await provider.shutdown()
+  })
+
   test('register dashboard routes from start in web processes', async ({ assert }) => {
     const { app, provider } = await createProvider({
       periscope: inertConfig(),
@@ -254,6 +286,43 @@ test.group('PeriscopeProvider', (group) => {
 
     assert.lengthOf(page.data, 1)
     assert.equal(page.data[0].type, EntryType.EVENT)
+
+    await provider.shutdown()
+  })
+
+  test('run configured retention shortly after ready inside a muted context', async ({
+    assert,
+  }) => {
+    const retentionHours = 12
+    const { app, provider } = await createProvider({
+      periscope: defineConfig({
+        storage: {
+          driver: 'memory',
+          retention: { hours: retentionHours, keepExceptions: true },
+        },
+      }),
+    })
+
+    await provider.ready()
+
+    const recorder = await app.container.make(Recorder)
+    const calls: { before: Date; keepExceptions?: boolean; muted: boolean }[] = []
+    const now = Date.now()
+    recorder.store.prune = async (options) => {
+      calls.push({
+        before: options.before,
+        keepExceptions: options.keepExceptions,
+        muted: BatchScope.current()?.muted === true,
+      })
+      return 0
+    }
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+    assert.lengthOf(calls, 1)
+    assert.isTrue(calls[0].muted)
+    assert.isTrue(calls[0].keepExceptions)
+    assert.approximately(calls[0].before.getTime(), now - retentionHours * 60 * 60 * 1_000, 1_000)
 
     await provider.shutdown()
   })

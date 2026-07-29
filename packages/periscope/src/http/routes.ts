@@ -37,7 +37,9 @@ export function registerDashboardRoutes(options: RegisterDashboardRoutesOptions)
   const dashboard = new DashboardController(recorder.store, config, environment)
   const exceptionGroups = new ExceptionGroupsController(recorder.store)
   const monitoredTags = new MonitoredTagsController(recorder.store)
-  const stream = new StreamController(recorder)
+  const stream = new StreamController(recorder, {
+    maxClients: config.dashboard.sseMaxClients,
+  })
   const staticFiles = new StaticController({
     dashboardPath: config.dashboard.path,
     dashboardRoot: options.dashboardRoot,
@@ -52,6 +54,7 @@ export function registerDashboardRoutes(options: RegisterDashboardRoutesOptions)
     router.get('/api/batches/:batchId/export', entries.exportBatch.bind(entries))
     router.get('/api/csrf-token', dashboard.csrfToken.bind(dashboard))
     router.get('/api/counts', dashboard.counts.bind(dashboard))
+    router.get('/api/stats', dashboard.stats.bind(dashboard))
     router.get('/api/status', dashboard.status.bind(dashboard))
     router.put('/api/flags/:name', dashboard.setFlag.bind(dashboard))
     router.delete('/api/flags/:name', dashboard.deleteFlag.bind(dashboard))

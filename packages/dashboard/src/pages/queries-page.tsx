@@ -14,10 +14,13 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { useDashboard } from '@/dashboard-context'
+import { RegistryEntryDetail } from '@/entry-type-registry'
+import type { RegisteredEntryDetailProps } from '@/entry-type-registry'
 import { useCursorPagination } from '@/hooks/use-cursor-pagination'
 import { useNewEntryPolling } from '@/hooks/use-polling'
 import { api } from '@/lib/api'
 import { formatDateTime, formatRelativeTime, truncate } from '@/lib/format'
+import { normalizeExactTags } from '@/lib/global-search'
 import type { EntryFilters, QueryContent, StoredEntry } from '@/types'
 
 function queryContent(entry: StoredEntry): QueryContent {
@@ -93,76 +96,157 @@ const columns: EntryColumn[] = [
   },
 ]
 
-export function QueriesPage() {
-  const [searchParams] = useSearchParams()
-  const { status, revision } = useDashboard()
-  const [slowOnly, setSlowOnly] = useState(false)
-  const [selected, setSelected] = useState<StoredEntry | null>(null)
+export function QueryEntryDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
+  const { status } = useDashboard()
   const [batchEntries, setBatchEntries] = useState<StoredEntry[]>([])
-  const [detailLoading, setDetailLoading] = useState(false)
-  const [detailError, setDetailError] = useState<Error | null>(null)
-  const tag = searchParams.get('tag')?.trim() || undefined
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
+  const content = queryContent(entry)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    setLoading(true)
+    setError(null)
+    api
+      .getBatch(entry.batchId, controller.signal)
+      .then(setBatchEntries)
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) {
+          setError(cause instanceof Error ? cause : new Error('Unable to inspect this batch'))
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
+    return () => controller.abort()
+  }, [entry.batchId])
+
+  const occurrenceCount = entry.familyHash
+    ? Math.max(
+        1,
+        batchEntries.filter(
+          (candidate) => candidate.type === 'query' && candidate.familyHash === entry.familyHash
+        ).length
+      )
+    : 1
+  const threshold = status?.nPlusOneThreshold ?? 5
+  const isNPlusOne = occurrenceCount >= threshold
+
+  return (
+    <EntryDetailDrawer
+      description={`${content.connection} · ${formatDateTime(entry.createdAt)}`}
+      meta={
+        <>
+          <DurationBadge slow={entry.tags.includes('slow')} value={content.durationMs} />
+          {isNPlusOne && <Badge variant="warning">possible n+1</Badge>}
+          {content.error && <Badge variant="destructive">failed</Badge>}
+        </>
+      }
+      onOpenChange={(nextOpen) => !nextOpen && onClose()}
+      open={open}
+      tags={entry.tags}
+      title={truncate(content.sql.replace(/\s+/g, ' '), 96)}
+    >
+      <SqlBlock bindings={content.bindings} sql={content.sql} />
+
+      <section className="rounded-md border bg-muted/25 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold">Query shape in this batch</h3>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              Entries sharing the same normalized SQL family hash.
+            </p>
+          </div>
+          {loading ? (
+            <Skeleton className="h-6 w-24" />
+          ) : (
+            <Badge size="lg" variant={isNPlusOne ? 'warning' : 'secondary'}>
+              {occurrenceCount} {occurrenceCount === 1 ? 'occurrence' : 'occurrences'}
+            </Badge>
+          )}
+        </div>
+        {isNPlusOne && (
+          <p className="mt-3 flex items-start gap-2 text-sm text-warning-foreground">
+            <TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+            This meets the configured n+1 hint threshold of {threshold}. Check whether the query
+            runs once per record.
+          </p>
+        )}
+        {error && <p className="mt-3 text-xs text-destructive-foreground">{error.message}</p>}
+      </section>
+
+      <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
+        <div>
+          <dt className="text-xs text-muted-foreground">Connection</dt>
+          <dd className="mt-0.5 font-mono text-sm">{content.connection}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Operation</dt>
+          <dd className="mt-0.5 font-mono text-sm">{content.method}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Model</dt>
+          <dd className="mt-0.5 text-sm">{content.model ?? 'Not associated with a model'}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Family hash</dt>
+          <dd className="mt-0.5 truncate font-mono text-xs" title={entry.familyHash ?? undefined}>
+            {entry.familyHash ?? 'Unavailable'}
+          </dd>
+        </div>
+      </dl>
+
+      <section className="flex items-start gap-3 rounded-md border bg-muted/25 p-3">
+        <MapPinOff aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        <div>
+          <h3 className="text-sm font-semibold">Call location unavailable</h3>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            Lucid query events do not expose a reliable application call site. Use the batch
+            timeline and route tags to trace the code path without recording a misleading stack.
+          </p>
+        </div>
+      </section>
+
+      {content.error && <JsonTree label="Database error" value={content.error} />}
+
+      <Button
+        render={<Link to={`/requests/${encodeURIComponent(entry.batchId)}`} />}
+        variant="outline"
+      >
+        <Database aria-hidden="true" />
+        Open request batch
+      </Button>
+    </EntryDetailDrawer>
+  )
+}
+
+export function QueriesPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const { status, revision } = useDashboard()
+  const [selected, setSelected] = useState<StoredEntry | null>(null)
+  const slowOnly = searchParams.get('slow') === 'true'
+  const activeTags = useMemo(() => normalizeExactTags(searchParams.getAll('tag')), [searchParams])
+  const tag = activeTags[0]
   const filters = useMemo<EntryFilters>(
-    () => ({ type: 'query', tag, displayOnIndex: true, limit: 50 }),
-    [tag]
+    () => ({
+      type: 'query',
+      tags: normalizeExactTags([...activeTags, slowOnly ? 'slow' : undefined]),
+      displayOnIndex: true,
+      limit: 50,
+    }),
+    [activeTags, slowOnly]
   )
   const pagination = useCursorPagination(filters)
   const reload = pagination.reload
   const polling = useNewEntryPolling(pagination.entries, filters, status?.paused ?? true, revision)
-  const visibleEntries = slowOnly
-    ? pagination.entries.filter((entry) => entry.tags.includes('slow'))
-    : pagination.entries
-  const visiblePending = slowOnly
-    ? polling.pending.filter((entry) => entry.tags.includes('slow'))
-    : polling.pending
 
   useEffect(() => {
     if (revision > 0) void reload()
   }, [reload, revision])
 
-  useEffect(() => {
-    if (!selected) {
-      setBatchEntries([])
-      setDetailError(null)
-      return
-    }
-    const controller = new AbortController()
-    setDetailLoading(true)
-    setDetailError(null)
-    api
-      .getBatch(selected.batchId, controller.signal)
-      .then(setBatchEntries)
-      .catch((cause: unknown) => {
-        if (!controller.signal.aborted) {
-          setDetailError(cause instanceof Error ? cause : new Error('Unable to inspect this batch'))
-        }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setDetailLoading(false)
-      })
-    return () => controller.abort()
-  }, [selected])
-
-  const content = selected ? queryContent(selected) : null
-  const occurrenceCount = selected?.familyHash
-    ? Math.max(
-        1,
-        batchEntries.filter(
-          (entry) => entry.type === 'query' && entry.familyHash === selected.familyHash
-        ).length
-      )
-    : selected
-      ? 1
-      : 0
-  const threshold = status?.nPlusOneThreshold ?? 5
-  const isNPlusOne = occurrenceCount >= threshold
 
   const acceptNew = () => pagination.prepend(polling.accept())
-  const openQuery = (entry: StoredEntry) => {
-    setBatchEntries([])
-    setDetailError(null)
-    setSelected(entry)
-  }
+  const openQuery = (entry: StoredEntry) => setSelected(entry)
 
   return (
     <div className="space-y-4">
@@ -182,7 +266,12 @@ export function QueriesPage() {
               <Switch
                 aria-label="Show slow queries only"
                 checked={slowOnly}
-                onCheckedChange={setSlowOnly}
+                onCheckedChange={(checked) => {
+                  const next = new URLSearchParams(searchParams)
+                  if (checked) next.set('slow', 'true')
+                  else next.delete('slow')
+                  setSearchParams(next)
+                }}
               />
             </label>
           </div>
@@ -194,131 +283,33 @@ export function QueriesPage() {
         columns={columns}
         emptyDescription={
           slowOnly
-            ? 'No slow query is present in the loaded result set. Load older entries or turn off the filter.'
+            ? 'No query carries the exact slow tag in the selected result set. Turn off the filter to inspect all queries.'
             : tag
               ? `No query carries the exact tag “${tag}”. Try another tag or clear the filter.`
               : 'Run a Lucid query while debug events are enabled. It will appear here automatically.'
         }
-        emptyTitle={
-          slowOnly ? 'No slow queries loaded' : tag ? 'No matching queries' : 'Waiting for queries'
-        }
+        emptyTitle={slowOnly ? 'No slow queries' : tag ? 'No matching queries' : 'Waiting for queries'}
         error={pagination.error}
         hasMore={pagination.hasMore}
         loading={pagination.loading}
         loadingMore={pagination.loadingMore}
-        newCount={visiblePending.length}
+        newCount={polling.pending.length}
         onAcceptNew={acceptNew}
         onLoadMore={() => void pagination.loadMore()}
         onRetry={() => void pagination.reload()}
         onRowOpen={openQuery}
         rowLabel={(entry) => `Inspect query: ${truncate(queryContent(entry).sql, 80)}`}
-        rows={visibleEntries}
+        rows={pagination.entries}
       />
 
-      <EntryDetailDrawer
-        description={
-          selected
-            ? `${queryContent(selected).connection} · ${formatDateTime(selected.createdAt)}`
-            : 'Query detail'
-        }
-        meta={
-          selected &&
-          content && (
-            <>
-              <DurationBadge slow={selected.tags.includes('slow')} value={content.durationMs} />
-              {isNPlusOne && <Badge variant="warning">possible n+1</Badge>}
-              {content.error && <Badge variant="destructive">failed</Badge>}
-            </>
-          )
-        }
-        onOpenChange={(open) => !open && setSelected(null)}
-        open={selected !== null}
-        tags={selected?.tags}
-        title={content ? truncate(content.sql.replace(/\s+/g, ' '), 96) : 'Query detail'}
-      >
-        {content && selected && (
-          <>
-            <SqlBlock bindings={content.bindings} sql={content.sql} />
-
-            <section className="rounded-md border bg-muted/25 p-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-semibold">Query shape in this batch</h3>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    Entries sharing the same normalized SQL family hash.
-                  </p>
-                </div>
-                {detailLoading ? (
-                  <Skeleton className="h-6 w-24" />
-                ) : (
-                  <Badge size="lg" variant={isNPlusOne ? 'warning' : 'secondary'}>
-                    {occurrenceCount} {occurrenceCount === 1 ? 'occurrence' : 'occurrences'}
-                  </Badge>
-                )}
-              </div>
-              {isNPlusOne && (
-                <p className="mt-3 flex items-start gap-2 text-sm text-warning-foreground">
-                  <TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-                  This meets the configured n+1 hint threshold of {threshold}. Check whether the
-                  query runs once per record.
-                </p>
-              )}
-              {detailError && (
-                <p className="mt-3 text-xs text-destructive-foreground">{detailError.message}</p>
-              )}
-            </section>
-
-            <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
-              <div>
-                <dt className="text-xs text-muted-foreground">Connection</dt>
-                <dd className="mt-0.5 font-mono text-sm">{content.connection}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">Operation</dt>
-                <dd className="mt-0.5 font-mono text-sm">{content.method}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">Model</dt>
-                <dd className="mt-0.5 text-sm">{content.model ?? 'Not associated with a model'}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">Family hash</dt>
-                <dd
-                  className="mt-0.5 truncate font-mono text-xs"
-                  title={selected.familyHash ?? undefined}
-                >
-                  {selected.familyHash ?? 'Unavailable'}
-                </dd>
-              </div>
-            </dl>
-
-            <section className="flex items-start gap-3 rounded-md border bg-muted/25 p-3">
-              <MapPinOff
-                aria-hidden="true"
-                className="mt-0.5 size-4 shrink-0 text-muted-foreground"
-              />
-              <div>
-                <h3 className="text-sm font-semibold">Call location unavailable</h3>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  Lucid query events do not expose a reliable application call site. Use the batch
-                  timeline and route tags to trace the code path without recording a misleading
-                  stack.
-                </p>
-              </div>
-            </section>
-
-            {content.error && <JsonTree label="Database error" value={content.error} />}
-
-            <Button
-              render={<Link to={`/requests/${encodeURIComponent(selected.batchId)}`} />}
-              variant="outline"
-            >
-              <Database aria-hidden="true" />
-              Open request batch
-            </Button>
-          </>
-        )}
-      </EntryDetailDrawer>
+      {selected && (
+        <RegistryEntryDetail
+          detailComponent={QueryEntryDetail}
+          entry={selected}
+          onClose={() => setSelected(null)}
+          open={selected !== null}
+        />
+      )}
     </div>
   )
 }

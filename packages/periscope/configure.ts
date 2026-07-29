@@ -229,7 +229,9 @@ function providerRegistrationKind(
     return isStandardProviderEntry(periscopeEntry.getText(), PROVIDER_PATH) ? 'standard' : 'custom'
   }
 
-  return /\bimport\(\s*(['"])@rikology\/adonisjs-periscope\/provider\1\s*\)/.test(rcFile.getFullText())
+  return /\bimport\(\s*(['"])@rikology\/adonisjs-periscope\/provider\1\s*\)/.test(
+    rcFile.getFullText()
+  )
     ? 'custom'
     : 'missing'
 }
@@ -521,7 +523,9 @@ function warnExceptionHandler(command: Configure, composedExpression?: string) {
   command.logger.warning(
     "Periscope left app/exceptions/handler.ts unchanged. Add the runtime import below, then keep the handler constructor locally named and replace its current default export with a wrapped one. For a default-exported class, give an anonymous class a name and remove the class's export default modifiers first:"
   )
-  command.logger.log("import { withPeriscope } from '@rikology/adonisjs-periscope/exception_reporter'")
+  command.logger.log(
+    "import { withPeriscope } from '@rikology/adonisjs-periscope/exception_reporter'"
+  )
   command.logger.log(
     `export default withPeriscope(${composedExpression ?? 'HttpExceptionHandler'})`
   )
@@ -551,7 +555,8 @@ function hasWithPeriscopeConflict(file: SourceFile) {
     return declaration.getNamedImports().some((specifier) => {
       const localName = specifier.getAliasNode()?.getText() ?? specifier.getName()
       const isExpectedReporterImport =
-        declaration.getModuleSpecifierValue() === '@rikology/adonisjs-periscope/exception_reporter' &&
+        declaration.getModuleSpecifierValue() ===
+          '@rikology/adonisjs-periscope/exception_reporter' &&
         specifier.getName() === 'withPeriscope' &&
         !specifier.getAliasNode()
       return localName === 'withPeriscope' && !isExpectedReporterImport

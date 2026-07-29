@@ -48,10 +48,12 @@ const DEFAULTS: ResolvedPeriscopeConfig = {
       model: 100,
       gate: 100,
       dump: 100,
+      view: 100,
       http_client: 100,
       schedule: 100,
       job: 100,
-      notification: 100,
+      health_check: 100,
+      broadcast: 100,
       redis: 100,
       session: 100,
     },
@@ -75,8 +77,10 @@ const DEFAULTS: ResolvedPeriscopeConfig = {
       enabled: true,
       slowMs: 1_000,
       captureResponse: true,
+      captureInertia: true,
       responseSizeLimitKb: 64,
       captureSession: true,
+      ignorePaths: [],
     },
     query: {
       enabled: true,
@@ -99,6 +103,7 @@ const DEFAULTS: ResolvedPeriscopeConfig = {
     command: {
       enabled: true,
       ignore: [],
+      captureOutput: true,
     },
     mail: {
       enabled: true,
@@ -118,17 +123,26 @@ const DEFAULTS: ResolvedPeriscopeConfig = {
     dump: {
       enabled: true,
     },
+    view: {
+      enabled: true,
+      captureDataKeys: true,
+    },
     http_client: {
       enabled: true,
+      slowMs: 1_000,
     },
+    health_check: { enabled: true },
+    transmit: { enabled: false, capturePayload: false },
     job_schedule: { enabled: false, adapters: [], capturePayload: false },
     redis: { enabled: false, captureArguments: false },
     session: { enabled: false, captureValues: false },
+    custom: [],
   },
   dashboard: {
     path: '/periscope',
     authorize: DEFAULT_DASHBOARD_AUTHORIZE,
     nPlusOneThreshold: 5,
+    sseMaxClients: 5,
   },
 }
 
@@ -204,6 +218,10 @@ test.group('defineConfig | defaults', () => {
     assert.notProperty(defineConfig({}).storage, 'connection')
   })
 
+  test('leave storage.retention absent when it was not configured', ({ assert }) => {
+    assert.notProperty(defineConfig({}).storage, 'retention')
+  })
+
   test('keep storage.connection when it was configured', ({ assert }) => {
     const config = defineConfig({ storage: { driver: 'database', connection: 'periscope' } })
 
@@ -221,11 +239,13 @@ test.group('defineConfig | defaults', () => {
     first.redact.keys.push('mutated')
     first.enabledIn.push('staging')
     first.watchers.command.ignore.push('mutated')
+    first.watchers.request.ignorePaths.push('mutated')
     first.watchers.gate.ignoreAbilities.push('mutated')
 
     assert.notInclude(second.redact.keys, 'mutated')
     assert.notInclude(second.enabledIn, 'staging')
     assert.notInclude(second.watchers.command.ignore, 'mutated')
+    assert.notInclude(second.watchers.request.ignorePaths, 'mutated')
     assert.notInclude(second.watchers.gate.ignoreAbilities, 'mutated')
   })
 })
@@ -236,6 +256,17 @@ test.group('defineConfig | merging', () => {
 
     assert.equal(config.storage.driver, 'memory')
     assert.equal(config.storage.maxEntries, 10_000)
+  })
+
+  test('resolve the automatic retention window and exception policy', ({ assert }) => {
+    const config = defineConfig({
+      storage: { retention: { hours: 72, keepExceptions: true } },
+    })
+
+    assert.deepEqual(config.storage.retention, {
+      hours: 72,
+      keepExceptions: true,
+    })
   })
 
   test('merge a sparse watcher override without disturbing watcher defaults', ({ assert }) => {
@@ -255,25 +286,41 @@ test.group('defineConfig | merging', () => {
     assert.deepEqual(config.watchers.model, DEFAULTS.watchers.model)
     assert.deepEqual(config.watchers.gate, DEFAULTS.watchers.gate)
     assert.deepEqual(config.watchers.dump, DEFAULTS.watchers.dump)
+    assert.deepEqual(config.watchers.view, DEFAULTS.watchers.view)
     assert.deepEqual(config.watchers.http_client, DEFAULTS.watchers.http_client)
+  })
+
+  test('parse request ignore paths as a resolved string array', ({ assert }) => {
+    const config = defineConfig({
+      watchers: { request: { ignorePaths: ['/assets/*', '/health'] } },
+    })
+
+    assert.deepEqual(config.watchers.request, {
+      ...DEFAULTS.watchers.request,
+      ignorePaths: ['/assets/*', '/health'],
+    })
   })
 
   test('resolve every watcher override into its dense shape', ({ assert }) => {
     const config = defineConfig({
       watchers: {
-        command: { enabled: false, ignore: ['health:check'] },
+        command: { enabled: false, ignore: ['health:check'], captureOutput: false },
         mail: { enabled: false },
         cache: { enabled: false, captureValues: true },
         model: { enabled: false, captureDirty: true },
         gate: { enabled: false, ignoreAbilities: ['admin'] },
         dump: { enabled: false },
-        http_client: { enabled: false },
+        view: { enabled: false, captureDataKeys: false },
+        http_client: { enabled: false, slowMs: 250 },
+        health_check: { enabled: false },
+        transmit: { enabled: true, capturePayload: true },
       },
     })
 
     assert.deepEqual(config.watchers.command, {
       enabled: false,
       ignore: ['health:check'],
+      captureOutput: false,
     })
     assert.deepEqual(config.watchers.mail, { enabled: false })
     assert.deepEqual(config.watchers.cache, { enabled: false, captureValues: true })
@@ -283,7 +330,10 @@ test.group('defineConfig | merging', () => {
       ignoreAbilities: ['admin'],
     })
     assert.deepEqual(config.watchers.dump, { enabled: false })
-    assert.deepEqual(config.watchers.http_client, { enabled: false })
+    assert.deepEqual(config.watchers.view, { enabled: false, captureDataKeys: false })
+    assert.deepEqual(config.watchers.http_client, { enabled: false, slowMs: 250 })
+    assert.deepEqual(config.watchers.health_check, { enabled: false })
+    assert.deepEqual(config.watchers.transmit, { enabled: true, capturePayload: true })
   })
 
   test('normalise a trailing slash from the dashboard path but preserve the root', ({ assert }) => {
@@ -291,14 +341,17 @@ test.group('defineConfig | merging', () => {
     assert.equal(defineConfig({ dashboard: { path: '/' } }).dashboard.path, '/')
   })
 
-  test('merge dashboard authorization and N+1 threshold over defaults', async ({ assert }) => {
+  test('merge dashboard authorization, N+1 threshold, and SSE cap over defaults', async ({
+    assert,
+  }) => {
     const authorize = async () => false
     const config = defineConfig({
-      dashboard: { authorize, nPlusOneThreshold: 9 },
+      dashboard: { authorize, nPlusOneThreshold: 9, sseMaxClients: 12 },
     })
 
     assert.strictEqual(config.dashboard.authorize, authorize)
     assert.equal(config.dashboard.nPlusOneThreshold, 9)
+    assert.equal(config.dashboard.sseMaxClients, 12)
     assert.isFalse(await config.dashboard.authorize({} as never))
   })
 
@@ -466,6 +519,20 @@ test.group('defineConfig | validation', () => {
     assert.include(issues[0], 'null')
   })
 
+  test('require a factory for custom storage and reject it for shipped drivers', ({ assert }) => {
+    assert.include(rejectionOf({ storage: { driver: 'custom' } }).paths, 'storage.factory')
+    assert.include(
+      rejectionOf({
+        storage: { driver: 'memory', factory: () => ({}) as never },
+      }).paths,
+      'storage.factory'
+    )
+    assert.include(
+      rejectionOf({ storage: { driver: 'custom', factory: true } }).paths,
+      'storage.factory'
+    )
+  })
+
   test('reject an array where a block is expected', ({ assert }) => {
     assert.include(rejectionOf({ recording: [] }).paths, 'recording')
   })
@@ -474,7 +541,7 @@ test.group('defineConfig | validation', () => {
     const { issues, paths } = rejectionOf({ storage: { driver: 'postgres' } })
 
     assert.include(paths, 'storage.driver')
-    assert.include(issues[0], 'memory, sqlite-local, database')
+    assert.include(issues[0], 'memory, sqlite-local, database, custom')
   })
 
   test('reject a blank storage connection', ({ assert }) => {
@@ -487,6 +554,24 @@ test.group('defineConfig | validation', () => {
 
   test('reject a fractional maxEntries', ({ assert }) => {
     assert.include(rejectionOf({ storage: { maxEntries: 1.5 } }).paths, 'storage.maxEntries')
+  })
+
+  test('validate the automatic retention block', ({ assert }) => {
+    assert.include(rejectionOf({ storage: { retention: {} } }).paths, 'storage.retention.hours')
+    assert.include(
+      rejectionOf({ storage: { retention: { hours: 0 } } }).paths,
+      'storage.retention.hours'
+    )
+    assert.include(
+      rejectionOf({ storage: { retention: { hours: 1.5 } } }).paths,
+      'storage.retention.hours'
+    )
+    assert.include(
+      rejectionOf({
+        storage: { retention: { hours: 24, keepExceptions: 'yes' } },
+      }).paths,
+      'storage.retention.keepExceptions'
+    )
   })
 
   test('reject a cap that is negative', ({ assert }) => {
@@ -508,6 +593,13 @@ test.group('defineConfig | validation', () => {
 
     assert.include(paths, 'recording.caps.queries')
     assert.include(issues[0], 'default')
+  })
+
+  test('reject a negative HTTP client slow threshold', ({ assert }) => {
+    assert.include(
+      rejectionOf({ watchers: { http_client: { slowMs: -1 } } }).paths,
+      'watchers.http_client.slowMs'
+    )
   })
 
   test('reject a non-positive ambient rotation', ({ assert }) => {
@@ -581,6 +673,14 @@ test.group('defineConfig | validation', () => {
     assert.include(rejectionOf({ hooks: { tag: 'nope' } }).paths, 'hooks.tag')
   })
 
+  test('reject custom watcher factories that are not functions', ({ assert }) => {
+    assert.include(
+      rejectionOf({ watchers: { custom: [() => ({}) as never, null] } }).paths,
+      'watchers.custom[1]'
+    )
+    assert.include(rejectionOf({ watchers: { custom: true } }).paths, 'watchers.custom')
+  })
+
   test('reject an unknown top-level key and list the accepted ones', ({ assert }) => {
     const { issues, paths } = rejectionOf({ redaction: { keys: [] } })
 
@@ -597,9 +697,13 @@ test.group('defineConfig | validation', () => {
     assert.include(rejectionOf({ watchers: { schedule: {} } }).paths, 'watchers.schedule')
   })
 
-  test('reject an unknown request watcher key', ({ assert }) => {
+  test('accept request ignorePaths while still rejecting unknown request watcher keys', ({
+    assert,
+  }) => {
     assert.include(
-      rejectionOf({ watchers: { request: { timeout: 50 } } }).paths,
+      rejectionOf({
+        watchers: { request: { ignorePaths: ['/assets/*'], timeout: 50 } },
+      }).paths,
       'watchers.request.timeout'
     )
   })
@@ -639,10 +743,21 @@ test.group('defineConfig | validation', () => {
     )
   })
 
+  test('reject request ignorePaths when it is not a string array', ({ assert }) => {
+    assert.include(
+      rejectionOf({ watchers: { request: { ignorePaths: ['/assets/*', 42] } } }).paths,
+      'watchers.request.ignorePaths[1]'
+    )
+  })
+
   test('reject invalid watcher-specific options', ({ assert }) => {
     assert.include(
       rejectionOf({ watchers: { command: { ignore: 'periscope:clear' } } }).paths,
       'watchers.command.ignore'
+    )
+    assert.include(
+      rejectionOf({ watchers: { command: { captureOutput: 'yes' } } }).paths,
+      'watchers.command.captureOutput'
     )
     assert.include(
       rejectionOf({ watchers: { cache: { captureValues: 'yes' } } }).paths,
@@ -681,11 +796,18 @@ test.group('defineConfig | validation', () => {
     )
   })
 
+  test('reject a non-positive dashboard SSE client cap', ({ assert }) => {
+    assert.include(
+      rejectionOf({ dashboard: { sseMaxClients: 0 } }).paths,
+      'dashboard.sseMaxClients'
+    )
+  })
+
   test('reject a config that is not an object at all', ({ assert }) => {
     assert.include(rejectionOf(null).paths, 'config')
   })
 
-  test('report every problem in a single throw', ({ assert }) => {
+  test('report independent problems together', ({ assert }) => {
     const { paths } = rejectionOf({
       enabled: 'yes',
       storage: { driver: 'postgres' },
@@ -717,7 +839,7 @@ test.group('defineConfig | types', () => {
     expectTypeOf(defineConfig({})).toEqualTypeOf<ResolvedPeriscopeConfig>()
     expectTypeOf(defineConfig({}).recording.caps).toEqualTypeOf<Record<EntryType, number>>()
     expectTypeOf(defineConfig({}).storage.driver).toEqualTypeOf<
-      'memory' | 'sqlite-local' | 'database'
+      'memory' | 'sqlite-local' | 'database' | 'custom'
     >()
   })
 

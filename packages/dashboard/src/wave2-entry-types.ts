@@ -5,8 +5,13 @@ import {
   CircleGauge,
   DatabaseZap,
   Globe2,
+  HeartPulse,
   KeyRound,
   Mail,
+  PanelsTopLeft,
+  Radio,
+  RadioTower,
+  ScrollText,
   ShieldCheck,
   SquareTerminal,
 } from 'lucide-react'
@@ -15,6 +20,24 @@ import { registerEntryType } from '@/entry-type-registry'
 import type { EntryTypeRegistration } from '@/entry-type-registry'
 import { assertUniqueEntryTypeMetadata } from '@/lib/entry-type-registration'
 import type { EntryType } from '@/types'
+
+const eventsEntryType = registerEntryType({
+  type: 'event',
+  path: 'events',
+  label: 'Events',
+  group: 'Application',
+  icon: Radio,
+  load: () => import('@/pages/events-page').then((module) => module.eventsEntryTypeImplementation),
+})
+
+const logsEntryType = registerEntryType({
+  type: 'log',
+  path: 'logs',
+  label: 'Logs',
+  group: 'Diagnostics',
+  icon: ScrollText,
+  load: () => import('@/pages/logs-page').then((module) => module.logsEntryTypeImplementation),
+})
 
 const commandsEntryType = registerEntryType({
   type: 'command',
@@ -62,6 +85,15 @@ const gatesEntryType = registerEntryType({
   load: () => import('@/pages/gates-page').then((module) => module.gatesEntryTypeImplementation),
 })
 
+const viewsEntryType = registerEntryType({
+  type: 'view',
+  path: 'views',
+  label: 'Views',
+  group: 'Application',
+  icon: PanelsTopLeft,
+  load: () => import('@/pages/views-page').then((module) => module.viewsEntryTypeImplementation),
+})
+
 const dumpsEntryType = registerEntryType({
   type: 'dump',
   path: 'dumps',
@@ -99,6 +131,28 @@ const jobsEntryType = registerEntryType({
   load: () => import('@/pages/jobs-page').then((module) => module.jobsEntryTypeImplementation),
 })
 
+const broadcastsEntryType = registerEntryType({
+  type: 'broadcast',
+  path: 'broadcasts',
+  label: 'Broadcasts',
+  group: 'Infrastructure',
+  icon: RadioTower,
+  load: () =>
+    import('@/pages/broadcasts-page').then((module) => module.broadcastsEntryTypeImplementation),
+})
+
+const healthChecksEntryType = registerEntryType({
+  type: 'health_check',
+  path: 'health-checks',
+  label: 'Health checks',
+  group: 'Infrastructure',
+  icon: HeartPulse,
+  load: () =>
+    import('@/pages/health-checks-page').then(
+      (module) => module.healthChecksEntryTypeImplementation
+    ),
+})
+
 const redisEntryType = registerEntryType({
   type: 'redis',
   path: 'redis',
@@ -119,15 +173,20 @@ const sessionsEntryType = registerEntryType({
 })
 
 export const wave2EntryTypes: readonly EntryTypeRegistration[] = Object.freeze([
+  eventsEntryType,
   commandsEntryType,
   mailEntryType,
   cacheEntryType,
   modelsEntryType,
   gatesEntryType,
+  viewsEntryType,
+  logsEntryType,
   dumpsEntryType,
   httpClientEntryType,
   schedulesEntryType,
   jobsEntryType,
+  broadcastsEntryType,
+  healthChecksEntryType,
   redisEntryType,
   sessionsEntryType,
 ])
@@ -146,10 +205,12 @@ const entryTypeLabels: Record<EntryType, string> = {
   model: 'Model',
   gate: 'Gate',
   dump: 'Dump',
+  view: 'View',
   http_client: 'HTTP client',
   schedule: 'Schedule',
   job: 'Job',
-  notification: 'Notification',
+  broadcast: 'Broadcast',
+  health_check: 'Health check',
   redis: 'Redis',
   session: 'Session',
 }

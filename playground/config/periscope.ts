@@ -202,6 +202,10 @@ export default defineConfig({
       enabled: !benchmarking,
     },
 
+    health_check: {
+      enabled: !benchmarking,
+    },
+
     /**
      * The opt-in integrations. They subscribe to nothing by default; the playground turns them
      * all on so `/showcase` and the session routes can prove them end-to-end.

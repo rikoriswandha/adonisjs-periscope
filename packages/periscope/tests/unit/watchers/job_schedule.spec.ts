@@ -11,17 +11,23 @@ import { defineConfig } from '../../../src/define_config.ts'
 import { Recorder } from '../../../src/recorder/recorder.ts'
 import { MemoryStore } from '../../../src/storage/memory_store.ts'
 import { EntryType } from '../../../src/types.ts'
-import type { QueueWatcherAdapter, QueueWatcherObserver } from '../../../src/types.ts'
+import type {
+  QueueWatcherAdapter,
+  QueueWatcherObserver,
+  QueueWatcherRegistrationOptions,
+} from '../../../src/types.ts'
 import { JobScheduleWatcher } from '../../../src/watchers/job_schedule/watcher.ts'
 import { createApp } from '../../helpers/app_factory.ts'
 
 class TestQueueAdapter implements QueueWatcherAdapter {
   readonly name = 'test'
   observer: QueueWatcherObserver | null = null
+  options: QueueWatcherRegistrationOptions | undefined
   cleaned = false
 
-  register(observer: QueueWatcherObserver) {
+  register(observer: QueueWatcherObserver, options?: QueueWatcherRegistrationOptions) {
     this.observer = observer
+    this.options = options
     return () => {
       this.cleaned = true
     }
@@ -66,6 +72,7 @@ test.group('JobScheduleWatcher', () => {
       jobId: '42',
       attempts: 2,
       result: { delivered: true },
+      durationMs: 17.5,
     })
     await settle()
 
@@ -81,8 +88,34 @@ test.group('JobScheduleWatcher', () => {
       payload: { orderId: 7 },
       result: { delivered: true },
     })
-    assert.isNumber(page.data[0].content.durationMs)
+    assert.deepEqual(adapter.options, { capturePayload: true })
+    assert.equal(page.data[0].content.durationMs, 17.5)
     assert.deepEqual(watcher.stats, { jobs: 1, schedules: 0 })
+  })
+
+  test('uses terminal metadata when the start lookup had no details', async ({ assert }) => {
+    const { adapter, store } = await makeWatcher(true)
+    adapter.observer!.started({
+      adapter: 'test',
+      queue: 'mail',
+      jobId: 'late-metadata',
+    })
+    adapter.observer!.completed({
+      adapter: 'test',
+      queue: 'mail',
+      jobId: 'late-metadata',
+      name: 'SendReceipt',
+      payload: { orderId: 9 },
+      attempts: 1,
+    })
+    await settle()
+
+    const page = await store.list({ type: EntryType.JOB })
+    assert.deepInclude(page.data[0].content, {
+      name: 'SendReceipt',
+      payload: { orderId: 9 },
+      attempts: 1,
+    })
   })
 
   test('evict the oldest active job correlation after the bounded capacity', async ({ assert }) => {

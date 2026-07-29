@@ -8,6 +8,22 @@ import type {
   StoredEntry,
 } from '@/types'
 
+export type DashboardStats = {
+  requests: {
+    sampled: number
+    errorCount: number
+    p50: number | null
+    p95: number | null
+  }
+  slowQueryFamilies: Array<{
+    familyHash: string
+    sql: string
+    count: number
+    avgDurationMs: number | null
+    maxDurationMs: number | null
+  }>
+}
+
 export class ApiError extends Error {
   readonly status: number
 
@@ -96,7 +112,12 @@ export const api = {
   listEntries(filters: EntryFilters, signal?: AbortSignal): Promise<EntryPage> {
     const params = new URLSearchParams()
     appendFilter(params, 'type', filters.type)
-    appendFilter(params, 'tag', filters.tag)
+    appendFilter(params, 'text', filters.text)
+    appendFilter(params, 'from', filters.from)
+    appendFilter(params, 'to', filters.to)
+    const tags = new Set<string>(filters.tags)
+    if (filters.tag) tags.add(filters.tag)
+    for (const tag of tags) params.append('tag', tag)
     appendFilter(params, 'family_hash', filters.familyHash)
     appendFilter(params, 'batch_id', filters.batchId)
     appendFilter(params, 'application', filters.application)
@@ -130,6 +151,14 @@ export const api = {
     const params = new URLSearchParams()
     appendFilter(params, 'application', application)
     return request<{ data: EntryCounts }>(`counts?${params.toString()}`, { signal }).then(
+      (response) => response.data
+    )
+  },
+
+  getStats(application?: string, signal?: AbortSignal): Promise<DashboardStats> {
+    const params = new URLSearchParams()
+    appendFilter(params, 'application', application)
+    return request<{ data: DashboardStats }>(`stats?${params.toString()}`, { signal }).then(
       (response) => response.data
     )
   },

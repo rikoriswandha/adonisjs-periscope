@@ -13,6 +13,7 @@ import {
   Inbox,
   Mail,
   Network,
+  PanelsTopLeft,
   ShieldCheck,
   SquareTerminal,
   UserRound,
@@ -34,6 +35,8 @@ import { Frame, FramePanel } from '@/components/ui/frame'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsPanel, TabsTab } from '@/components/ui/tabs'
 import { useDashboard } from '@/dashboard-context'
+import { RegistryEntryDetail } from '@/entry-type-registry'
+import type { RegisteredEntryDetailProps } from '@/entry-type-registry'
 import { api } from '@/lib/api'
 import {
   asNumber,
@@ -54,6 +57,7 @@ import type {
   ModelContent,
   RequestContent,
   StoredEntry,
+  ViewContent,
 } from '@/types'
 
 function entrySummary(entry: StoredEntry): string {
@@ -101,6 +105,8 @@ function entrySummary(entry: StoredEntry): string {
       const content = entry.content as HttpClientContent
       return `${asString(content.method, 'HTTP')} ${asString(content.url, 'request')}`
     }
+    case 'view':
+      return asString((entry.content as ViewContent).template, 'Edge view')
     default:
       return asString(entry.content.message, `${entry.type.replace('_', ' ')} entry`)
   }
@@ -128,6 +134,8 @@ function TimelineIcon({ type }: { type: StoredEntry['type'] }) {
       return <Braces aria-hidden="true" />
     case 'http_client':
       return <Globe2 aria-hidden="true" />
+    case 'view':
+      return <PanelsTopLeft aria-hidden="true" />
     default:
       return <FileJson aria-hidden="true" />
   }
@@ -182,6 +190,136 @@ function BatchTimeline({
         </section>
       </FramePanel>
     </Frame>
+  )
+}
+
+export function RequestEntryDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
+  const request = entry.content as RequestContent
+
+  return (
+    <EntryDetailDrawer
+      description={`${request.routePattern ?? 'Unmatched route'} · ${formatDateTime(entry.createdAt)}`}
+      meta={
+        <>
+          <Badge className="font-mono" variant="outline">
+            {request.method}
+          </Badge>
+          <StatusBadge status={request.status} />
+          <DurationBadge value={request.durationMs} />
+          {request.clientDisconnected && <Badge variant="warning">client disconnected</Badge>}
+        </>
+      }
+      onOpenChange={(nextOpen) => !nextOpen && onClose()}
+      open={open}
+      tags={entry.tags}
+      title={truncate(request.url, 120)}
+    >
+      <section className="space-y-3 rounded-md border bg-muted/25 p-3">
+        <div>
+          <h3 className="font-mono text-sm font-semibold break-all">{request.url}</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {request.routePattern ?? 'Unmatched route'}
+            {request.routeName ? ` · ${request.routeName}` : ''}
+          </p>
+        </div>
+        {request.traceId && (
+          <p className="truncate font-mono text-xs text-muted-foreground">
+            Trace <span title={request.traceId}>{request.traceId}</span>
+          </p>
+        )}
+        {request.inertia && (
+          <div className="flex flex-col gap-1.5 rounded-md border bg-background px-3 py-2 text-xs sm:flex-row sm:items-start sm:gap-3">
+            <span className="flex shrink-0 items-center gap-1.5 font-medium text-foreground">
+              <Braces aria-hidden="true" className="size-3.5 text-muted-foreground" />
+              Inertia
+            </span>
+            <span className="min-w-0">
+              <span className="block break-all font-mono font-medium text-foreground">
+                {request.inertia.component}
+              </span>
+              {request.inertia.propKeys && (
+                <span className="mt-0.5 block break-words text-muted-foreground">
+                  Props: {request.inertia.propKeys.join(', ') || 'None'}
+                </span>
+              )}
+            </span>
+          </div>
+        )}
+      </section>
+
+      <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
+        <div>
+          <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Globe2 aria-hidden="true" className="size-3.5" /> Client
+          </dt>
+          <dd className="mt-1 break-all text-sm font-medium">{request.ip}</dd>
+        </div>
+        <div>
+          <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <UserRound aria-hidden="true" className="size-3.5" /> User
+          </dt>
+          <dd className="mt-1 truncate text-sm font-medium">
+            {request.user?.email ?? request.user?.id ?? 'Guest'}
+          </dd>
+        </div>
+        <div>
+          <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Clock3 aria-hidden="true" className="size-3.5" /> Memory delta
+          </dt>
+          <dd className="mt-1 font-mono text-sm font-medium">
+            {formatBytes(request.memoryDeltaBytes)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Batch ID</dt>
+          <dd className="mt-1 truncate font-mono text-xs font-medium" title={entry.batchId}>
+            {entry.batchId}
+          </dd>
+        </div>
+      </dl>
+
+      <Tabs defaultValue="headers">
+        <div className="overflow-x-auto border-b">
+          <TabsList className="min-w-max" variant="underline">
+            <TabsTab value="headers">Headers</TabsTab>
+            <TabsTab value="payload">Payload</TabsTab>
+            <TabsTab value="response">Response</TabsTab>
+            <TabsTab value="session">Session</TabsTab>
+          </TabsList>
+        </div>
+        <TabsPanel className="pt-3" value="headers">
+          <JsonTree label="Request headers" value={request.headers} />
+        </TabsPanel>
+        <TabsPanel className="space-y-4 pt-3" value="payload">
+          <JsonTree label="Query parameters" value={request.query} />
+          <JsonTree label="Request payload" value={request.payload} />
+        </TabsPanel>
+        <TabsPanel className="space-y-3 pt-3" value="response">
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground">HTTP status</span>
+            <StatusBadge status={request.status} />
+          </div>
+          <JsonTree label="Response body" value={request.response ?? null} />
+        </TabsPanel>
+        <TabsPanel className="pt-3" value="session">
+          {request.session === undefined ? (
+            <p className="rounded-md border bg-muted/25 p-3 text-sm text-muted-foreground">
+              No session snapshot was captured for this request.
+            </p>
+          ) : (
+            <JsonTree label="Session snapshot" value={request.session} />
+          )}
+        </TabsPanel>
+      </Tabs>
+
+      <Button
+        render={<Link to={`/requests/${encodeURIComponent(entry.batchId)}`} />}
+        variant="outline"
+      >
+        <Network aria-hidden="true" />
+        Open request batch
+      </Button>
+    </EntryDetailDrawer>
   )
 }
 
@@ -327,11 +465,21 @@ export function RequestBatchPage() {
                     available in sequence order.
                   </p>
                 </div>
-                <div className="shrink-0 text-left sm:text-right">
-                  <div className="text-xs text-muted-foreground">Recorded</div>
-                  <time className="text-sm font-medium" dateTime={firstEntry.createdAt}>
-                    {formatDateTime(firstEntry.createdAt)}
-                  </time>
+                <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
+                  <Button
+                    render={<a download href={api.getBatchExportUrl(batchId)} />}
+                    size="sm"
+                    variant="outline"
+                  >
+                    <Download aria-hidden="true" />
+                    Export JSON
+                  </Button>
+                  <div className="text-left sm:text-right">
+                    <div className="text-xs text-muted-foreground">Recorded</div>
+                    <time className="text-sm font-medium" dateTime={firstEntry.createdAt}>
+                      {formatDateTime(firstEntry.createdAt)}
+                    </time>
+                  </div>
                 </div>
               </div>
               <dl className="grid divide-y bg-muted/25 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
@@ -361,25 +509,13 @@ export function RequestBatchPage() {
 
         <BatchTimeline onSelect={setSelected} timeline={timeline} />
 
-        <EntryDetailDrawer
-          description={selected ? formatDateTime(selected.createdAt) : 'Timeline entry'}
-          meta={
-            selected && (
-              <>
-                <Badge variant="secondary">{selected.type.replace('_', ' ')}</Badge>
-                {asNumber(selected.content.durationMs) !== undefined && (
-                  <DurationBadge value={asNumber(selected.content.durationMs)} />
-                )}
-              </>
-            )
-          }
-          onOpenChange={(open) => !open && setSelected(null)}
-          open={selected !== null}
-          tags={selected?.tags}
-          title={selected ? entrySummary(selected) : 'Timeline entry'}
-        >
-          {selected && <JsonTree label="Entry content" value={selected.content} />}
-        </EntryDetailDrawer>
+        {selected && (
+          <RegistryEntryDetail
+            entry={selected}
+            onClose={() => setSelected(null)}
+            open={selected !== null}
+          />
+        )}
       </div>
     )
   }
@@ -417,6 +553,24 @@ export function RequestBatchPage() {
                   <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
                     Trace <span title={request.traceId}>{request.traceId}</span>
                   </p>
+                )}
+                {request.inertia && (
+                  <div className="mt-3 flex flex-col gap-1.5 rounded-md border bg-muted/30 px-3 py-2 text-xs sm:flex-row sm:items-start sm:gap-3">
+                    <span className="flex shrink-0 items-center gap-1.5 font-medium text-foreground">
+                      <Braces aria-hidden="true" className="size-3.5 text-muted-foreground" />
+                      Inertia
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block break-all font-mono font-medium text-foreground">
+                        {request.inertia.component}
+                      </span>
+                      {request.inertia.propKeys && (
+                        <span className="mt-0.5 block break-words text-muted-foreground">
+                          Props: {request.inertia.propKeys.join(', ') || 'None'}
+                        </span>
+                      )}
+                    </span>
+                  </div>
                 )}
               </div>
               <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
@@ -539,25 +693,13 @@ export function RequestBatchPage() {
         </TabsPanel>
       </Tabs>
 
-      <EntryDetailDrawer
-        description={selected ? formatDateTime(selected.createdAt) : 'Timeline entry'}
-        meta={
-          selected && (
-            <>
-              <Badge variant="secondary">{selected.type.replace('_', ' ')}</Badge>
-              {asNumber(selected.content.durationMs) !== undefined && (
-                <DurationBadge value={asNumber(selected.content.durationMs)} />
-              )}
-            </>
-          )
-        }
-        onOpenChange={(open) => !open && setSelected(null)}
-        open={selected !== null}
-        tags={selected?.tags}
-        title={selected ? entrySummary(selected) : 'Timeline entry'}
-      >
-        {selected && <JsonTree label="Entry content" value={selected.content} />}
-      </EntryDetailDrawer>
+      {selected && (
+        <RegistryEntryDetail
+          entry={selected}
+          onClose={() => setSelected(null)}
+          open={selected !== null}
+        />
+      )}
     </div>
   )
 }

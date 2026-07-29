@@ -7,11 +7,13 @@
 
 import { getActiveTest, test } from '@japa/runner'
 import { args, BaseCommand, flags, Kernel, ListLoader } from '@adonisjs/core/ace'
+import { cliui } from '@poppinss/cliui'
 
 import { defineConfig } from '../../../src/define_config.ts'
 import { IncomingEntry } from '../../../src/entry.ts'
 import { BatchScope } from '../../../src/recorder/context.ts'
 import { Recorder } from '../../../src/recorder/recorder.ts'
+import { SERIALIZER_DEFAULTS } from '../../../src/recorder/serializer.ts'
 import { MemoryStore } from '../../../src/storage/memory_store.ts'
 import { EntryType } from '../../../src/types.ts'
 import { CommandWatcher } from '../../../src/watchers/command/watcher.ts'
@@ -47,6 +49,7 @@ class ThrowingCommand extends BaseCommand {
   static description = 'Throwing command fixture'
 
   async exec(): Promise<never> {
+    this.logger.log('rendered before failure')
     const error = new Error('command exploded')
     this.error = error
     this.exitCode = 17
@@ -92,18 +95,31 @@ class CleanupCommand extends BaseCommand {
   }
 }
 
+const OUTPUT_SECRET = 'sk-1234567890abcdef'
+
+class OutputCommand extends BaseCommand {
+  static commandName = 'testing:output'
+  static description = 'Output command fixture'
+
+  async run() {
+    this.logger.log(`credential ${OUTPUT_SECRET}`)
+    this.logger.log('x'.repeat(SERIALIZER_DEFAULTS.maxBytes * 2))
+  }
+}
+
 const COMMANDS = [
   SuccessfulCommand,
   ThrowingCommand,
   IgnoredCommand,
   PeriscopeCommand,
   CleanupCommand,
+  OutputCommand,
 ]
 
-async function makeWatcher(ignore: string[] = []) {
+async function makeWatcher(ignore: string[] = [], captureOutput = true) {
   const config = defineConfig({
     storage: { driver: 'memory' },
-    watchers: { command: { ignore } },
+    watchers: { command: { ignore, captureOutput } },
   })
   const { app, emitter } = await createApp({ environment: 'console' })
   const store = new MemoryStore({ maxEntries: 100 })
@@ -166,17 +182,62 @@ test.group('CommandWatcher', () => {
     assert.deepEqual(watcher.stats, { recorded: 1, ignored: 0 })
   })
 
+  test('capture bounded redacted output without replacing the selected renderer', async ({
+    assert,
+  }) => {
+    const { kernel, store } = await makeWatcher()
+    const ui = cliui({ mode: 'raw' })
+    const originalRenderer = ui.logger.getRenderer()
+
+    await kernel.exec('testing:output', [], { ui })
+    const page = await store.list({ limit: 10 })
+    const output = page.data[0]?.content.output
+    const visibleLogs = ui.logger.getLogs()
+
+    assert.strictEqual(ui.logger.getRenderer(), originalRenderer)
+    assert.lengthOf(visibleLogs, 2)
+    assert.equal(visibleLogs[0].message, `credential ${OUTPUT_SECRET}`)
+    assert.equal(visibleLogs[1].message.length, SERIALIZER_DEFAULTS.maxBytes * 2)
+    assert.typeOf(output, 'string')
+    if (typeof output !== 'string') {
+      assert.fail('Expected captured command output')
+      return
+    }
+
+    assert.include(output, 'credential [REDACTED]')
+    assert.notInclude(output, OUTPUT_SECRET)
+    assert.include(output, '[Truncated]')
+    assert.isAtMost(Buffer.byteLength(output), SERIALIZER_DEFAULTS.maxBytes)
+  })
+
+  test('leave renderer output alone when capture is disabled', async ({ assert }) => {
+    const { kernel, store } = await makeWatcher([], false)
+    const ui = cliui({ mode: 'raw' })
+    const originalRenderer = ui.logger.getRenderer()
+
+    await kernel.exec('testing:output', [], { ui })
+    const page = await store.list({ limit: 10 })
+
+    assert.strictEqual(ui.logger.getRenderer(), originalRenderer)
+    assert.lengthOf(ui.logger.getLogs(), 2)
+    assert.notProperty(page.data[0].content, 'output')
+  })
+
   test('record failures in finally without changing the rejection or exit code', async ({
     assert,
   }) => {
     const { kernel, store, watcher } = await makeWatcher()
 
-    await assert.rejects(() => kernel.exec('testing:throwing', []), /command exploded/)
+    const ui = cliui({ mode: 'raw' })
+    const originalRenderer = ui.logger.getRenderer()
+    await assert.rejects(() => kernel.exec('testing:throwing', [], { ui }), /command exploded/)
     const page = await store.list({ limit: 10 })
 
     assert.lengthOf(page.data, 1)
     assert.equal(page.data[0].type, EntryType.COMMAND)
     assert.equal(page.data[0].content.exitCode, 17)
+    assert.strictEqual(ui.logger.getRenderer(), originalRenderer)
+    assert.equal(page.data[0].content.output, 'rendered before failure\n')
     const recordedError = page.data[0].content.error
     if (recordedError !== null && typeof recordedError === 'object' && 'message' in recordedError) {
       assert.equal(recordedError.message, 'command exploded')

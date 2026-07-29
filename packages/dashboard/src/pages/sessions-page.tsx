@@ -68,9 +68,12 @@ export const sessionsEntryTypeImplementation: EntryTypeImplementation = {
     'Follow session initiation, commit, and identifier migration without exposing raw IDs.',
   caption: 'Recorded session lifecycle events',
   columns,
-  emptyTitle: () => 'Waiting for session activity',
-  emptyDescription: () =>
-    'Enable the session watcher, then handle a request that uses an AdonisJS session.',
+  emptyTitle: (tag?: string) =>
+    tag ? 'No matching session activity' : 'Waiting for session activity',
+  emptyDescription: (tag?: string) =>
+    tag
+      ? `No session entry carries the exact tag “${tag}”. Try another tag or clear the filter.`
+      : 'Enable the session watcher, then handle a request that uses an AdonisJS session.',
   rowLabel: (entry) => `${content(entry).operation} session ${content(entry).sessionIdHash}`,
   detailComponent: SessionDetail,
 }

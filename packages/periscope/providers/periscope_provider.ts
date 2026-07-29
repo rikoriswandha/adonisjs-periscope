@@ -19,6 +19,8 @@ import { WatcherRegistry } from '../src/watchers/registry.ts'
 import { WatcherName } from '../src/types.ts'
 import type { PeriscopeStore, ResolvedPeriscopeConfig } from '../src/types.ts'
 
+const RETENTION_INTERVAL_MS = 15 * 60 * 1_000
+
 /**
  * Every top-level block the config check below insists on. Their presence is what distinguishes
  * a `defineConfig()` result from a hand-written object literal that skipped validation and
@@ -66,6 +68,14 @@ export default class PeriscopeProvider {
    * dashboard read through the same instance and outlive a recorder flush.
    */
   #store: PeriscopeStore | null = null
+
+  /**
+   * Automatic retention is provider-owned because it shares the configured store's lifetime.
+   * Both timers are unref'd so they can never keep a console process or shutdown alive.
+   */
+  #retentionInitialRun: NodeJS.Timeout | undefined
+  #retentionInterval: NodeJS.Timeout | undefined
+  #retentionPrune: Promise<void> | null = null
 
   /**
    * The watcher registry, created as soon as an enabled recorder needs its early model watcher.
@@ -164,6 +174,7 @@ export default class PeriscopeProvider {
    */
   #storeContext(): StoreContext {
     const context: StoreContext = {
+      app: this.app,
       tmpPath: (...paths: string[]) => this.app.tmpPath(...paths),
     }
 
@@ -230,6 +241,52 @@ export default class PeriscopeProvider {
     recorder.start()
 
     await this.#registerWatchers(recorder)
+
+    this.#startRetention(recorder)
+  }
+
+  #startRetention(recorder: Recorder): void {
+    const retention = this.#resolveConfig().storage.retention
+    if (retention === undefined || this.#retentionInterval !== undefined) {
+      return
+    }
+
+    const prune = () => {
+      this.#retentionInitialRun = undefined
+
+      if (this.#retentionPrune !== null) {
+        return
+      }
+
+      const pruning = safeguardAsync('periscope.provider.retention.prune', async () => {
+        const before = new Date(Date.now() - retention.hours * 60 * 60 * 1_000)
+        await recorder.mute(() =>
+          recorder.store.prune({
+            before,
+            keepExceptions: retention.keepExceptions,
+          })
+        )
+      }).then(() => {})
+      this.#retentionPrune = pruning
+
+      void pruning.finally(() => {
+        if (this.#retentionPrune === pruning) {
+          this.#retentionPrune = null
+        }
+      })
+    }
+
+    this.#retentionInitialRun = setTimeout(prune, 0)
+    this.#retentionInitialRun.unref()
+    this.#retentionInterval = setInterval(prune, RETENTION_INTERVAL_MS)
+    this.#retentionInterval.unref()
+  }
+
+  #stopRetention(): void {
+    clearTimeout(this.#retentionInitialRun)
+    clearInterval(this.#retentionInterval)
+    this.#retentionInitialRun = undefined
+    this.#retentionInterval = undefined
   }
 
   /**
@@ -304,6 +361,8 @@ export default class PeriscopeProvider {
        * not prevent the final recorder drain, and a rejected close must never escape into host
        * shutdown.
        */
+      this.#stopRetention()
+      await this.#retentionPrune
       await safeguardAsync('periscope.provider.watchers.cleanup', () => this.#watchers?.cleanup())
       await safeguardAsync('periscope.provider.recorder.shutdown', () => this.#recorder?.shutdown())
       await safeguardAsync('periscope.provider.store.close', () => this.#store?.close())
@@ -312,6 +371,7 @@ export default class PeriscopeProvider {
       this.#recorder = null
       this.#store = null
       this.#watchersSetup = null
+      this.#retentionPrune = null
 
       /**
        * Restores the standalone default reporter. A terminated application's logger may be writing

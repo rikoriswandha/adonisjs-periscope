@@ -488,13 +488,13 @@ export class HttpClientWatcher implements Watcher {
     this.#requests.delete(request)
     this.#activeRequests.delete(request)
 
-    const duration = process.hrtime.bigint() - state.startedAt
+    const durationMs = Math.max(0, Number(process.hrtime.bigint() - state.startedAt) / 1_000_000)
     const error = completed ? undefined : readField(message, 'error')
     const content: HttpClientEntryContent = {
       method: state.method,
       url: state.url,
       ...(state.status === undefined ? {} : { status: state.status }),
-      durationMs: Math.max(0, Number(duration) / 1_000_000),
+      durationMs,
       ...(state.requestHeaders === undefined ? {} : { requestHeaders: state.requestHeaders }),
       ...(state.responseHeaders === undefined ? {} : { responseHeaders: state.responseHeaders }),
       ...(error === undefined ? {} : { error: safeSerialize(error) }),
@@ -503,7 +503,9 @@ export class HttpClientWatcher implements Watcher {
 
     const entry = IncomingEntry.make(EntryType.HTTP_CLIENT, content).withTags(
       `method:${state.method}`,
-      state.status === undefined ? undefined : `status:${state.status}`
+      state.status === undefined ? undefined : `status:${state.status}`,
+      durationMs >= this.#context.config.watchers.http_client.slowMs ? 'slow' : undefined,
+      !completed || (state.status !== undefined && state.status >= 500) ? 'failed' : undefined
     )
 
     BatchScope.runWith(state.context, () => {

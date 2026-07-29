@@ -30,7 +30,7 @@ import {
 } from '../../../src/http/middleware/protect_mutations.ts'
 import { registerDashboardRoutes } from '../../../src/http/routes.ts'
 import { makeStoredEntry } from '../../storage/contract.ts'
-import type { ResolvedPeriscopeConfig } from '../../../src/types.ts'
+import type { EntryQuery, ResolvedPeriscopeConfig } from '../../../src/types.ts'
 
 function createRecorder(config: ResolvedPeriscopeConfig) {
   const store = new MemoryStore()
@@ -311,6 +311,37 @@ test.group('Dashboard JSON API', () => {
       batchId: query.batchId,
       application: 'default',
     })
+  })
+
+  test('pass search, ISO bounds, and repeated exact tags to the store', async ({ assert }) => {
+    const config = defineConfig({ storage: { driver: 'memory' } })
+    const { store } = createRecorder(config)
+    const calls: EntryQuery[] = []
+    const list = store.list.bind(store)
+    store.list = async (query = {}) => {
+      calls.push(query)
+      return list(query)
+    }
+    const controller = new EntriesController(store)
+
+    await controller.index(
+      createContext(
+        '/periscope/api/entries?tag=slow&tag=failed&text=Needle&from=2026-04-01T00%3A00%3A00.000Z&to=2026-04-02T00%3A00%3A00.000Z'
+      )
+    )
+    await controller.index(
+      createContext('/periscope/api/entries?from=not-a-date&to=2026-02-30T00%3A00%3A00.000Z')
+    )
+
+    assert.deepInclude(calls[0], {
+      tags: ['slow', 'failed'],
+      text: 'Needle',
+      from: '2026-04-01T00:00:00.000Z',
+      to: '2026-04-02T00:00:00.000Z',
+    })
+    assert.isUndefined(calls[0].tag)
+    assert.isUndefined(calls[1].from)
+    assert.isUndefined(calls[1].to)
   })
 
   test('serve only mail raw as a safely named EML attachment', async ({ assert }) => {

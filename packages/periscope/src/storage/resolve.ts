@@ -10,6 +10,7 @@ import { DatabaseStore } from './database_store.ts'
 import { PeriscopeStorageError } from '../errors.ts'
 import { SqliteLocalStore } from './sqlite_local_store.ts'
 import type { PeriscopeStore, ResolvedPeriscopeConfig } from '../types.ts'
+import type { ApplicationService } from '@adonisjs/core/types'
 
 /**
  * `Database` is imported for its type only. `@adonisjs/lucid` is an *optional* peer dependency,
@@ -19,11 +20,12 @@ import type { PeriscopeStore, ResolvedPeriscopeConfig } from '../types.ts'
 import type { Database } from '@adonisjs/lucid/database'
 
 /**
- * What a driver may need from the host application, narrowed to the two things Periscope
- * actually asks for. Passing this instead of the `ApplicationService` keeps `createStore`
- * testable without booting an application, and keeps container knowledge in the provider.
+ * What a driver may need from the host application. The application instance is passed through
+ * for custom factories; built-in drivers use only the narrow helpers they require.
  */
 export type StoreContext = {
+  app: ApplicationService
+
   /** Resolves a path inside the application's tmp directory (`app.tmpPath()`). */
   tmpPath(...paths: string[]): string
 
@@ -101,6 +103,17 @@ export async function createStore(
 
       return new DatabaseStore({ db, connection })
     }
+    case 'custom': {
+      const factory = config.storage.factory
+
+      if (factory === undefined) {
+        throw new PeriscopeStorageError(
+          'The Periscope "custom" storage driver requires storage.factory to be a function.'
+        )
+      }
+
+      return factory({ app: context.app, config })
+    }
 
     default: {
       /**
@@ -111,7 +124,7 @@ export async function createStore(
       const driver: never = config.storage.driver
       throw new PeriscopeStorageError(
         `Unknown Periscope storage driver ${JSON.stringify(driver)}. ` +
-          'Expected one of: memory, sqlite-local, database.'
+          'Expected one of: memory, sqlite-local, database, custom.'
       )
     }
   }

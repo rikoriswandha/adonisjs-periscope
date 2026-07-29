@@ -10,10 +10,12 @@ export const ENTRY_TYPES = [
   'model',
   'gate',
   'dump',
+  'view',
   'http_client',
   'schedule',
   'job',
-  'notification',
+  'broadcast',
+  'health_check',
   'redis',
   'session',
 ] as const
@@ -43,6 +45,10 @@ export type EntryPage = {
 export type EntryFilters = {
   type?: EntryType
   tag?: string
+  tags?: string[]
+  text?: string
+  from?: string
+  to?: string
   familyHash?: string
   batchId?: string
   application?: string
@@ -115,6 +121,7 @@ export type RequestContent = EntryContent & {
   ip: string
   hostname: string | null
   response?: unknown
+  inertia?: { component: string; propKeys?: string[] }
   session?: unknown
   clientDisconnected: boolean
 }
@@ -263,6 +270,32 @@ export type ScheduleContent = EntryContent & {
   scheduledAt?: string
   delayMs?: number
   payload?: unknown
+}
+
+export type BroadcastContent = EntryContent & {
+  channel: string
+  event?: string
+  payloadSummary?: unknown
+}
+
+export type ViewContent = EntryContent & {
+  template: string
+  durationMs?: number
+  dataKeys?: string[]
+}
+
+export type HealthCheckStatus = 'ok' | 'warning' | 'error' | 'unknown'
+
+export type HealthCheckResult = {
+  name: string
+  status: HealthCheckStatus
+  durationMs?: number
+  message?: string
+}
+
+export type HealthCheckContent = EntryContent & {
+  status: HealthCheckStatus
+  checks: HealthCheckResult[]
 }
 
 export type RedisContent = EntryContent & {

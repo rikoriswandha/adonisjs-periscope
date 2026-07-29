@@ -36,6 +36,11 @@ router.get('/slow', [ProbesController, 'slow']).as('slow')
 router.get('/boom', [ProbesController, 'boom']).as('boom')
 
 /**
+ * Deliberate N+1: one query per user so the batch earns `n+1` tags.
+ */
+router.get('/n-plus-one', [ProbesController, 'nPlusOne']).as('nPlusOne')
+
+/**
  * Validated payload carrying a "password" field, for redaction tests.
  */
 router.post('/echo', [EchoController, 'handle']).as('echo')

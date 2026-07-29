@@ -36,12 +36,18 @@
  */
 
 import { safeSerialize } from '../recorder/serializer.ts'
-import type { EntryContent, EntryType, StoredEntry } from '../types.ts'
+import type { EntryContent, EntryQuery, EntryType, StoredEntry } from '../types.ts'
 
 /**
  * Entries. One row per recorded entry; the primary key is the entry's uuid.
  */
 export const ENTRIES_TABLE = 'periscope_entries'
+
+/**
+ * SQLite's external-content full-text index. Other SQL dialects intentionally ignore it and use
+ * a portable escaped `LIKE` predicate instead.
+ */
+export const ENTRIES_FTS_TABLE = 'periscope_entries_fts'
 
 /**
  * The tag lookup index — *an index, not the source of truth*. An entry's tags round-trip through
@@ -129,6 +135,64 @@ export type EntryRow = {
 export type TagRow = {
   entry_uuid: string
   tag: string
+}
+
+const NO_QUERY_TAGS: readonly string[] = []
+
+/**
+ * Merge the legacy singular tag with the multi-tag filter and remove duplicates. De-duplication
+ * is part of the query contract: SQL's `having count(*) = ?` must not ask one indexed tag row to
+ * satisfy the same requested tag twice.
+ */
+export function resolveEntryQueryTags(query: Pick<EntryQuery, 'tag' | 'tags'>): readonly string[] {
+  const tags = query.tags
+
+  if (query.tag === undefined && (tags === undefined || tags.length === 0)) {
+    return NO_QUERY_TAGS
+  }
+
+  if (query.tag === undefined && tags?.length === 1) {
+    return tags
+  }
+
+  if (query.tag !== undefined && (tags === undefined || tags.length === 0)) {
+    return [query.tag]
+  }
+
+  const unique = new Set(tags ?? NO_QUERY_TAGS)
+  if (query.tag !== undefined) {
+    unique.add(query.tag)
+  }
+
+  return [...unique]
+}
+
+/**
+ * Convert one optional ISO datetime filter into the epoch-millisecond representation both SQL
+ * stores persist. Invalid values are ignored, matching the HTTP controller's tolerant parsing.
+ */
+export function parseEntryQueryDate(value: string | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+
+  const timestamp = Date.parse(value)
+
+  return Number.isFinite(timestamp) ? timestamp : undefined
+}
+
+/**
+ * Build a case-folded literal substring pattern. `!` is deliberately the escape character:
+ * backslash string-literal rules differ across PostgreSQL, MySQL, and SQLite.
+ */
+export function entryContentLikePattern(text: string): string {
+  const escaped = text
+    .toLowerCase()
+    .replaceAll('!', '!!')
+    .replaceAll('%', '!%')
+    .replaceAll('_', '!_')
+
+  return `%${escaped}%`
 }
 
 /**

@@ -55,6 +55,11 @@ const TRUNCATED_KEY = 'truncated'
 const TRUNCATED_TAG = 'truncated'
 
 /**
+ * Exact tag persisted on every query in a repeated family once the configured threshold is met.
+ */
+const N_PLUS_ONE_TAG = 'n+1'
+
+/**
  * Message carried by the synthetic entry minted when a truncation report has nothing to ride on.
  * A `log` is the closest thing Periscope has to "there is something you should know about this
  * batch", and the dashboard renders a log by its message, so the note says it in prose rather
@@ -187,10 +192,10 @@ class FlushingBatchView implements BatchView {
  */
 export class Recorder {
   /**
-   * The storage driver. Public because the dashboard, the ace commands and the pruning
-   * scheduler all read through the same instance the recorder writes with, and because its
-   * lifetime is owned by the provider — {@link Recorder.shutdown} deliberately does not close
-   * it.
+   * The storage driver. Public because the dashboard, the ace commands and the provider's
+   * automatic retention task all read through the same instance the recorder writes with.
+   * Its lifetime is owned by the provider — {@link Recorder.shutdown} deliberately does not
+   * close it.
    */
   readonly store: PeriscopeStore
 
@@ -517,6 +522,15 @@ export class Recorder {
      */
     this.#reportTruncation(context, drained)
 
+    /**
+     * N+1 classification belongs to the final, complete batch rather than an intermediate
+     * fragment. Apply it before sampling retention so both keepAlways and monitored tags can
+     * retain a sampled-out offending batch.
+     */
+    if (mode === 'final') {
+      this.#tagNPlusOneQueries(drained)
+    }
+
     if (drained.length === 0) {
       if (!context.sampled && context.retention === 'pending') {
         context.retention = 'dropped'
@@ -552,6 +566,10 @@ export class Recorder {
           drained.push(...arrivals)
           bufferedEntries += arrivals.length
           this.#reportTruncation(context, drained)
+
+          if (mode === 'final' && drained.length !== entriesBeforeRefresh) {
+            this.#tagNPlusOneQueries(drained)
+          }
 
           if (drained.length !== entriesBeforeRefresh) {
             kept =
@@ -735,6 +753,34 @@ export class Recorder {
     }
 
     await this.#shuttingDown
+  }
+
+  /**
+   * Count queries by their watcher-provided family hash, then tag every member of families
+   * meeting the configured threshold. The second linear pass avoids retaining a second array of
+   * entry references for every family. Queries without a family hash cannot identify a repeated
+   * shape and are intentionally ignored.
+   */
+  #tagNPlusOneQueries(entries: readonly IncomingEntry[]): void {
+    const familyCounts = new Map<string, number>()
+
+    for (const entry of entries) {
+      if (entry.type !== EntryType.QUERY || entry.familyHash === null) {
+        continue
+      }
+
+      familyCounts.set(entry.familyHash, (familyCounts.get(entry.familyHash) ?? 0) + 1)
+    }
+
+    for (const entry of entries) {
+      if (
+        entry.type === EntryType.QUERY &&
+        entry.familyHash !== null &&
+        familyCounts.get(entry.familyHash)! >= this.#config.dashboard.nPlusOneThreshold
+      ) {
+        entry.withTags(N_PLUS_ONE_TAG)
+      }
+    }
   }
 
   /**

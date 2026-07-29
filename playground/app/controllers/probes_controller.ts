@@ -51,4 +51,21 @@ export default class ProbesController {
   boom(): never {
     throw new BoomException('The /boom route always explodes. That is its entire job.')
   }
+
+  /**
+   * `GET /n-plus-one` — the classic mistake, on purpose: one query per user
+   * instead of a single `IN` lookup. Every iteration shares one normalized
+   * query shape, so the batch crosses the N+1 threshold and Periscope tags
+   * each member query with `n+1`.
+   */
+  async nPlusOne() {
+    const users = await User.all()
+    const emails: (string | null)[] = []
+    for (const user of users) {
+      const row = await User.query().select('email').where('id', user.id).first()
+      emails.push(row?.email ?? null)
+    }
+
+    return { lookups: users.length, emails }
+  }
 }

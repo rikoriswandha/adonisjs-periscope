@@ -7,7 +7,7 @@
 
 import { safeguard, safeguardAsync } from '../safeguard.ts'
 import { WATCHER_NAMES } from '../types.ts'
-import type { Watcher, WatcherName } from '../types.ts'
+import type { PeriscopeWatcherFactory, Watcher, WatcherName } from '../types.ts'
 import type { WatcherContext } from './context.ts'
 import { CacheWatcher } from './cache/watcher.ts'
 import { CommandWatcher } from './command/watcher.ts'
@@ -16,6 +16,7 @@ import { EventWatcher } from './event/watcher.ts'
 import { ExceptionWatcher } from './exception/watcher.ts'
 import { GateWatcher } from './gate/watcher.ts'
 import { HttpClientWatcher } from './http_client/watcher.ts'
+import { HealthCheckWatcher } from './health_check/watcher.ts'
 import { JobScheduleWatcher } from './job_schedule/watcher.ts'
 import { LogWatcher } from './log/watcher.ts'
 import { MailWatcher } from './mail/watcher.ts'
@@ -23,13 +24,15 @@ import { ModelWatcher } from './model/watcher.ts'
 import { QueryWatcher } from './query/watcher.ts'
 import { RedisWatcher } from './redis/watcher.ts'
 import { SessionWatcher } from './session/watcher.ts'
+import { TransmitWatcher } from './transmit/watcher.ts'
+import { ViewWatcher } from './view/watcher.ts'
 import { RequestWatcher } from './request/watcher.ts'
 
 /**
  * Builds one watcher. Exported as a type so an application — or a test — can substitute a
  * watcher without the registry knowing anything about it.
  */
-export type WatcherFactory = (context: WatcherContext) => Watcher
+export type WatcherFactory = PeriscopeWatcherFactory
 
 /**
  * The shipped watchers, keyed by config key.
@@ -50,7 +53,10 @@ export const WATCHER_FACTORIES: Record<WatcherName, WatcherFactory> = {
   model: (context) => new ModelWatcher(context),
   gate: (context) => new GateWatcher(context),
   dump: (context) => new DumpWatcher(context),
+  view: (context) => new ViewWatcher(context),
   http_client: (context) => new HttpClientWatcher(context),
+  health_check: (context) => new HealthCheckWatcher(context),
+  transmit: (context) => new TransmitWatcher(context),
   job_schedule: (context) => new JobScheduleWatcher(context),
   redis: (context) => new RedisWatcher(context),
   session: (context) => new SessionWatcher(context),
@@ -80,6 +86,7 @@ export class WatcherRegistry {
    * instance while the first one is still subscribing.
    */
   readonly #registeredNames = new Set<WatcherName>()
+  readonly #registeredCustomFactories = new Set<number>()
 
   constructor(
     context: WatcherContext,
@@ -136,6 +143,35 @@ export class WatcherRegistry {
 
       await safeguardAsync(`periscope.watcher.${name}.register`, () => watcher.register())
     }
+
+    /**
+     * A named subset is used only for the provider's early model registration. Custom watchers
+     * join the full ready-phase pass, after every enabled shipped watcher.
+     */
+    if (
+      names.length !== WATCHER_NAMES.length ||
+      WATCHER_NAMES.some((name) => !names.includes(name))
+    ) {
+      return
+    }
+
+    for (const [index, factory] of this.#context.config.watchers.custom.entries()) {
+      if (this.#registeredCustomFactories.has(index)) {
+        continue
+      }
+
+      const watcher = safeguard(`periscope.watcher.custom.${index}.create`, () =>
+        factory(this.#context)
+      )
+
+      if (watcher === undefined) {
+        continue
+      }
+      this.#registeredCustomFactories.add(index)
+      this.#registered.push(watcher)
+
+      await safeguardAsync(`periscope.watcher.custom.${index}.register`, () => watcher.register())
+    }
   }
 
   /**
@@ -152,5 +188,6 @@ export class WatcherRegistry {
 
     this.#registered.length = 0
     this.#registeredNames.clear()
+    this.#registeredCustomFactories.clear()
   }
 }

@@ -8,6 +8,7 @@
 import { EntryType } from '../types.ts'
 import { encodeEntryCursor, parseEntryCursor, resolvePageSize } from './pagination.ts'
 import { aggregateExceptionGroups } from './exception_groups.ts'
+import { encodeJson, parseEntryQueryDate, resolveEntryQueryTags } from './sql.ts'
 import type {
   ApplicationSummary,
   EntryQuery,
@@ -88,7 +89,15 @@ function bySequenceDescending(left: StoredEntry, right: StoredEntry): number {
  * optimisation, the predicate is the definition. Keeping the two separate means an index bug can
  * only ever cost recall, never return an entry that does not match.
  */
-function matchesQuery(entry: StoredEntry, query: EntryQuery, cursor: EntryCursor | null): boolean {
+function matchesQuery(
+  entry: StoredEntry,
+  query: EntryQuery,
+  cursor: EntryCursor | null,
+  tags: readonly string[],
+  text: string | undefined,
+  from: number | undefined,
+  to: number | undefined
+): boolean {
   if (
     cursor !== null &&
     (entry.sequence > cursor.sequence ||
@@ -117,7 +126,21 @@ function matchesQuery(entry: StoredEntry, query: EntryQuery, cursor: EntryCursor
     return false
   }
 
-  if (query.tag !== undefined && !entry.tags.includes(query.tag)) {
+  for (const tag of tags) {
+    if (!entry.tags.includes(tag)) {
+      return false
+    }
+  }
+
+  if (text !== undefined && !encodeJson(entry.content).toLowerCase().includes(text)) {
+    return false
+  }
+
+  const createdAt = entry.createdAt.getTime()
+  if (from !== undefined && createdAt < from) {
+    return false
+  }
+  if (to !== undefined && createdAt > to) {
     return false
   }
 
@@ -265,23 +288,50 @@ export class MemoryStore implements PeriscopeStore {
   }
 
   /**
-   * Narrow a query down to the uuids worth testing. Batch and tag are the only selective
-   * indexes; everything else scans, which is what a bounded ring buffer is for.
+   * Narrow a query down to the uuids worth testing. Batch and tags are the selective indexes;
+   * everything else scans, which is what a bounded ring buffer is for. Multiple indexes are
+   * intersected from the smallest bucket so an AND query never scans a larger set than needed.
    */
-  #candidates(query: EntryQuery): Iterable<string> {
+  #candidates(query: EntryQuery, tags: readonly string[]): Iterable<string> {
+    if (query.batchId === undefined && tags.length === 0) {
+      return this.#entries.keys()
+    }
+
+    const indexes: ReadonlySet<string>[] = []
+
     if (query.batchId !== undefined) {
-      return this.#byBatch.get(query.batchId) ?? NO_CANDIDATES
+      const batched = this.#byBatch.get(query.batchId)
+      if (batched === undefined) {
+        return NO_CANDIDATES
+      }
+      indexes.push(batched)
     }
 
-    if (query.tag !== undefined) {
-      return this.#byTag.get(query.tag) ?? NO_CANDIDATES
+    for (const tag of tags) {
+      const tagged = this.#byTag.get(tag)
+      if (tagged === undefined) {
+        return NO_CANDIDATES
+      }
+      indexes.push(tagged)
     }
 
-    return this.#entries.keys()
+    indexes.sort((left, right) => left.size - right.size)
+    if (indexes.length === 1) {
+      return indexes[0]
+    }
+
+    const intersection = new Set<string>()
+    for (const uuid of indexes[0]) {
+      if (indexes.every((index) => index.has(uuid))) {
+        intersection.add(uuid)
+      }
+    }
+
+    return intersection
   }
 
-  *#candidateEntries(query: EntryQuery): IterableIterator<StoredEntry> {
-    for (const uuid of this.#candidates(query)) {
+  *#candidateEntries(query: EntryQuery, tags: readonly string[]): IterableIterator<StoredEntry> {
+    for (const uuid of this.#candidates(query, tags)) {
       const entry = this.#entries.get(uuid)
 
       if (entry !== undefined) {
@@ -323,10 +373,14 @@ export class MemoryStore implements PeriscopeStore {
   async list(query: EntryQuery = {}): Promise<Paginated<StoredEntry>> {
     const limit = resolvePageSize(query.limit)
     const cursor = parseEntryCursor(query.cursor)
+    const tags = resolveEntryQueryTags(query)
+    const text = query.text?.toLowerCase()
+    const from = parseEntryQueryDate(query.from)
+    const to = parseEntryQueryDate(query.to)
     const matches: StoredEntry[] = []
 
-    for (const entry of this.#candidateEntries(query)) {
-      if (matchesQuery(entry, query, cursor)) {
+    for (const entry of this.#candidateEntries(query, tags)) {
+      if (matchesQuery(entry, query, cursor, tags, text, from, to)) {
         matches.push(entry)
       }
     }
@@ -410,7 +464,7 @@ export class MemoryStore implements PeriscopeStore {
   }
 
   async exceptionGroups(query: ExceptionGroupQuery = {}): Promise<Paginated<ExceptionGroup>> {
-    const entries = [...this.#candidateEntries(query)].filter(
+    const entries = [...this.#candidateEntries(query, resolveEntryQueryTags(query))].filter(
       (entry) => query.application === undefined || entry.application === query.application
     )
     const page = aggregateExceptionGroups(entries, query)
@@ -436,6 +490,10 @@ export class MemoryStore implements PeriscopeStore {
       }
 
       if (options.keepExceptions === true && entry.type === EntryType.EXCEPTION) {
+        continue
+      }
+
+      if (options.application !== undefined && entry.application !== options.application) {
         continue
       }
 

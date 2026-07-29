@@ -15,6 +15,22 @@ import { firstQueryString } from '../query.ts'
 
 const DUMP_OPEN_LEASE_FLAG_PATTERN = /^dump-open:[A-Za-z0-9_-]{1,128}$/
 const DUMP_OPEN_TTL_MS = 30_000
+const STATS_SAMPLE_SIZE = 500
+const SLOW_QUERY_FAMILY_LIMIT = 10
+
+function percentile(sorted: readonly number[], quantile: number): number | null {
+  if (sorted.length === 0) return null
+  return sorted[Math.ceil(sorted.length * quantile) - 1] ?? null
+}
+
+type SlowQueryFamily = {
+  familyHash: string
+  sql: string
+  count: number
+  durationTotal: number
+  durationCount: number
+  maxDurationMs: number
+}
 
 export class DashboardController {
   constructor(
@@ -33,6 +49,85 @@ export class DashboardController {
   async counts({ request }: HttpContext) {
     const application = firstQueryString(request.qs().application)
     return { data: await this.store.counts(application) }
+  }
+
+  async stats({ request, response }: HttpContext) {
+    const application = firstQueryString(request.qs().application)
+    const [requestPage, slowQueryPage] = await Promise.all([
+      this.store.list({
+        type: 'request',
+        application,
+        limit: STATS_SAMPLE_SIZE,
+      }),
+      this.store.list({
+        type: 'query',
+        tag: 'slow',
+        application,
+        limit: STATS_SAMPLE_SIZE,
+      }),
+    ])
+    const durations: number[] = []
+    let errorCount = 0
+
+    for (const entry of requestPage.data) {
+      const status = entry.content.status
+      if (typeof status === 'number' && Number.isFinite(status) && status >= 500) errorCount += 1
+      const duration = entry.content.durationMs
+      if (typeof duration === 'number' && Number.isFinite(duration)) durations.push(duration)
+    }
+    durations.sort((left, right) => left - right)
+
+    const families = new Map<string, SlowQueryFamily>()
+    for (const entry of slowQueryPage.data) {
+      if (entry.familyHash === null) continue
+      const sql = typeof entry.content.sql === 'string' ? entry.content.sql : ''
+      const rawDuration = entry.content.durationMs
+      const duration =
+        typeof rawDuration === 'number' && Number.isFinite(rawDuration) ? rawDuration : null
+      const family = families.get(entry.familyHash)
+
+      if (family) {
+        family.count += 1
+        if (duration !== null) {
+          family.durationTotal += duration
+          family.durationCount += 1
+          family.maxDurationMs = Math.max(family.maxDurationMs, duration)
+        }
+        if (family.sql === '' && sql !== '') family.sql = sql
+        continue
+      }
+
+      families.set(entry.familyHash, {
+        familyHash: entry.familyHash,
+        sql,
+        count: 1,
+        durationTotal: duration ?? 0,
+        durationCount: duration === null ? 0 : 1,
+        maxDurationMs: duration ?? 0,
+      })
+    }
+
+    const slowQueryFamilies = [...families.values()]
+      .sort((left, right) => right.count - left.count || right.maxDurationMs - left.maxDurationMs)
+      .slice(0, SLOW_QUERY_FAMILY_LIMIT)
+      .map(({ durationTotal, durationCount, ...family }) => ({
+        ...family,
+        avgDurationMs: durationCount === 0 ? null : durationTotal / durationCount,
+        maxDurationMs: durationCount === 0 ? null : family.maxDurationMs,
+      }))
+
+    response.header('cache-control', 'no-store')
+    return {
+      data: {
+        requests: {
+          sampled: requestPage.data.length,
+          errorCount,
+          p50: percentile(durations, 0.5),
+          p95: percentile(durations, 0.95),
+        },
+        slowQueryFamilies,
+      },
+    }
   }
 
   async status() {

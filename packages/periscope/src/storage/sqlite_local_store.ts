@@ -34,12 +34,16 @@ import {
 } from './pagination.ts'
 import {
   ENTRIES_TABLE,
+  ENTRIES_FTS_TABLE,
   FLAGS_TABLE,
   INSERT_CHUNK_SIZE,
   MONITORED_TAGS_TABLE,
   TAGS_TABLE,
   TAG_INDEX_MAX_LENGTH,
+  entryContentLikePattern,
   encodeSequence,
+  parseEntryQueryDate,
+  resolveEntryQueryTags,
   toEntryRow,
   toStoredEntry,
   toTagRows,
@@ -160,6 +164,54 @@ create index if not exists periscope_entries_application_sequence_index
   on ${ENTRIES_TABLE} (application, sequence, uuid);
 `
 
+const FTS_INSERT_TRIGGER = 'periscope_entries_fts_insert'
+const FTS_DELETE_TRIGGER = 'periscope_entries_fts_delete'
+const FTS_UPDATE_TRIGGER = 'periscope_entries_fts_update'
+
+/**
+ * An external-content trigram index gives `MATCH` the same literal-substring semantics as the
+ * other stores without duplicating the serialized payload. Triggers live in the database, so
+ * writes from another process stay indexed too.
+ */
+const FTS_SCHEMA = `
+create virtual table if not exists ${ENTRIES_FTS_TABLE} using fts5(
+  content,
+  content='${ENTRIES_TABLE}',
+  content_rowid='rowid',
+  tokenize='trigram'
+);
+
+create trigger if not exists ${FTS_INSERT_TRIGGER}
+after insert on ${ENTRIES_TABLE} begin
+  insert into ${ENTRIES_FTS_TABLE} (rowid, content) values (new.rowid, new.content);
+end;
+
+create trigger if not exists ${FTS_DELETE_TRIGGER}
+after delete on ${ENTRIES_TABLE} begin
+  insert into ${ENTRIES_FTS_TABLE} (${ENTRIES_FTS_TABLE}, rowid, content)
+  values ('delete', old.rowid, old.content);
+end;
+
+create trigger if not exists ${FTS_UPDATE_TRIGGER}
+after update of content on ${ENTRIES_TABLE} begin
+  insert into ${ENTRIES_FTS_TABLE} (${ENTRIES_FTS_TABLE}, rowid, content)
+  values ('delete', old.rowid, old.content);
+  insert into ${ENTRIES_FTS_TABLE} (rowid, content) values (new.rowid, new.content);
+end;
+`
+
+const DROP_FTS_TRIGGERS = `
+drop trigger if exists ${FTS_INSERT_TRIGGER};
+drop trigger if exists ${FTS_DELETE_TRIGGER};
+drop trigger if exists ${FTS_UPDATE_TRIGGER};
+`
+
+/**
+ * Tracks handles on which FTS setup succeeded without exposing connection details on the store.
+ * A WeakSet lets closed databases be collected normally.
+ */
+const FTS_ENABLED_DATABASES = new WeakSet<DatabaseHandle>()
+
 /**
  * Options accepted by {@link SqliteLocalStore}.
  */
@@ -182,6 +234,53 @@ function placeholders(rows: number, columns: number): string {
   const group = `(${'?, '.repeat(columns - 1)}?)`
 
   return rows === 1 ? group : new Array<string>(rows).fill(group).join(', ')
+}
+
+/**
+ * Create (or repair) the optional full-text index. `rebuild` backfills databases created by an
+ * older Periscope release before the virtual table and triggers existed; established indexes
+ * avoid paying that scan again on every process start.
+ */
+function initializeFullTextSearch(db: DatabaseHandle): void {
+  try {
+    const schemaObjects = db
+      .prepare<[], { name: string }>(
+        `select name from sqlite_master where name in (
+          '${ENTRIES_FTS_TABLE}',
+          '${FTS_INSERT_TRIGGER}',
+          '${FTS_DELETE_TRIGGER}',
+          '${FTS_UPDATE_TRIGGER}'
+        )`
+      )
+      .all()
+    const needsRebuild = schemaObjects.length !== 4
+
+    db.exec(FTS_SCHEMA)
+    if (needsRebuild) {
+      db.prepare(`insert into ${ENTRIES_FTS_TABLE} (${ENTRIES_FTS_TABLE}) values ('rebuild')`).run()
+    }
+
+    // Force SQLite to load the module even when every schema object already existed.
+    db.prepare(
+      `select rowid from ${ENTRIES_FTS_TABLE} where ${ENTRIES_FTS_TABLE} match ? limit 0`
+    ).all('periscope')
+    FTS_ENABLED_DATABASES.add(db)
+  } catch (error) {
+    const reason =
+      error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase()
+
+    if (reason.includes('no such module: fts5') || reason.includes('no such tokenizer: trigram')) {
+      /*
+       * A database made by a build with FTS can later be opened by one without it. Remove its
+       * triggers so writes keep working, and leave the virtual table for a future capable build
+       * to rebuild.
+       */
+      db.exec(DROP_FTS_TRIGGERS)
+      return
+    }
+
+    throw error
+  }
 }
 
 /**
@@ -290,6 +389,7 @@ function openDatabaseOnce(path: string): DatabaseHandle {
       )
     }
     db.exec(APPLICATION_INDEXES)
+    initializeFullTextSearch(db)
 
     return db
   } catch (error) {
@@ -342,6 +442,7 @@ function openDatabaseOnce(path: string): DatabaseHandle {
  */
 export class SqliteLocalStore implements PeriscopeStore {
   readonly #db: DatabaseHandle
+  readonly #ftsAvailable: boolean
 
   /**
    * Prepared statements by SQL text. See the class note; `Result` is erased on the way in and
@@ -354,7 +455,11 @@ export class SqliteLocalStore implements PeriscopeStore {
    * returns a function, so the wrappers are built here rather than rebuilt per call.
    */
   readonly #saveAll: (saves: readonly PendingSave[]) => number
-  readonly #pruneBefore: (before: number, keepExceptions: boolean) => number
+  readonly #pruneBefore: (
+    before: number,
+    keepExceptions: boolean,
+    application: string | undefined
+  ) => number
   readonly #trimTo: (cap: number) => number
   readonly #clearAll: () => void
   readonly #clearApplication: (application: string) => void
@@ -373,7 +478,7 @@ export class SqliteLocalStore implements PeriscopeStore {
 
   constructor(options: SqliteLocalStoreOptions) {
     this.#db = openDatabase(options.path)
-
+    this.#ftsAvailable = FTS_ENABLED_DATABASES.has(this.#db)
     this.#saveAll = this.#db.transaction((saves: readonly PendingSave[]) => {
       let inserted = 0
       for (const save of saves) {
@@ -383,25 +488,39 @@ export class SqliteLocalStore implements PeriscopeStore {
       return inserted
     })
 
-    this.#pruneBefore = this.#db.transaction((before: number, keepExceptions: boolean) => {
-      this.#prepare(
-        `delete from ${FLAGS_TABLE} where expires_at is not null and expires_at <= ?`
-      ).run(Date.now())
-      const filter = keepExceptions ? 'created_at < ? and type <> ?' : 'created_at < ?'
-      const values: Binding[] = keepExceptions ? [before, EntryType.EXCEPTION] : [before]
+    this.#pruneBefore = this.#db.transaction(
+      (before: number, keepExceptions: boolean, application: string | undefined) => {
+        this.#prepare(
+          `delete from ${FLAGS_TABLE} where expires_at is not null and expires_at <= ?`
+        ).run(Date.now())
+        const conditions = ['created_at < ?']
+        const values: Binding[] = [before]
 
-      /*
-       * Tag rows go first and explicitly: they are selected through the entries that are about to
-       * disappear, so deleting the entries first would leave nothing to select them by. The
-       * foreign key would cascade here, but see `openDatabase` for why neither driver leans on
-       * that.
-       */
-      this.#prepare(
-        `delete from ${TAGS_TABLE} where entry_uuid in (select uuid from ${ENTRIES_TABLE} where ${filter})`
-      ).run(...values)
+        if (keepExceptions) {
+          conditions.push('type <> ?')
+          values.push(EntryType.EXCEPTION)
+        }
 
-      return this.#prepare(`delete from ${ENTRIES_TABLE} where ${filter}`).run(...values).changes
-    })
+        if (application !== undefined) {
+          conditions.push('application = ?')
+          values.push(application)
+        }
+
+        const filter = conditions.join(' and ')
+
+        /*
+         * Tag rows go first and explicitly: they are selected through the entries that are about
+         * to disappear, so deleting the entries first would leave nothing to select them by. The
+         * foreign key would cascade here, but see `openDatabase` for why neither driver leans on
+         * that.
+         */
+        this.#prepare(
+          `delete from ${TAGS_TABLE} where entry_uuid in (select uuid from ${ENTRIES_TABLE} where ${filter})`
+        ).run(...values)
+
+        return this.#prepare(`delete from ${ENTRIES_TABLE} where ${filter}`).run(...values).changes
+      }
+    )
 
     /*
      * The excess is measured *inside* the immediate transaction, under the write lock taken at
@@ -559,9 +678,8 @@ export class SqliteLocalStore implements PeriscopeStore {
    * was actually set, so an unfiltered query stays an index scan rather than a chain of
    * `1 = 1`s.
    *
-   * The tag filter is an `exists` subquery, never a join. A join against the tag table would
-   * return one row per matching tag and quietly duplicate entries the day a query filters on a
-   * tag an entry carries twice.
+   * Tags use a correlated grouped subquery: no join can duplicate entry rows, and the `having`
+   * count gives multiple exact tags AND semantics.
    */
   #selectEntries(
     query: EntryQuery,
@@ -578,11 +696,45 @@ export class SqliteLocalStore implements PeriscopeStore {
       values.push(query.type)
     }
 
-    if (query.tag !== undefined) {
+    const tags = resolveEntryQueryTags(query)
+    if (tags.length === 1) {
       conditions.push(
         `exists (select 1 from ${TAGS_TABLE} where ${TAGS_TABLE}.entry_uuid = ${ENTRIES_TABLE}.uuid and ${TAGS_TABLE}.tag = ?)`
       )
-      values.push(query.tag)
+      values.push(tags[0])
+    } else if (tags.length > 1) {
+      conditions.push(
+        `exists (select 1 from ${TAGS_TABLE} where ${TAGS_TABLE}.entry_uuid = ${ENTRIES_TABLE}.uuid and ${TAGS_TABLE}.tag in ${placeholders(1, tags.length)} group by ${TAGS_TABLE}.entry_uuid having count(*) = ?)`
+      )
+      values.push(...tags, tags.length)
+    }
+
+    if (query.text !== undefined) {
+      // Trigram FTS needs at least three code points; six UTF-16 units always cover three.
+      const codePoints = [...query.text.slice(0, 6)].length
+
+      if (this.#ftsAvailable && codePoints >= 3 && !query.text.includes('\0')) {
+        const phrase = `"${query.text.replaceAll('"', '""')}"`
+        conditions.push(
+          `${ENTRIES_TABLE}.rowid in (select rowid from ${ENTRIES_FTS_TABLE} where ${ENTRIES_FTS_TABLE} match ?)`
+        )
+        values.push(phrase)
+      } else {
+        conditions.push("lower(content) like ? escape '!'")
+        values.push(entryContentLikePattern(query.text))
+      }
+    }
+
+    const from = parseEntryQueryDate(query.from)
+    if (from !== undefined) {
+      conditions.push('created_at >= ?')
+      values.push(from)
+    }
+
+    const to = parseEntryQueryDate(query.to)
+    if (to !== undefined) {
+      conditions.push('created_at <= ?')
+      values.push(to)
     }
 
     if (query.familyHash !== undefined) {
@@ -783,7 +935,11 @@ export class SqliteLocalStore implements PeriscopeStore {
   }
 
   async prune(options: PruneOptions): Promise<number> {
-    const deleted = this.#pruneBefore(options.before.getTime(), options.keepExceptions === true)
+    const deleted = this.#pruneBefore(
+      options.before.getTime(),
+      options.keepExceptions === true,
+      options.application
+    )
     this.#entryCount = Math.max(0, this.#entryCount - deleted)
 
     return deleted

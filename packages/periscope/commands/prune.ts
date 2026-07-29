@@ -30,6 +30,11 @@ export default class PeriscopePrune extends BaseCommand {
   })
   declare keepExceptions: boolean
 
+  @flags.string({
+    description: 'Prune entries recorded by one application only',
+  })
+  declare application?: string
+
   async run() {
     ensureDurableStorage(this.app)
 
@@ -40,7 +45,11 @@ export default class PeriscopePrune extends BaseCommand {
     const recorder = await this.app.container.make(Recorder)
     const before = new Date(Date.now() - this.hours * 60 * 60 * 1_000)
     const deleted = await recorder.mute(() =>
-      recorder.store.prune({ before, keepExceptions: this.keepExceptions })
+      recorder.store.prune({
+        before,
+        keepExceptions: this.keepExceptions,
+        application: this.application,
+      })
     )
 
     this.logger.success(`Pruned ${deleted} Periscope ${deleted === 1 ? 'entry' : 'entries'}`)

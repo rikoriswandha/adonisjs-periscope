@@ -6,18 +6,123 @@
  */
 
 import type { BaseCommand, Kernel } from '@adonisjs/core/ace'
+import type { RendererContract } from '@poppinss/cliui/types'
 
 import { IncomingEntry } from '../../entry.ts'
 import { BatchScope } from '../../recorder/context.ts'
-import { safeSerialize } from '../../recorder/serializer.ts'
+import { safeSerialize, SERIALIZER_DEFAULTS } from '../../recorder/serializer.ts'
 import { safeguard, safeguardAsync } from '../../safeguard.ts'
 import { EntryType, WatcherName } from '../../types.ts'
-import type { Watcher } from '../../types.ts'
+import type { BatchContext, Watcher } from '../../types.ts'
 import type { WatcherContext } from '../context.ts'
 import type { CommandEntryContent } from './types.ts'
 
 type CommandInstance = InstanceType<typeof BaseCommand>
 type CommandExec = (...args: unknown[]) => unknown
+
+type OutputCapture = {
+  output: BoundedOutput
+  restore(): void
+}
+
+const OUTPUT_MAX_BYTES = SERIALIZER_DEFAULTS.maxBytes - '[Truncated]'.length
+
+/**
+ * Keep capture work bounded while output is still being rendered. One extra code unit is retained
+ * so the serializer can append its standard truncation marker when ASCII output exceeds the byte
+ * budget. The marker is reserved inside the default budget, keeping the resulting string small
+ * enough for the recorder's standard value-pattern redaction pass.
+ */
+class BoundedOutput {
+  readonly #chunks: string[] = []
+  #length = 0
+
+  append(message: string): void {
+    this.#append(message)
+    this.#append('\n')
+  }
+
+  read(): string | undefined {
+    return this.#length === 0 ? undefined : this.#chunks.join('')
+  }
+
+  #append(value: string): void {
+    const remaining = OUTPUT_MAX_BYTES + 1 - this.#length
+    if (remaining <= 0) {
+      return
+    }
+
+    const chunk = value.length <= remaining ? value : value.slice(0, remaining)
+    this.#chunks.push(chunk)
+    this.#length += chunk.length
+  }
+}
+
+/**
+ * Mirror Ace's renderer contract while forwarding every operation to the renderer selected by
+ * the application. Capture never becomes the output destination, so console, raw and custom
+ * renderers retain their exact behavior.
+ */
+class TeeRenderer implements RendererContract {
+  #renderer: RendererContract
+  readonly #output: BoundedOutput
+  readonly #batch: BatchContext
+
+  constructor(renderer: RendererContract, output: BoundedOutput, batch: BatchContext) {
+    this.#renderer = renderer
+    this.#output = output
+    this.#batch = batch
+  }
+
+  get delegate(): RendererContract {
+    return this.#renderer
+  }
+
+  getLogs(): { message: string; stream: 'stdout' | 'stderr' }[] {
+    return this.#renderer.getLogs()
+  }
+
+  flushLogs(): void {
+    this.#renderer.flushLogs()
+  }
+
+  log(message: string): void {
+    this.#capture(message)
+    this.#renderer.log(message)
+  }
+
+  logError(message: string): void {
+    this.#capture(message)
+    this.#renderer.logError(message)
+  }
+
+  logUpdate(message: string): void {
+    this.#capture(message)
+    this.#renderer.logUpdate(message)
+  }
+
+  logUpdatePersist(): void {
+    this.#renderer.logUpdatePersist()
+  }
+
+  /**
+   * Remove a completed capture from a renderer chain even when commands finish out of order.
+   */
+  detach(target: TeeRenderer): boolean {
+    if (this.#renderer === target) {
+      this.#renderer = target.delegate
+      return true
+    }
+
+    return this.#renderer instanceof TeeRenderer ? this.#renderer.detach(target) : false
+  }
+
+  #capture(message: string): void {
+    if (BatchScope.current() === this.#batch) {
+      safeguard('periscope.watcher.command.output.write', () => this.#output.append(message))
+    }
+  }
+}
 
 type InstancePatch = {
   originalDescriptor: PropertyDescriptor | undefined
@@ -38,6 +143,7 @@ export class CommandWatcher implements Watcher {
 
   readonly #context: WatcherContext
   readonly #ignoredCommands: Set<string>
+  readonly #captureOutput: boolean
   readonly #patches = new Map<CommandInstance, InstancePatch>()
 
   #active = false
@@ -47,6 +153,7 @@ export class CommandWatcher implements Watcher {
   constructor(context: WatcherContext) {
     this.#context = context
     this.#ignoredCommands = new Set(context.config.watchers.command.ignore)
+    this.#captureOutput = context.config.watchers.command.captureOutput
   }
 
   /**
@@ -197,6 +304,11 @@ export class CommandWatcher implements Watcher {
       try {
         return await BatchScope.runWith(batch, async () => {
           executionStarted = true
+          const outputCapture = safeguard(
+            'periscope.watcher.command.output.capture',
+            () => watcher.#startOutputCapture(command, batch),
+            null
+          )
 
           try {
             return await Reflect.apply(original, this, args)
@@ -205,8 +317,20 @@ export class CommandWatcher implements Watcher {
             thrown = error
             throw error
           } finally {
+            if (outputCapture !== null && outputCapture !== undefined) {
+              safeguard('periscope.watcher.command.output.restore', () => outputCapture.restore())
+            }
+            const output =
+              outputCapture === null || outputCapture === undefined
+                ? undefined
+                : safeguard(
+                    'periscope.watcher.command.output.read',
+                    () => outputCapture.output.read(),
+                    undefined
+                  )
+
             safeguard('periscope.watcher.command.record', () =>
-              watcher.#record(command, commandName, isMain, startedAt, didThrow, thrown)
+              watcher.#record(command, commandName, isMain, startedAt, didThrow, thrown, output)
             )
             await safeguardAsync('periscope.watcher.command.flush', () =>
               watcher.#context.recorder.flush(batch)
@@ -228,6 +352,29 @@ export class CommandWatcher implements Watcher {
     }
 
     patch = this.#installPatch(command, wrapper)
+  }
+
+  #startOutputCapture(command: CommandInstance, batch: BatchContext): OutputCapture | null {
+    if (!this.#captureOutput) {
+      return null
+    }
+
+    const ui = command.ui
+    const output = new BoundedOutput()
+    const tee = new TeeRenderer(ui.logger.getRenderer(), output, batch)
+    ui.useRenderer(tee)
+
+    return {
+      output,
+      restore: () => {
+        const current = ui.logger.getRenderer()
+        if (current === tee) {
+          ui.useRenderer(tee.delegate)
+        } else if (current instanceof TeeRenderer) {
+          current.detach(tee)
+        }
+      },
+    }
   }
 
   #installPatch(command: CommandInstance, wrapper: CommandExec): InstancePatch {
@@ -278,7 +425,8 @@ export class CommandWatcher implements Watcher {
     isMain: boolean,
     startedAt: bigint,
     didThrow: boolean,
-    thrown: unknown
+    thrown: unknown,
+    output: string | undefined
   ): void {
     const snapshot = command.toJSON()
     const snapshotError = snapshot.error
@@ -289,6 +437,8 @@ export class CommandWatcher implements Watcher {
         : hasError
           ? 1
           : 0
+    const serializedOutput =
+      output === undefined ? undefined : safeSerialize(output, { maxBytes: OUTPUT_MAX_BYTES })
     const content: CommandEntryContent = {
       command: commandName,
       args: safeSerialize(snapshot.args),
@@ -296,6 +446,7 @@ export class CommandWatcher implements Watcher {
       isMain,
       exitCode,
       durationMs: Number(process.hrtime.bigint() - startedAt) / 1_000_000,
+      ...(typeof serializedOutput === 'string' ? { output: serializedOutput } : {}),
       ...(hasError ? { error: safeSerialize(didThrow ? thrown : snapshotError) } : {}),
     }
 

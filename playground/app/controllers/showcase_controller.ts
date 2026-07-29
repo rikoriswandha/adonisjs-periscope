@@ -2,6 +2,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { tracingChannel } from 'node:diagnostics_channel'
 
 import type { HttpContext } from '@adonisjs/core/http'
+import { healthChecks } from '#start/health'
 
 import { demoQueue } from '../periscope/demo_queue_adapter.js'
 
@@ -72,10 +73,13 @@ export default class ShowcaseController {
       })
     }
 
+    const health = await healthChecks.run()
+
     return {
       session: { visits: session.get('showcase:visits') },
       redis: { traced: 2 },
       jobs: { emitted: observer !== undefined },
+      health: { status: health.status, checks: health.checks.length },
     }
   }
 }

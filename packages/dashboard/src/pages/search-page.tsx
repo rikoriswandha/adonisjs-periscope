@@ -1,22 +1,26 @@
 import { ArrowUpRight, Search } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import type { FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
-import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
+import { EntryFilterBar } from '@/components/entry-filter-bar'
 import { EntryIndexTable } from '@/components/entry-index-table'
 import type { EntryColumn } from '@/components/entry-index-table'
-import { JsonTree } from '@/components/json-tree'
 import { PageHeader } from '@/components/page-header'
 import { TagChip } from '@/components/tag-chip'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useDashboard } from '@/dashboard-context'
 import { useCursorPagination } from '@/hooks/use-cursor-pagination'
 import { useNewEntryPolling } from '@/hooks/use-polling'
-import { formatDateTime, formatRelativeTime, truncate } from '@/lib/format'
-import { globalSearchFilters, normalizeExactTag } from '@/lib/global-search'
+import { formatRelativeTime, truncate } from '@/lib/format'
+import { entryUrlFilterState, globalSearchFilters } from '@/lib/global-search'
+import { ENTRY_TYPES } from '@/types'
 import type { EntryFilters, StoredEntry } from '@/types'
-import type { EntryTypeImplementation } from '@/entry-type-registry'
-import { entryTypeLabel, getWave2EntryType } from '@/wave2-entry-types'
+import { RegistryEntryDetail } from '@/entry-type-registry'
+import { entryTypeLabel } from '@/wave2-entry-types'
 
 function entrySummary(entry: StoredEntry): string {
   const content = entry.content
@@ -79,58 +83,117 @@ const columns: EntryColumn[] = [
   },
 ]
 
+const typeOptions = [
+  { label: 'All types', value: 'all' },
+  ...ENTRY_TYPES.map((type) => ({ label: entryTypeLabel(type), value: type })),
+]
+
 export function SearchPage() {
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { status, revision } = useDashboard()
   const [selected, setSelected] = useState<StoredEntry | null>(null)
   const [detailEntry, setDetailEntry] = useState<StoredEntry | null>(null)
-  const [implementation, setImplementation] = useState<EntryTypeImplementation | null>(null)
-  const tag = normalizeExactTag(searchParams.get('tag'))
-  const filters = useMemo<EntryFilters>(() => globalSearchFilters(tag) ?? { limit: 50 }, [tag])
-  const pagination = useCursorPagination(filters, { enabled: Boolean(tag) })
+  const filterState = useMemo(() => entryUrlFilterState(searchParams), [searchParams])
+  const activeFilters = useMemo(() => globalSearchFilters(searchParams), [searchParams])
+  const filters = useMemo<EntryFilters>(() => activeFilters ?? { limit: 50 }, [activeFilters])
+  const [textInput, setTextInput] = useState(filterState.text ?? '')
+  const hasFilters = activeFilters !== null
+  const pagination = useCursorPagination(filters, { enabled: hasFilters })
   const reload = pagination.reload
   const polling = useNewEntryPolling(
     pagination.entries,
     filters,
-    !tag || (status?.paused ?? true),
+    !hasFilters || (status?.paused ?? true),
     revision
   )
-  const registration = detailEntry ? getWave2EntryType(detailEntry.type) : undefined
-  const DetailComponent = implementation?.detailComponent
 
   useEffect(() => {
-    let active = true
-    setImplementation(null)
-
-    if (registration) {
-      void registration.load().then((loaded) => {
-        if (active) setImplementation(loaded)
-      })
-    }
-
-    return () => {
-      active = false
-    }
-  }, [registration])
+    setTextInput(filterState.text ?? '')
+  }, [filterState.text])
 
   useEffect(() => {
-    if (revision > 0 && tag) void reload()
-  }, [reload, revision, tag])
+    if (revision > 0 && hasFilters) void reload()
+  }, [hasFilters, reload, revision])
+
+  const submitTextSearch = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const next = new URLSearchParams(searchParams)
+    const text = textInput.trim()
+    if (text) next.set('text', text)
+    else next.delete('text')
+    setSearchParams(next)
+  }
+
+  const selectType = (value: unknown) => {
+    const next = new URLSearchParams(searchParams)
+    if (typeof value === 'string' && value !== 'all') next.set('type', value)
+    else next.delete('type')
+    setSearchParams(next)
+  }
 
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Exact-tag search"
-        description="Search every recorded entry type without changing the screen you started from."
-        aside={tag && <TagChip tag={tag} />}
+        title="Search recordings"
+        description="Search serialized entry content, narrow by exact tags and type, or inspect a specific time window."
       />
 
-      {tag ? (
+      <section
+        aria-label="Search query"
+        className="flex flex-col gap-3 rounded-lg border bg-background p-3 sm:flex-row sm:items-end"
+      >
+        <form className="min-w-0 flex-1 space-y-1.5" onSubmit={submitTextSearch} role="search">
+          <label className="text-xs font-medium" htmlFor="recording-search-text">
+            Recorded content
+          </label>
+          <div className="flex gap-2">
+            <Input
+              autoComplete="off"
+              id="recording-search-text"
+              onChange={(event) => setTextInput(event.target.value)}
+              placeholder="Search requests, messages, commands, payloads…"
+              type="search"
+              value={textInput}
+            />
+            <Button type="submit">
+              <Search aria-hidden="true" />
+              Search
+            </Button>
+          </div>
+        </form>
+
+        <div className="space-y-1.5 sm:w-48">
+          <label className="text-xs font-medium" id="recording-search-type-label">
+            Entry type
+          </label>
+          <Select
+            items={typeOptions}
+            onValueChange={selectType}
+            value={filterState.type ?? 'all'}
+          >
+            <SelectTrigger aria-labelledby="recording-search-type-label">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectPopup>
+              <SelectItem value="all">All types</SelectItem>
+              {ENTRY_TYPES.map((type) => (
+                <SelectItem key={type} value={type}>
+                  {entryTypeLabel(type)}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        </div>
+      </section>
+
+      <EntryFilterBar />
+
+      {hasFilters ? (
         <EntryIndexTable
-          caption={`Entries carrying the exact tag ${tag}`}
+          caption="Search results across all recorded entry types"
           columns={columns}
-          emptyDescription={`No recorded entry carries the exact tag “${tag}”. Check capitalization and punctuation, or try another tag.`}
-          emptyTitle="No exact matches"
+          emptyDescription="No recorded entry matches every active search filter. Broaden the text, tag, type, or time range and try again."
+          emptyTitle="No matching entries"
           error={pagination.error}
           hasMore={pagination.hasMore}
           loading={pagination.loading}
@@ -149,31 +212,18 @@ export function SearchPage() {
       ) : (
         <section className="rounded-md border bg-muted/25 px-4 py-10 text-center">
           <Search aria-hidden="true" className="mx-auto size-5 text-muted-foreground" />
-          <h3 className="mt-3 text-sm font-semibold">Enter an exact tag to search</h3>
+          <h3 className="mt-3 text-sm font-semibold">Start with any search filter</h3>
           <p className="mx-auto mt-1 max-w-md text-sm leading-6 text-muted-foreground">
-            Use the search field above for tags such as Auth:42, status:500, or any free-form tag.
+            Search recorded content, choose an entry type, add exact tags, or select a time range.
           </p>
         </section>
       )}
-
-      {detailEntry && registration && DetailComponent && (
-        <DetailComponent
+      {detailEntry && (
+        <RegistryEntryDetail
           entry={detailEntry}
           onClose={() => setSelected(null)}
           open={selected !== null}
         />
-      )}
-      {detailEntry && !registration && (
-        <EntryDetailDrawer
-          description={`${entryTypeLabel(detailEntry.type)} · ${formatDateTime(detailEntry.createdAt)}`}
-          meta={<Badge variant="secondary">{entryTypeLabel(detailEntry.type)}</Badge>}
-          onOpenChange={(open) => !open && setSelected(null)}
-          open={selected !== null}
-          tags={detailEntry.tags}
-          title={entrySummary(detailEntry)}
-        >
-          <JsonTree label="Recorded content" value={detailEntry.content} />
-        </EntryDetailDrawer>
       )}
     </div>
   )

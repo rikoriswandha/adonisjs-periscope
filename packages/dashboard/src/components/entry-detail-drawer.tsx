@@ -1,5 +1,7 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 
+import { CopyButton } from '@/components/copy-button'
 import { EntryTagChips } from '@/components/tag-chip'
 import { Separator } from '@/components/ui/separator'
 import {
@@ -10,6 +12,61 @@ import {
   SheetPopup,
   SheetTitle,
 } from '@/components/ui/sheet'
+import type { StoredEntry } from '@/types'
+
+export type EntryDetailPresentation = 'drawer' | 'page'
+
+const EntryDetailContext = createContext<{
+  entry: StoredEntry
+  presentation: EntryDetailPresentation
+} | null>(null)
+
+export function EntryDetailScope({
+  children,
+  entry,
+  presentation = 'drawer',
+}: {
+  children: ReactNode
+  entry?: StoredEntry | null
+  presentation?: EntryDetailPresentation
+}) {
+  if (!entry) return <>{children}</>
+  return (
+    <EntryDetailContext.Provider value={{ entry, presentation }}>
+      {children}
+    </EntryDetailContext.Provider>
+  )
+}
+
+function hashUrl(path: string): string {
+  const url = new URL(window.location.href)
+  url.hash = path
+  return url.toString()
+}
+
+
+function EntryDetailActions({ entry }: { entry: StoredEntry }) {
+  return (
+    <div aria-label="Share links" className="ms-auto flex flex-wrap items-center gap-2">
+      <span className="flex items-center gap-0.5 text-2xs text-muted-foreground">
+        Entry
+        <CopyButton
+          label="Copy entry link"
+          value={hashUrl(`/entries/${encodeURIComponent(entry.uuid)}`)}
+        />
+      </span>
+      {entry.batchId && (
+        <span className="flex items-center gap-0.5 text-2xs text-muted-foreground">
+          Batch
+          <CopyButton
+            label="Copy batch link"
+            value={hashUrl(`/requests/${encodeURIComponent(entry.batchId)}`)}
+          />
+        </span>
+      )}
+    </div>
+  )
+}
 
 export function EntryDetailDrawer({
   open,
@@ -28,8 +85,7 @@ export function EntryDetailDrawer({
   tags?: readonly string[]
   children: ReactNode
 }) {
-  // Start closed on mount so Base UI can play the enter transition even when
-  // the drawer is first rendered with open=true (registered entry details).
+  const context = useContext(EntryDetailContext)
   const [present, setPresent] = useState(false)
 
   useEffect(() => {
@@ -42,21 +98,48 @@ export function EntryDetailDrawer({
     return () => cancelAnimationFrame(frame)
   }, [open])
 
+  const actions = context ? <EntryDetailActions entry={context.entry} /> : null
+  const header = (
+    <div className="space-y-2.5">
+      <div className={context?.presentation === 'drawer' ? 'min-w-0 pe-10' : 'min-w-0'}>
+        <h2 className="break-words font-mono text-base font-semibold leading-snug">{title}</h2>
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
+      </div>
+      {(meta || actions) && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {meta && <div className="flex flex-wrap items-center gap-1.5">{meta}</div>}
+          {actions}
+        </div>
+      )}
+    </div>
+  )
+  const panel = (
+    <div className="space-y-4">
+      {tags && <EntryTagChips tags={tags} />}
+      {children}
+    </div>
+  )
+
+  if (context?.presentation === 'page') {
+    return (
+      <section className="overflow-hidden rounded-lg border bg-card">
+        <header className="p-4 sm:p-5">{header}</header>
+        <Separator />
+        <div className="p-4 sm:p-5">{panel}</div>
+      </section>
+    )
+  }
+
   return (
     <Sheet onOpenChange={onOpenChange} open={present}>
       <SheetPopup className="w-full sm:max-w-2xl" side="right">
-        <SheetHeader className="gap-2.5 p-4 sm:p-5">
-          <div className="min-w-0 pe-10">
-            <SheetTitle className="break-words font-mono text-base leading-snug">{title}</SheetTitle>
-            <SheetDescription className="mt-1 text-xs leading-5">{description}</SheetDescription>
-          </div>
-          {meta && <div className="flex flex-wrap items-center gap-1.5">{meta}</div>}
+        <SheetHeader className="p-4 sm:p-5">
+          <SheetTitle className="sr-only">{title}</SheetTitle>
+          <SheetDescription className="sr-only">{description}</SheetDescription>
+          {header}
         </SheetHeader>
         <Separator />
-        <SheetPanel className="space-y-4 p-4 sm:p-5">
-          {tags && <EntryTagChips tags={tags} />}
-          {children}
-        </SheetPanel>
+        <SheetPanel className="p-4 sm:p-5">{panel}</SheetPanel>
       </SheetPopup>
     </Sheet>
   )

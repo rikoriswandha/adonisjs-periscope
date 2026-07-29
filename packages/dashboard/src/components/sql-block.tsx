@@ -5,6 +5,15 @@ import { format } from 'sql-formatter'
 import { CopyButton } from '@/components/copy-button'
 import { JsonTree } from '@/components/json-tree'
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { tokenizeSql } from '@/components/sql-tokenizer'
+import type { SqlTokenKind } from '@/components/sql-tokenizer'
+
+const TOKEN_CLASS_BY_KIND: Partial<Record<SqlTokenKind, string>> = {
+  keyword: 'font-semibold text-info-foreground',
+  string: 'text-success-foreground',
+  number: 'text-warning-foreground',
+  comment: 'italic text-muted-foreground',
+}
 
 export function SqlBlock({ sql, bindings }: { sql: string; bindings?: unknown }) {
   const [bindingsOpen, setBindingsOpen] = useState(false)
@@ -15,6 +24,7 @@ export function SqlBlock({ sql, bindings }: { sql: string; bindings?: unknown })
       return sql
     }
   }, [sql])
+  const tokens = useMemo(() => tokenizeSql(formatted), [formatted])
 
   return (
     <section aria-label="SQL query" className="overflow-hidden rounded-md border bg-muted/35">
@@ -23,7 +33,13 @@ export function SqlBlock({ sql, bindings }: { sql: string; bindings?: unknown })
         <CopyButton label="Copy SQL" value={formatted} />
       </div>
       <pre className="max-h-96 overflow-auto p-3 font-mono text-xs leading-5 text-foreground">
-        <code>{formatted}</code>
+        <code>
+          {tokens.map((token, index) => (
+            <span className={TOKEN_CLASS_BY_KIND[token.kind]} key={`${index}:${token.kind}`}>
+              {token.value}
+            </span>
+          ))}
+        </code>
       </pre>
       {bindings !== undefined && (
         <Collapsible onOpenChange={setBindingsOpen} open={bindingsOpen}>

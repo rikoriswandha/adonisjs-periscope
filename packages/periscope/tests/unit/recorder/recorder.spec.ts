@@ -254,25 +254,36 @@ function makeConfig(overrides: ConfigOverrides = {}): ResolvedPeriscopeConfig {
         enabled: true,
         slowMs: 1_000,
         captureResponse: true,
+        captureInertia: true,
         responseSizeLimitKb: 64,
         captureSession: true,
+        ignorePaths: [],
       },
       query: { enabled: true, slowMs: 100, hideBindings: false },
       exception: { enabled: true, captureCodeFrame: 'dev', captureProcessErrors: true },
       log: { enabled: true, level: 'warn' },
       event: { enabled: true, ignore: [] },
-      command: { enabled: true, ignore: [] },
+      command: { enabled: true, ignore: [], captureOutput: true },
       mail: { enabled: true },
       cache: { enabled: true, captureValues: false },
       model: { enabled: true, captureDirty: false },
       gate: { enabled: true, ignoreAbilities: [] },
       dump: { enabled: true },
-      http_client: { enabled: true },
+      view: { enabled: true, captureDataKeys: true },
+      http_client: { enabled: true, slowMs: 1_000 },
+      health_check: { enabled: true },
+      transmit: { enabled: false, capturePayload: false },
       job_schedule: { enabled: false, adapters: [], capturePayload: false },
       redis: { enabled: false, captureArguments: false },
       session: { enabled: false, captureValues: false },
+      custom: [],
     },
-    dashboard: { path: '/periscope', authorize: () => true, nPlusOneThreshold: 5 },
+    dashboard: {
+      path: '/periscope',
+      authorize: () => true,
+      nPlusOneThreshold: 5,
+      sseMaxClients: 5,
+    },
   }
 }
 
@@ -722,6 +733,44 @@ test.group('Recorder | flush', (group) => {
     assert.equal(typeof first.sequence, 'bigint')
   })
 
+  test('persist n+1 tags on repeated query families at the configured threshold', async ({
+    assert,
+  }) => {
+    const store = new FakeStore()
+    const recorder = new Recorder({ config: makeConfig(), store })
+    const context = BatchScope.createContext('request')
+
+    BatchScope.runWith(context, () => {
+      for (let index = 0; index < 5; index += 1) {
+        recorder.record(
+          IncomingEntry.make(EntryType.QUERY, {
+            sql: 'select * from users where id = ?',
+          }).withFamilyHash('repeated-family')
+        )
+      }
+
+      for (let index = 0; index < 4; index += 1) {
+        recorder.record(
+          IncomingEntry.make(EntryType.QUERY, {
+            sql: 'select * from posts where id = ?',
+          }).withFamilyHash('below-threshold-family')
+        )
+      }
+    })
+
+    await recorder.flush(context)
+
+    const repeated = store.saves[0].filter((entry) => entry.familyHash === 'repeated-family')
+    const belowThreshold = store.saves[0].filter(
+      (entry) => entry.familyHash === 'below-threshold-family'
+    )
+
+    assert.lengthOf(repeated, 5)
+    assert.isTrue(repeated.every((entry) => entry.tags.includes('n+1')))
+    assert.lengthOf(belowThreshold, 4)
+    assert.isTrue(belowThreshold.every((entry) => !entry.tags.includes('n+1')))
+  })
+
   test('leave a fragment buffered until its store save resolves', async ({ assert }) => {
     const store = new FakeStore()
     const recorder = new Recorder({ config: makeConfig(), store })
@@ -1132,6 +1181,29 @@ test.group('Recorder | sampling and flush subscriptions', (group) => {
     assert.equal(store.monitoredTagsCalls, 1)
   })
 
+  test('apply n+1 before monitored tags decide sampled-out retention', async ({ assert }) => {
+    const store = new FakeStore()
+    store.monitored.add('n+1')
+    const recorder = new Recorder({ config: makeConfig({ sampleRate: 0 }), store })
+    const context = BatchScope.createContext('request')
+
+    BatchScope.runWith(context, () => {
+      for (let index = 0; index < 5; index += 1) {
+        recorder.record(
+          IncomingEntry.make(EntryType.QUERY, {
+            sql: 'select * from users where id = ?',
+          }).withFamilyHash('monitored-repeated-family')
+        )
+      }
+    })
+
+    await recorder.flush(context, 'final')
+
+    assert.equal(context.retention, 'kept')
+    assert.lengthOf(store.saves, 1)
+    assert.isTrue(store.saves[0].every((entry) => entry.tags.includes('n+1')))
+  })
+
   test('defer sampled-out fragments until final and persist a keepAlways override', async ({
     assert,
   }) => {
@@ -1381,7 +1453,7 @@ test.group('Recorder | sampling and flush subscriptions', (group) => {
     const store = new FakeStore()
     const recorder = new Recorder({ config: makeConfig(), store })
     const events: FlushedEvent[] = []
-    store.onSave = () => assert.lengthOf(events, 0, 'notifications must follow persistence')
+    store.onSave = () => assert.lengthOf(events, 0, 'flush events must follow persistence')
     const unsubscribe = recorder.subscribeFlushed((event) => {
       events.push(event)
     })

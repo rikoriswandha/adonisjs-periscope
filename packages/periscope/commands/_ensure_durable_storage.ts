@@ -20,8 +20,8 @@ export function ensureDurableStorage(app: ApplicationService): void {
   if (config.storage.driver === 'memory') {
     throw new Error(
       'Periscope commands cannot use storage.driver "memory" because Ace runs in a separate ' +
-        'process. Set storage.driver to "sqlite-local" or "database" in config/periscope.ts and ' +
-        'retry.'
+        'process. Set storage.driver to "sqlite-local", "database", or a durable "custom" store ' +
+        'in config/periscope.ts and retry.'
     )
   }
 }

@@ -6,11 +6,11 @@
  */
 
 import { getActiveTest, test } from '@japa/runner'
-import { QueueEvents } from 'bullmq'
+import { Queue, QueueEvents } from 'bullmq'
 import type { RedisClient } from 'bullmq'
 
 import { BullQueueAdapter } from '../../../src/watchers/job_schedule/bull_queue_adapter.ts'
-import type { QueueWatcherObserver } from '../../../src/types.ts'
+import type { QueueJobEvent, QueueJobResult, QueueWatcherObserver } from '../../../src/types.ts'
 
 const observer: QueueWatcherObserver = {
   started() {},
@@ -29,6 +29,7 @@ const connection = {
 function patchQueueEvents(options: {
   waitUntilReady: (call: number) => Promise<RedisClient>
   onClose?: () => void
+  onReady?: (events: QueueEvents) => void
 }) {
   const originalWaitUntilReady = QueueEvents.prototype.waitUntilReady
   const originalClose = QueueEvents.prototype.close
@@ -36,6 +37,7 @@ function patchQueueEvents(options: {
 
   QueueEvents.prototype.waitUntilReady = function () {
     calls += 1
+    options.onReady?.(this)
     return options.waitUntilReady(calls)
   }
   QueueEvents.prototype.close = async function () {
@@ -46,6 +48,17 @@ function patchQueueEvents(options: {
   getActiveTest()?.cleanup(() => {
     QueueEvents.prototype.waitUntilReady = originalWaitUntilReady
     QueueEvents.prototype.close = originalClose
+  })
+}
+
+function patchQueueGetJob(getJob: (jobId: string) => Promise<unknown>): void {
+  const originalGetJob = Queue.prototype.getJob
+  Reflect.set(Queue.prototype, 'getJob', function (jobId: string) {
+    return getJob(jobId)
+  })
+
+  getActiveTest()?.cleanup(() => {
+    Queue.prototype.getJob = originalGetJob
   })
 }
 
@@ -108,5 +121,116 @@ test.group('BullQueueAdapter', () => {
     await cleanup()
 
     assert.equal(closed, 1)
+  })
+
+  test('hydrates lifecycle events with bounded job metadata lookups', async ({ assert }) => {
+    let events: QueueEvents | undefined
+    patchQueueEvents({
+      waitUntilReady: () => Promise.resolve({} as RedisClient),
+      onReady: (queueEvents) => {
+        events = queueEvents
+      },
+    })
+
+    let lookup = 0
+    patchQueueGetJob(async () => {
+      lookup += 1
+      return {
+        name: 'SendReceipt',
+        attemptsMade: lookup === 1 ? 0 : 2,
+        data: { orderId: 42 },
+      }
+    })
+
+    const started: QueueJobEvent[] = []
+    const completed = Promise.withResolvers<QueueJobResult>()
+    const adapter = new BullQueueAdapter({
+      queues: [{ name: 'mail', connection }],
+    })
+    const cleanup = await adapter.register(
+      {
+        started: (event) => started.push(event),
+        completed: (event) => completed.resolve(event),
+        failed() {},
+        scheduled() {},
+      },
+      { capturePayload: true }
+    )
+    getActiveTest()?.cleanup(() => cleanup())
+
+    events!.emit('active', { jobId: 'job-1', prev: 'waiting' }, 'active')
+    events!.emit(
+      'completed',
+      {
+        jobId: 'job-1',
+        returnvalue: JSON.stringify({ delivered: true }),
+        prev: 'active',
+      },
+      'completed'
+    )
+
+    const result = await completed.promise
+    assert.deepEqual(started, [
+      {
+        adapter: 'bullmq',
+        queue: 'mail',
+        jobId: 'job-1',
+        name: 'SendReceipt',
+        attempts: 0,
+        payload: { orderId: 42 },
+      },
+    ])
+    assert.deepInclude(result, {
+      adapter: 'bullmq',
+      queue: 'mail',
+      jobId: 'job-1',
+      name: 'SendReceipt',
+      attempts: 2,
+      payload: { orderId: 42 },
+      result: JSON.stringify({ delivered: true }),
+    })
+    assert.isAtLeast(result.durationMs!, 0)
+    assert.equal(lookup, 2)
+  })
+
+  test('times out a job lookup and falls back to base metadata', async ({ assert }) => {
+    let events: QueueEvents | undefined
+    patchQueueEvents({
+      waitUntilReady: () => Promise.resolve({} as RedisClient),
+      onReady: (queueEvents) => {
+        events = queueEvents
+      },
+    })
+    patchQueueGetJob(() => Promise.withResolvers<unknown>().promise)
+
+    const failed = Promise.withResolvers<QueueJobResult>()
+    const adapter = new BullQueueAdapter({
+      queues: [{ name: 'mail', connection }],
+      jobLookupTimeoutMs: 10,
+    })
+    const cleanup = await adapter.register({
+      started() {},
+      completed() {},
+      failed: (event) => failed.resolve(event),
+      scheduled() {},
+    })
+    getActiveTest()?.cleanup(() => cleanup())
+
+    events!.emit(
+      'failed',
+      {
+        jobId: 'job-2',
+        failedReason: 'delivery failed',
+        prev: 'active',
+      },
+      'failed'
+    )
+
+    assert.deepEqual(await failed.promise, {
+      adapter: 'bullmq',
+      queue: 'mail',
+      jobId: 'job-2',
+      error: { message: 'delivery failed' },
+    })
   })
 })

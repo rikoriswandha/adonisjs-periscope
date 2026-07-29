@@ -36,6 +36,11 @@ export type RequestFileMetadata = {
 export type RequestResponseMarker =
   { kind: 'stream' } | { kind: 'file'; path: string } | { kind: 'binary'; size: number }
 
+export type RequestInertiaSummary = {
+  component: string
+  propKeys?: string[]
+}
+
 /**
  * The primary entry closing an HTTP request batch. Every member is JSON-representable by the time
  * it reaches the recorder; application-owned values have already passed through `safeSerialize`.
@@ -56,6 +61,7 @@ export type RequestEntryContent = Record<string, unknown> & {
   ip: string
   hostname: string | null
   response?: unknown
+  inertia?: RequestInertiaSummary
   session?: unknown
   clientDisconnected: boolean
 }

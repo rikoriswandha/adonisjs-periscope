@@ -5,7 +5,7 @@
  * file that was distributed with this source code.
  */
 
-import { BaseCommand } from '@adonisjs/core/ace'
+import { BaseCommand, flags } from '@adonisjs/core/ace'
 
 import { Recorder } from '../src/recorder/recorder.ts'
 import { ensureDurableStorage } from './_ensure_durable_storage.ts'
@@ -18,13 +18,22 @@ export default class PeriscopeClear extends BaseCommand {
   static description = 'Delete all Periscope entries'
   static options = { startApp: true }
 
+  @flags.string({
+    description: 'Clear entries recorded by one application only',
+  })
+  declare application?: string
+
   async run() {
     ensureDurableStorage(this.app)
 
     const recorder = await this.app.container.make(Recorder)
 
-    await recorder.mute(() => recorder.store.clear())
+    await recorder.mute(() => recorder.store.clear(this.application))
 
-    this.logger.success('Cleared all Periscope entries')
+    if (this.application === undefined) {
+      this.logger.success('Cleared all Periscope entries')
+    } else {
+      this.logger.success(`Cleared Periscope entries for application "${this.application}"`)
+    }
   }
 }

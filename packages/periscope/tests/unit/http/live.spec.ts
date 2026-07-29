@@ -130,10 +130,12 @@ test.group('Dashboard live HTTP API', () => {
     assert.equal(source.unsubscriptions, 1)
   })
 
-  test('cap active streams at five and release capacity on disconnect', ({ assert }) => {
+  test('honor the configured active stream cap and release capacity on disconnect', ({
+    assert,
+  }) => {
     const source = new FlushedSource()
-    const controller = new StreamController(source)
-    const clients = Array.from({ length: 5 }, () => createContext('/periscope/api/stream'))
+    const controller = new StreamController(source, { maxClients: 2 })
+    const clients = Array.from({ length: 2 }, () => createContext('/periscope/api/stream'))
 
     for (const client of clients) controller.stream(client)
     assert.equal(source.subscriptions, 1)

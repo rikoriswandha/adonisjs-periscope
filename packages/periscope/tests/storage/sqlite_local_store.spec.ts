@@ -19,6 +19,7 @@ import type { Database as DatabaseHandle } from 'better-sqlite3'
 import { PeriscopeStorageError } from '../../src/errors.ts'
 import {
   ENTRIES_TABLE,
+  ENTRIES_FTS_TABLE,
   FLAGS_TABLE,
   MONITORED_TAGS_TABLE,
   TAGS_TABLE,
@@ -81,6 +82,23 @@ function tagRowCounts(path: string): { total: number; orphans: number } {
       .get()
 
     return { total: total?.total ?? -1, orphans: orphans?.total ?? -1 }
+  } finally {
+    reader.close()
+  }
+}
+
+function fullTextMatchCount(path: string, text: string): number {
+  const reader = openReader(path)
+
+  try {
+    const phrase = `"${text.replaceAll('"', '""')}"`
+    const row = reader
+      .prepare<[string], { total: number }>(
+        `select count(*) as total from ${ENTRIES_FTS_TABLE} where ${ENTRIES_FTS_TABLE} match ?`
+      )
+      .get(phrase)
+
+    return row?.total ?? 0
   } finally {
     reader.close()
   }
@@ -281,6 +299,64 @@ test.group('SqliteLocalStore', () => {
     } finally {
       reader.close()
     }
+  })
+
+  test('backfill and keep the full-text index synchronized across deletion paths', async ({
+    assert,
+    cleanup,
+  }) => {
+    const file = createDatabaseFile()
+    cleanup(() => file.remove())
+    const first = new SqliteLocalStore({ path: file.path })
+    cleanup(() => first.close())
+    const legacy = makeStoredEntry({
+      content: { message: 'legacybackfilltoken' },
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    })
+
+    await first.save([legacy])
+    await first.close()
+
+    const reader = openReader(file.path)
+    reader.exec(`
+      drop trigger if exists periscope_entries_fts_insert;
+      drop trigger if exists periscope_entries_fts_delete;
+      drop trigger if exists periscope_entries_fts_update;
+      drop table if exists ${ENTRIES_FTS_TABLE};
+    `)
+    reader.close()
+
+    const store = new SqliteLocalStore({ path: file.path })
+    cleanup(() => store.close())
+    const backfilled = await store.list({ text: 'BACKFILL' })
+    assert.deepEqual(
+      backfilled.data.map((entry) => entry.uuid),
+      [legacy.uuid]
+    )
+
+    const trimmed = makeStoredEntry({
+      content: { message: 'trimmedindextoken' },
+      createdAt: new Date('2026-01-02T00:00:00.000Z'),
+    })
+    const cleared = makeStoredEntry({
+      content: { message: 'clearedindextoken' },
+      createdAt: new Date('2026-01-03T00:00:00.000Z'),
+    })
+    await store.save([trimmed, cleared])
+
+    assert.equal(fullTextMatchCount(file.path, 'legacybackfilltoken'), 1)
+    assert.equal(fullTextMatchCount(file.path, 'trimmedindextoken'), 1)
+    assert.equal(fullTextMatchCount(file.path, 'clearedindextoken'), 1)
+
+    await store.prune({ before: new Date('2026-01-02T00:00:00.000Z') })
+    assert.equal(fullTextMatchCount(file.path, 'legacybackfilltoken'), 0)
+
+    await store.trim(1)
+    assert.equal(fullTextMatchCount(file.path, 'trimmedindextoken'), 0)
+    assert.equal(fullTextMatchCount(file.path, 'clearedindextoken'), 1)
+
+    await store.clear()
+    assert.equal(fullTextMatchCount(file.path, 'clearedindextoken'), 0)
   })
 
   test('throw a storage error when the database cannot be opened', async ({ assert, cleanup }) => {

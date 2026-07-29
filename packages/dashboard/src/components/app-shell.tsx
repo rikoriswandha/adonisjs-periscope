@@ -1,4 +1,19 @@
-import { Bug, CirclePause, Database, Gauge, Search, Trash2, TriangleAlert } from 'lucide-react'
+import {
+  BellRing,
+  Bug,
+  CirclePause,
+  Database,
+  CircleHelp,
+  Ellipsis,
+  Gauge,
+  LayoutDashboard,
+  Monitor,
+  Moon,
+  Search,
+  Sun,
+  Trash2,
+  TriangleAlert,
+} from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
@@ -26,7 +41,6 @@ import {
   AlertDialogHeader,
   AlertDialogPopup,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -51,14 +65,26 @@ import {
   SidebarSeparator,
   SidebarTrigger,
 } from '@/components/ui/sidebar'
-import { Switch } from '@/components/ui/switch'
+import {
+  Menu,
+  MenuCheckboxItem,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuShortcut,
+  MenuTrigger,
+} from '@/components/ui/menu'
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { PeriscopeLogo } from '@/components/periscope-logo'
 
 type NavigationItem = {
   to: string
   label: string
-  type: EntryType
+  type?: EntryType
   icon: LucideIcon
 }
 
@@ -66,6 +92,7 @@ const navigationGroups: { label: string; items: NavigationItem[] }[] = [
   {
     label: 'Core',
     items: [
+      { to: '/overview', label: 'Overview', icon: LayoutDashboard },
       { to: '/requests', label: 'Requests', type: 'request', icon: Gauge },
       { to: '/queries', label: 'Queries', type: 'query', icon: Database },
       { to: '/exceptions', label: 'Exceptions', type: 'exception', icon: Bug },
@@ -73,22 +100,29 @@ const navigationGroups: { label: string; items: NavigationItem[] }[] = [
   },
   ...(['Application', 'Infrastructure', 'Diagnostics'] as const).map((label) => ({
     label,
-    items: wave2EntryTypes
-      .filter((registration) => registration.group === label)
-      .map((registration) => ({
-        to: `/${registration.path}`,
-        label: registration.label,
-        type: registration.type,
-        icon: registration.icon,
-      })),
+    items: [
+      ...wave2EntryTypes
+        .filter((registration) => registration.group === label)
+        .map((registration) => ({
+          to: `/${registration.path}`,
+          label: registration.label,
+          type: registration.type,
+          icon: registration.icon,
+        })),
+      ...(label === 'Diagnostics'
+        ? [{ to: '/monitored-tags', label: 'Monitored tags', icon: BellRing }]
+        : []),
+    ],
   })),
 ]
 
 const titleByPath: Record<string, string> = {
+  overview: 'Overview',
   requests: 'Requests',
   queries: 'Queries',
   exceptions: 'Exceptions',
   search: 'Search',
+  'monitored-tags': 'Monitored tags',
   ...Object.fromEntries(
     wave2EntryTypes.map((registration) => [registration.path, registration.label])
   ),
@@ -127,10 +161,60 @@ function LiveStatusBadge({
   )
 }
 
+type ThemePreference = 'light' | 'dark' | 'system'
+
+const THEME_STORAGE_KEY = 'periscope-theme'
+const ROW_NAVIGATION_EVENT = 'periscope:index-row-navigation'
+const CLOSE_DETAIL_EVENT = 'periscope:close-entry-detail'
+const themeItems: { label: string; value: ThemePreference }[] = [
+  { label: 'Light', value: 'light' },
+  { label: 'Dark', value: 'dark' },
+  { label: 'System', value: 'system' },
+]
+
+const shortcutItems = [
+  { keys: ['/'], label: 'Focus search' },
+  { keys: ['J'], label: 'Focus next row' },
+  { keys: ['K'], label: 'Focus previous row' },
+  { keys: ['Esc'], label: 'Close detail drawer' },
+  { keys: ['⌘/Ctrl', 'B'], label: 'Toggle sidebar' },
+  { keys: ['?'], label: 'Show shortcuts' },
+] as const
+function readThemePreference(): ThemePreference {
+  try {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY)
+    if (stored === 'light' || stored === 'dark' || stored === 'system') return stored
+  } catch {
+    // Storage can be unavailable in locked-down browser contexts.
+  }
+  return 'system'
+}
+
+function applyThemePreference(theme: ThemePreference): void {
+  const dark =
+    theme === 'dark' ||
+    (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+  document.documentElement.classList.toggle('dark', dark)
+  document.documentElement.dataset.theme = theme
+  document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  return (
+    target.matches('input, textarea, select') ||
+    target.isContentEditable ||
+    target.closest('[contenteditable="true"]') !== null
+  )
+}
+
 export function AppShell() {
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
+  const [theme, setTheme] = useState<ThemePreference>(readThemePreference)
+  const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false)
+  const [clearDialogOpen, setClearDialogOpen] = useState(false)
   const [status, setStatus] = useState<DashboardStatus | null>(null)
   const [counts, setCounts] = useState<EntryCounts>({})
   const [statusError, setStatusError] = useState<Error | null>(null)
@@ -147,21 +231,25 @@ export function AppShell() {
   const monitoredTagMutationGenerationRef = useRef(0)
   const monitoredTagMutationsRef = useRef(new Set<string>())
   const monitoredTagsRequestRef = useRef<AbortController | null>(null)
+  const shortcutHelpRef = useRef<HTMLDivElement | null>(null)
+  const preservedApplicationRef = useRef<string | null>(searchParams.get('application'))
   const commitMonitoredTags = useCallback((update: (current: string[]) => string[]) => {
     const next = update(monitoredTagsRef.current)
     monitoredTagsRef.current = next
     setMonitoredTags(next)
   }, [])
   const requestedApplication = searchParams.get('application')
+  if (requestedApplication) preservedApplicationRef.current = requestedApplication
+  const preservedApplication = requestedApplication ?? preservedApplicationRef.current
   const selectedApplication = useMemo(() => {
     if (
-      requestedApplication &&
-      status?.applications.some((application) => application.name === requestedApplication)
+      preservedApplication &&
+      status?.applications.some((application) => application.name === preservedApplication)
     ) {
-      return requestedApplication
+      return preservedApplication
     }
-    return status?.applicationName ?? requestedApplication ?? 'default'
-  }, [requestedApplication, status])
+    return status?.applicationName ?? preservedApplication ?? 'default'
+  }, [preservedApplication, status])
   const selectApplication = useCallback(
     (application: string) => {
       const next = new URLSearchParams(searchParams)
@@ -170,6 +258,97 @@ export function AppShell() {
     },
     [searchParams, setSearchParams]
   )
+
+  const selectTheme = useCallback((nextTheme: ThemePreference) => {
+    setTheme(nextTheme)
+    applyThemePreference(nextTheme)
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, nextTheme)
+    } catch {
+      // The in-memory preference still works when persistence is unavailable.
+    }
+  }, [])
+
+  useEffect(() => {
+    applyThemePreference(theme)
+    if (theme !== 'system') return
+
+    const media = window.matchMedia('(prefers-color-scheme: dark)')
+    const syncSystemTheme = () => applyThemePreference('system')
+    media.addEventListener('change', syncSystemTheme)
+    return () => media.removeEventListener('change', syncSystemTheme)
+  }, [theme])
+
+  useEffect(() => {
+    if (requestedApplication || !preservedApplication) return
+
+    const next = new URLSearchParams(searchParams)
+    next.set('application', preservedApplication)
+    setSearchParams(next, { replace: true })
+  }, [preservedApplication, requestedApplication, searchParams, setSearchParams])
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        isEditableTarget(event.target)
+      ) {
+        return
+      }
+
+      if (event.key === '/') {
+        const input = document.querySelector<HTMLInputElement>('form[role="search"] input')
+        if (!input) return
+        event.preventDefault()
+        input.focus()
+        input.select()
+        return
+      }
+
+      if (event.key === '?') {
+        event.preventDefault()
+        setShortcutHelpOpen((open) => !open)
+        return
+      }
+
+      if (event.key === 'j' || event.key === 'k') {
+        event.preventDefault()
+        window.dispatchEvent(
+          new CustomEvent(ROW_NAVIGATION_EVENT, {
+            detail: { direction: event.key === 'j' ? 1 : -1 },
+          })
+        )
+        return
+      }
+
+      if (event.key === 'Escape') {
+        setShortcutHelpOpen(false)
+        window.dispatchEvent(new Event(CLOSE_DETAIL_EVENT))
+      }
+    }
+
+    window.addEventListener('keydown', handleShortcut, true)
+    return () => window.removeEventListener('keydown', handleShortcut, true)
+  }, [])
+
+  useEffect(() => {
+    if (!shortcutHelpOpen) return
+
+    const closeOnOutsidePress = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        shortcutHelpRef.current &&
+        !shortcutHelpRef.current.contains(event.target)
+      ) {
+        setShortcutHelpOpen(false)
+      }
+    }
+    window.addEventListener('pointerdown', closeOnOutsidePress)
+    return () => window.removeEventListener('pointerdown', closeOnOutsidePress)
+  }, [shortcutHelpOpen])
 
   const refreshMonitoredTags = useCallback(async () => {
     if (monitoredTagMutationsRef.current.size > 0) return
@@ -392,12 +571,15 @@ export function AppShell() {
   const submitSearch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
-    navigate(globalSearchTarget(String(form.get('tag') ?? '')))
+    navigate(globalSearchTarget(String(form.get('text') ?? '')))
   }
 
-  const pageSegment = location.pathname.split('/').filter(Boolean)[0] ?? 'requests'
+  const pageSegment = location.pathname.split('/').filter(Boolean)[0] ?? 'overview'
   const pageTitle = titleByPath[pageSegment] ?? 'Periscope'
-  const searchTag = pageSegment === 'search' ? (searchParams.get('tag') ?? '') : ''
+  const searchText = pageSegment === 'search' ? (searchParams.get('text') ?? '') : ''
+  const applicationSearch = preservedApplication
+    ? `?${new URLSearchParams({ application: preservedApplication })}`
+    : ''
 
   return (
     <DashboardContext.Provider value={contextValue}>
@@ -430,21 +612,27 @@ export function AppShell() {
                       const isActive =
                         location.pathname === item.to ||
                         location.pathname.startsWith(`${item.to}/`)
-                      const count = counts[item.type] ?? 0
+                      const count = item.type ? (counts[item.type] ?? 0) : null
                       return (
                         <SidebarMenuItem key={item.to}>
                           <SidebarMenuButton
                             isActive={isActive}
-                            render={<NavLink to={item.to} />}
+                            render={
+                              <NavLink
+                                to={{ pathname: item.to, search: applicationSearch }}
+                              />
+                            }
                             size="sm"
                             tooltip={item.label}
                           >
                             <Icon aria-hidden="true" />
                             <span>{item.label}</span>
                           </SidebarMenuButton>
-                          <SidebarMenuBadge className="font-mono text-2xs text-muted-foreground peer-data-[active=true]/menu-button:text-sidebar-accent-foreground">
-                            {count.toLocaleString()}
-                          </SidebarMenuBadge>
+                          {count !== null && (
+                            <SidebarMenuBadge className="font-mono text-2xs text-muted-foreground peer-data-[active=true]/menu-button:text-sidebar-accent-foreground">
+                              {count.toLocaleString()}
+                            </SidebarMenuBadge>
+                          )}
                         </SidebarMenuItem>
                       )
                     })}
@@ -474,82 +662,25 @@ export function AppShell() {
             <div className="flex min-h-12 flex-wrap items-center gap-2 px-3 py-2 sm:px-4 lg:px-5">
               <SidebarTrigger className="-ms-1" />
               <Separator className="mx-0.5 hidden h-4 sm:block" orientation="vertical" />
-              <div className="me-auto min-w-0">
+              <div className="me-auto flex min-w-0 items-center gap-2">
                 <h1 className="truncate text-sm font-semibold tracking-tight">{pageTitle}</h1>
-              </div>
-
-              <div className="flex shrink-0 items-center gap-1.5">
-                <label className="flex min-h-8 items-center gap-2 rounded-md px-1.5 text-xs font-medium text-muted-foreground">
-                  <CirclePause aria-hidden="true" className="size-3.5" />
-                  <span className="hidden sm:inline">Pause</span>
-                  <Switch
-                    aria-label="Pause recording"
-                    checked={status?.paused ?? false}
-                    disabled={!status || !status.enabled || mutating}
-                    onCheckedChange={(checked) => void togglePaused(checked)}
-                  />
-                </label>
-
-                <AlertDialog>
-                  <AlertDialogTrigger
-                    aria-label="Clear recorded entries"
-                    render={<Button disabled={mutating} size="sm" variant="destructive-outline" />}
+                {status?.paused && (
+                  <Badge
+                    render={
+                      <button
+                        aria-label="Recording paused. Resume recording"
+                        disabled={mutating}
+                        onClick={() => void togglePaused(false)}
+                        type="button"
+                      />
+                    }
+                    variant="warning"
                   >
-                    <Trash2 aria-hidden="true" />
-                    <span className="hidden sm:inline">Clear</span>
-                  </AlertDialogTrigger>
-                  <AlertDialogPopup>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Clear recorded entries?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        This permanently removes entries recorded by “{selectedApplication}” and
-                        cannot be undone. Other applications in this shared store are not changed.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogClose render={<Button variant="ghost" />}>Cancel</AlertDialogClose>
-                      <AlertDialogClose
-                        render={<Button loading={mutating} variant="destructive" />}
-                        onClick={() => void clearEntries()}
-                      >
-                        Clear {selectedApplication}
-                      </AlertDialogClose>
-                    </AlertDialogFooter>
-                  </AlertDialogPopup>
-                </AlertDialog>
+                    <CirclePause aria-hidden="true" />
+                    Paused
+                  </Badge>
+                )}
               </div>
-
-              <Select
-                items={(status?.applications ?? []).map((application) => ({
-                  label: application.name,
-                  value: application.name,
-                }))}
-                onValueChange={(value) => {
-                  if (typeof value === 'string' && value !== '') selectApplication(value)
-                }}
-                value={selectedApplication}
-              >
-                <SelectTrigger
-                  aria-label="Application"
-                  className="max-w-[46vw] sm:w-40"
-                  size="sm"
-                >
-                  <Database aria-hidden="true" />
-                  <SelectValue placeholder="Application" />
-                </SelectTrigger>
-                <SelectPopup>
-                  {(status?.applications ?? []).map((application) => (
-                    <SelectItem key={application.name} value={application.name}>
-                      <span className="flex min-w-0 items-center gap-2">
-                        <span className="min-w-0 flex-1 truncate">{application.name}</span>
-                        <span className="font-mono text-2xs tabular-nums text-muted-foreground">
-                          {application.entries.toLocaleString()}
-                        </span>
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
 
               <form
                 className="order-last w-full basis-full sm:order-none sm:w-64 sm:basis-auto"
@@ -558,12 +689,12 @@ export function AppShell() {
               >
                 <InputGroup>
                   <InputGroupInput
-                    aria-label="Search all entries by exact tag"
-                    className="font-mono text-xs"
-                    defaultValue={searchTag}
-                    key={searchTag}
-                    name="tag"
-                    placeholder="Exact tag, e.g. Auth:42"
+                    aria-label="Search all recorded entry content"
+                    className="text-xs"
+                    defaultValue={searchText}
+                    key={searchText}
+                    name="text"
+                    placeholder="Search recorded content"
                     type="search"
                   />
                   <InputGroupAddon>
@@ -571,6 +702,151 @@ export function AppShell() {
                   </InputGroupAddon>
                 </InputGroup>
               </form>
+
+              {(status?.applications.length ?? 0) > 1 && (
+                <Select
+                  items={(status?.applications ?? []).map((application) => ({
+                    label: application.name,
+                    value: application.name,
+                  }))}
+                  onValueChange={(value) => {
+                    if (typeof value === 'string' && value !== '') selectApplication(value)
+                  }}
+                  value={selectedApplication}
+                >
+                  <SelectTrigger
+                    aria-label="Application"
+                    className="max-w-[38vw] sm:w-36"
+                    size="sm"
+                  >
+                    <Database aria-hidden="true" />
+                    <SelectValue placeholder="Application" />
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {(status?.applications ?? []).map((application) => (
+                      <SelectItem key={application.name} value={application.name}>
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="min-w-0 flex-1 truncate">{application.name}</span>
+                          <span className="font-mono text-2xs tabular-nums text-muted-foreground">
+                            {application.entries.toLocaleString()}
+                          </span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              )}
+
+              <div className="relative shrink-0" ref={shortcutHelpRef}>
+                <Menu>
+                  <MenuTrigger
+                    render={<Button aria-label="Dashboard options" size="sm" variant="ghost" />}
+                  >
+                    <Ellipsis aria-hidden="true" />
+                  </MenuTrigger>
+                  <MenuPopup align="end" className="w-52">
+                    <MenuCheckboxItem
+                      checked={status?.paused ?? false}
+                      disabled={!status || !status.enabled || mutating}
+                      onCheckedChange={(checked) => void togglePaused(checked)}
+                      variant="switch"
+                    >
+                      <span className="flex items-center gap-2">
+                        <CirclePause aria-hidden="true" />
+                        Pause recording
+                      </span>
+                    </MenuCheckboxItem>
+                    <MenuSeparator />
+                    <MenuGroup>
+                      <MenuGroupLabel>Theme</MenuGroupLabel>
+                      <MenuRadioGroup
+                        onValueChange={(value) => {
+                          if (value === 'light' || value === 'dark' || value === 'system') {
+                            selectTheme(value)
+                          }
+                        }}
+                        value={theme}
+                      >
+                        {themeItems.map((item) => {
+                          const Icon =
+                            item.value === 'light' ? Sun : item.value === 'dark' ? Moon : Monitor
+                          return (
+                            <MenuRadioItem key={item.value} value={item.value}>
+                              <span className="flex items-center gap-2">
+                                <Icon aria-hidden="true" />
+                                {item.label}
+                              </span>
+                            </MenuRadioItem>
+                          )
+                        })}
+                      </MenuRadioGroup>
+                    </MenuGroup>
+                    <MenuSeparator />
+                    <MenuItem onClick={() => setShortcutHelpOpen(true)}>
+                      <CircleHelp aria-hidden="true" />
+                      Keyboard shortcuts
+                      <MenuShortcut>?</MenuShortcut>
+                    </MenuItem>
+                    <MenuSeparator />
+                    <MenuItem
+                      disabled={mutating}
+                      onClick={() => setClearDialogOpen(true)}
+                      variant="destructive"
+                    >
+                      <Trash2 aria-hidden="true" />
+                      Clear entries…
+                    </MenuItem>
+                  </MenuPopup>
+                </Menu>
+                {shortcutHelpOpen && (
+                  <div
+                    aria-label="Keyboard shortcuts"
+                    className="absolute top-full right-0 z-50 mt-2 w-64 rounded-lg border bg-popover p-3 text-popover-foreground shadow-lg"
+                    id="keyboard-shortcut-help"
+                    role="dialog"
+                  >
+                    <p className="mb-2 text-xs font-semibold">Keyboard shortcuts</p>
+                    <dl className="space-y-1.5">
+                      {shortcutItems.map((shortcut) => (
+                        <div
+                          className="flex items-center justify-between gap-4"
+                          key={shortcut.label}
+                        >
+                          <dt className="text-xs text-muted-foreground">{shortcut.label}</dt>
+                          <dd>
+                            <KbdGroup>
+                              {shortcut.keys.map((key) => (
+                                <Kbd key={key}>{key}</Kbd>
+                              ))}
+                            </KbdGroup>
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+                )}
+              </div>
+
+              <AlertDialog onOpenChange={setClearDialogOpen} open={clearDialogOpen}>
+                <AlertDialogPopup>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Clear recorded entries?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This permanently removes entries recorded by “{selectedApplication}” and
+                      cannot be undone. Other applications in this shared store are not changed.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogClose render={<Button variant="ghost" />}>Cancel</AlertDialogClose>
+                    <AlertDialogClose
+                      render={<Button loading={mutating} variant="destructive" />}
+                      onClick={() => void clearEntries()}
+                    >
+                      Clear {selectedApplication}
+                    </AlertDialogClose>
+                  </AlertDialogFooter>
+                </AlertDialogPopup>
+              </AlertDialog>
             </div>
 
             {statusError && (

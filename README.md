@@ -2,8 +2,9 @@
 
 Periscope is a Laravel Telescope-style runtime recorder and local dashboard for AdonisJS v7. It
 correlates the work an application actually performs—HTTP requests, database queries, exceptions,
-logs, events, commands, mail, cache operations, model changes, authorization checks, dumps, and
-outbound HTTP calls—without sending telemetry to an external service.
+logs, events, commands, mail, cache operations, model changes, authorization checks, dumps,
+outbound HTTP calls, Edge view renders, health check reports, queue jobs, Redis commands,
+sessions, and Transmit broadcasts—without sending telemetry to an external service.
 
 Periscope is a development and staging diagnostic tool, not an APM or a production tracing backend.
 Recorded values remain in the configured local store.
@@ -14,8 +15,9 @@ Recorded values remain in the configured local store.
 - AdonisJS 7
 - npm 11 or newer when contributing to this repository
 
-Optional integrations activate only when their host packages are installed: Lucid, Mail, Cache, and
-Bouncer.
+Optional integrations activate only when their host packages are installed: Lucid, Mail, Cache,
+Bouncer, Edge, `@adonisjs/transmit`, `@adonisjs/redis`, `@adonisjs/session`, BullMQ, and the
+experimental `@adonisjs/queue`.
 
 ## Two-minute quickstart
 
@@ -112,12 +114,48 @@ logger, process, model, or dashboard hooks.
 | `database`     | Shared or remote inspection     | Uses a Lucid connection and the package migration; configure `storage.connection` when needed |
 | `memory`       | Tests and short-lived processes | Bounded process-local ring buffer; all entries disappear at process exit                      |
 
-All drivers enforce `storage.maxEntries`. `sqlite-local` uses WAL mode and indexed, chunked
-operations; the database driver keeps the same storage contract across supported Lucid databases.
+All drivers enforce `storage.maxEntries`. Configure `storage.retention` for automatic age-based
+pruning: when set, the provider prunes entries older than `hours` shortly after boot and every 15
+minutes thereafter (optionally sparing exceptions with `keepExceptions`). `sqlite-local` uses WAL
+mode, indexed chunked operations, and a trigram FTS5 index for text search with a transparent
+`LIKE` fallback; the database driver keeps the same storage contract across supported Lucid
+databases.
 
 Every stored entry carries `applicationName`. A shared database can therefore serve several
 applications without mixing counts, indexes, exception groups, or scoped clears. The dashboard
 application selector persists its choice in the URL.
+
+## Dashboard
+
+The dashboard lands on `#/overview`: request p50/p95 latency and error rate, a recent-duration
+chart, per-type entry counts, recent exception families, and a slow-query leaderboard, all scoped
+to the selected application. Every entry type has its own page, including logs, events, views,
+health checks, broadcasts, and a monitored-tags management screen.
+
+Search and filtering:
+
+- Free-text search over serialized entry content (`text=` on `GET <path>/api/entries`), backed by
+  FTS5 on `sqlite-local` and portable `LIKE` elsewhere. Case-insensitive and literal, including
+  `%` and `_`.
+- Multiple exact tags with AND semantics (repeated `tag=` parameters).
+- Inclusive time ranges (`from=`/`to=`, ISO datetimes) with 15m/1h/24h quick presets.
+- Server-side predicates for slow queries (`tag=slow`), request status classes
+  (`tag=status:2xx` … `tag=status:5xx`), and repeated query families (`tag=n+1`).
+
+All filters persist in the hash-route query string, so filtered views are shareable. Every entry
+is deep-linkable at `#/entries/<uuid>`, and detail drawers offer copy-link actions for entries and
+batches. Entry details render identically on index pages, global search, batch timelines, and
+direct links. Request and ambient batches export as versioned `periscope.batch` JSON; mail entries
+download as `.eml`.
+
+The header stays minimal: page title, content search, an application selector (shown only when
+the store holds more than one application), and an options menu containing pause/resume, a scoped
+clear, the persisted light/dark/system theme choice, and the shortcut reference. While recording
+is paused, a "Paused" chip appears next to the title; clicking it resumes.
+Keyboard shortcuts: `/` focuses search, `j`/`k` move across rows, `Esc` closes
+the open drawer, `⌘/Ctrl+B` toggles the sidebar, and `?` lists them all. Live updates stream over
+SSE with visibility-aware polling as fallback; `dashboard.sseMaxClients` (default 5) bounds
+concurrent stream clients.
 
 ## Dashboard security
 
@@ -125,10 +163,12 @@ The dashboard and JSON/SSE API live below `dashboard.path`. Every dashboard requ
 environment gate and then `dashboard.authorize`. The default authorizer denies requests in
 production; override `dashboard.authorize` explicitly to enable access there.
 
-Request details surface repeated query-family warnings at `dashboard.nPlusOneThreshold`, an active
-OpenTelemetry trace ID when `@opentelemetry/api` is installed, and a JSON batch export suitable for
-bug reports. Exports contain the application label and JSON-safe entries; they never initiate an
-outbound request.
+Request details surface repeated query-family warnings at `dashboard.nPlusOneThreshold` (families
+meeting the threshold are also persisted with the exact `n+1` tag, so they are filterable and
+monitorable), an active OpenTelemetry trace ID when `@opentelemetry/api` is installed, Inertia
+component and prop-key metadata when responses carry the `X-Inertia` header, and a JSON batch
+export suitable for bug reports. Exports contain the application label and JSON-safe entries; they
+never initiate an outbound request.
 
 For a deliberately exposed non-development environment, require an application-specific identity:
 
@@ -176,6 +216,7 @@ export default defineConfig({
     driver: 'database',
     connection: 'periscope',
     maxEntries: 2_000,
+    retention: { hours: 24, keepExceptions: true },
   },
 
   recording: {
@@ -203,6 +244,7 @@ export default defineConfig({
     model: { captureDirty: false },
     gate: { enabled: false },
     dump: { enabled: false },
+    view: { enabled: false },
   },
 
   dashboard: {
@@ -229,32 +271,39 @@ pattern-scanned; deny-listed keys are still replaced wholesale.
 
 ## Watcher reference
 
-Core watchers are enabled by default. The infrastructure integrations `job_schedule`, `redis`, and
-`session` are off by default and subscribe to nothing until explicitly enabled.
+Core watchers are enabled by default, including `view` (Edge) and `health_check`, which silently
+no-op when their host module is absent. The infrastructure integrations `job_schedule`, `redis`,
+`session`, and `transmit` are off by default and subscribe to nothing until explicitly enabled.
 
 | Watcher        | Source                                                       | Recorded content                                                                                                                                              |
 | -------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `request`      | Request middleware and `http:request_completed`              | Method, URL, query, route, redacted headers and payload, status, duration, memory delta, client identity summary, optional response/session, disconnect state |
+| `request`      | Request middleware and `http:request_completed`              | Method, URL, query, route, redacted headers and payload, status, duration, memory delta, client identity summary, optional response/session, Inertia component/prop keys, disconnect state; exact `slow`, `status:<code>`, and `status:Nxx` tags |
 | `query`        | Lucid `db:query`                                             | SQL, serialized or hidden bindings, connection, model/method, duration, transaction/DDL flags, compact error                                                  |
 | `exception`    | Exception handler mixin and process observers                | Name, message, code/status, stack, parsed frames, application code frame, request summary, serialized context                                                 |
 | `log`          | AdonisJS/Pino destination                                    | Level, message, context, and source timestamp; self-generated Periscope logs are excluded                                                                     |
 | `event`        | AdonisJS emitter                                             | Event name, serialized payload, class-event identity, and listener count                                                                                      |
-| `command`      | Ace lifecycle                                                | Command, arguments, flags, main-command state, exit code, duration, optional output/error                                                                     |
+| `command`      | Ace lifecycle                                                | Command, arguments, flags, main-command state, exit code, duration, bounded redacted terminal output (`captureOutput`), error                                                                 |
 | `mail`         | AdonisJS Mail lifecycle                                      | Lifecycle event, mailer, envelope, subject, optional rendered bodies/raw MIME, message ID, metadata, response/error                                           |
 | `cache`        | Bentocache events                                            | Hit, miss, set, delete, or clear; store, key, cache layer/grace state, optional value                                                                         |
 | `model`        | Lucid model lifecycle                                        | Create, update, or delete; model, primary key, optional attributes and dirty diff                                                                             |
 | `gate`         | Bouncer authorization events                                 | Ability, decision, user ID, arguments, optional user/status/message                                                                                           |
 | `dump`         | `dump()` helper                                              | Safely serialized values and the application call site                                                                                                        |
-| `http_client`  | Node diagnostics channel for Undici                          | Method, URL, status, duration, redacted request/response headers, completion/error                                                                            |
-| `job_schedule` | Pluggable queue adapters (BullMQ reference adapter included) | Scheduled job metadata plus completed/failed job status, attempts, duration, and opt-in payload/result                                                        |
+| `http_client`  | Node diagnostics channel for Undici                          | Method, URL, status, duration, redacted request/response headers, completion/error; exact `slow` (>= `slowMs`) and `failed` tags                                                              |
+| `view`         | Edge `onRender` hook                                         | Template name, render duration, and top-level data key names only—values are never read                                                                                                      |
+| `health_check` | AdonisJS core `HealthChecks.run()`                           | Overall status plus per-check name, status, duration, and bounded message; `failed` tag on unhealthy reports                                                                                 |
+| `job_schedule` | Pluggable queue adapters (BullMQ and `@adonisjs/queue` adapters included) | Scheduled job metadata plus started/completed/failed status, job name, attempts, duration, and opt-in payload/result                                                             |
 | `redis`        | `@adonisjs/redis` diagnostics channel                        | Command, argument count, duration, error, and opt-in arguments; `AUTH` arguments are always replaced                                                          |
-| `session`      | `@adonisjs/session` lifecycle events                         | Initiated, committed, or migrated state with hashed session IDs and opt-in redacted values                                                                    |
+| `session`      | `@adonisjs/session` lifecycle events                         | Initiated, committed, or migrated state with hashed session IDs and opt-in redacted values                                                                                                    |
+| `transmit`     | `@adonisjs/transmit` broadcast hook                          | Channel, event metadata, and opt-in bounded payload summary                                                                                                                                   |
 
 Watcher-specific options in the generated config control sensitive or expensive captures. All
 application-owned values pass through bounded serialization and recursive redaction before storage.
 
-Queue integrations use the exported `QueueWatcherAdapter` contract. The BullMQ reference adapter
-observes queue events without replacing application workers:
+Queue integrations use the exported `QueueWatcherAdapter` contract. Two reference adapters ship
+with the package: `BullQueueAdapter` observes BullMQ queue events (enriching entries with job
+name, attempts, and opt-in payload via bounded best-effort job lookups), and `AdonisQueueAdapter`
+observes the experimental `@adonisjs/queue` tracing channels. Both are silent no-ops when their
+queue package is absent and never replace application workers:
 
 ```ts
 import { defineConfig } from '@rikology/adonisjs-periscope/periscope_config'
@@ -302,45 +351,43 @@ safeguarded: an application hook failure is reported internally and cannot break
 ### Custom watcher
 
 `Watcher` is the lifecycle contract: a stable `name`, idempotent `register()`, and optional
-idempotent `cleanup()`. A custom application watcher can subscribe to a domain source and feed an
-existing entry type to `Recorder.record()`:
+idempotent `cleanup()`. Register custom watchers directly from config with `watchers.custom`; each
+factory receives the same `WatcherContext` (application, recorder, resolved config) the built-in
+factories get, registers after the built-ins, and is cleaned up first in reverse order with the
+same safeguards:
 
 ```ts
-import { EntryType, IncomingEntry, type Watcher } from '@rikology/adonisjs-periscope'
-import type { Recorder } from '@rikology/adonisjs-periscope'
+import { EntryType, IncomingEntry, type PeriscopeWatcherFactory } from '@rikology/adonisjs-periscope'
 
-export class PaymentWatcher implements Watcher {
-  readonly name = 'payment'
-  #unsubscribe: (() => void) | null = null
-
-  constructor(
-    private recorder: Recorder,
-    private subscribe: (listener: (paymentId: string) => void) => () => void
-  ) {}
-
-  register() {
-    if (this.#unsubscribe !== null) return
-    this.#unsubscribe = this.subscribe((paymentId) => {
-      this.recorder.record(
-        IncomingEntry.make(EntryType.EVENT, {
-          name: 'payment:settled',
-          payload: { paymentId },
-          isClassEvent: false,
-        }).withTags(['domain:payments'])
-      )
-    })
-  }
-
-  cleanup() {
-    this.#unsubscribe?.()
-    this.#unsubscribe = null
+const paymentWatcher: PeriscopeWatcherFactory = ({ recorder }) => {
+  let unsubscribe: (() => void) | null = null
+  return {
+    name: 'payment',
+    register() {
+      if (unsubscribe !== null) return
+      unsubscribe = subscribeToPayments((paymentId) => {
+        recorder.record(
+          IncomingEntry.make(EntryType.EVENT, {
+            name: 'payment:settled',
+            payload: { paymentId },
+            isClassEvent: false,
+          }).withTags(['domain:payments'])
+        )
+      })
+    },
+    cleanup() {
+      unsubscribe?.()
+      unsubscribe = null
+    },
   }
 }
+
+export default defineConfig({
+  watchers: { custom: [paymentWatcher] },
+})
 ```
 
-Create and register it from an application provider after resolving `Recorder` from the container;
-clean it up during provider shutdown. Prefer the built-in event watcher when the source is already
-an AdonisJS emitter event.
+Prefer the built-in event watcher when the source is already an AdonisJS emitter event.
 
 ### Custom store
 
@@ -348,22 +395,37 @@ an AdonisJS emitter event.
 counts, exception grouping, clear/prune, monitored tags, flags, and `close()`. `MemoryStore`,
 `SqliteLocalStore`, and `DatabaseStore` are reference implementations.
 
-The built-in provider intentionally accepts only the three documented driver names. Advanced
-applications that need a custom backend should implement `PeriscopeStore`, construct `Recorder`
-with that store in an application provider, and wire custom watcher instances to that recorder.
-This keeps custom persistence behavior explicit instead of overloading the package driver resolver.
+Select a custom backend with the `custom` driver and a factory. The factory receives the
+application instance and the resolved config, and may be async:
+
+```ts
+export default defineConfig({
+  storage: {
+    driver: 'custom',
+    factory: async ({ app, config }) => new RedisPeriscopeStore(app, config),
+  },
+})
+```
+
+Ace maintenance commands treat custom stores as durable and operate on them like the built-in SQL
+drivers.
 
 ## Commands
 
 ```sh
-node ace periscope:clear
-node ace periscope:prune --hours=24
+node ace periscope:clear [--application=billing-api]
+node ace periscope:prune --hours=24 [--keep-exceptions] [--application=billing-api]
+node ace periscope:export --batch=<batch-id> [--out=report.json]
 node ace periscope:pause
 node ace periscope:resume
 ```
 
 The commands start the application, use the configured store, and keep their own work out of the
-recorded timeline. Pause state is shared through the store and expires unless refreshed.
+recorded timeline. `--application` scopes clears and prunes to one application in a shared store.
+`periscope:export` writes the same versioned `periscope.batch` JSON as the dashboard export to
+stdout or `--out`. Pause state is shared through the store and remains set until resumed.
+Automatic retention (`storage.retention`) makes scheduled `periscope:prune` invocations
+unnecessary for most applications.
 
 ## FAQ
 

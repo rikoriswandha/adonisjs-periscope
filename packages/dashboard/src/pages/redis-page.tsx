@@ -68,9 +68,12 @@ export const redisEntryTypeImplementation: EntryTypeImplementation = {
   description: 'Inspect commands observed through the @adonisjs/redis diagnostics channel.',
   caption: 'Recorded Redis commands',
   columns,
-  emptyTitle: () => 'Waiting for Redis commands',
-  emptyDescription: () =>
-    'Enable the Redis watcher, then execute a command through @adonisjs/redis.',
+  emptyTitle: (tag?: string) =>
+    tag ? 'No matching Redis commands' : 'Waiting for Redis commands',
+  emptyDescription: (tag?: string) =>
+    tag
+      ? `No Redis command carries the exact tag “${tag}”. Try another tag or clear the filter.`
+      : 'Enable the Redis watcher, then execute a command through @adonisjs/redis.',
   rowLabel: (entry) => `${content(entry).command} Redis command`,
   detailComponent: RedisDetail,
 }

@@ -133,8 +133,11 @@ export const jobsEntryTypeImplementation: EntryTypeImplementation = {
   description: 'Inspect completed and failed jobs reported by configured queue adapters.',
   caption: 'Recorded job lifecycles',
   columns: jobColumns,
-  emptyTitle: () => 'Waiting for queue jobs',
-  emptyDescription: () => 'Enable the job_schedule watcher and configure a queue adapter.',
+  emptyTitle: (tag?: string) => (tag ? 'No matching jobs' : 'Waiting for queue jobs'),
+  emptyDescription: (tag?: string) =>
+    tag
+      ? `No job carries the exact tag “${tag}”. Try another tag or clear the filter.`
+      : 'Enable the job_schedule watcher and configure a queue adapter.',
   rowLabel: (entry: StoredEntry) => {
     const content = entry.content as JobContent
     return `${content.status} job ${truncate(content.name ?? content.jobId, 80)}`
@@ -147,8 +150,12 @@ export const schedulesEntryTypeImplementation: EntryTypeImplementation = {
   description: 'See delayed and scheduled work before a worker begins execution.',
   caption: 'Recorded schedule lifecycles',
   columns: scheduleColumns,
-  emptyTitle: () => 'Waiting for scheduled work',
-  emptyDescription: () => 'Schedule a job through a configured queue adapter.',
+  emptyTitle: (tag?: string) =>
+    tag ? 'No matching scheduled work' : 'Waiting for scheduled work',
+  emptyDescription: (tag?: string) =>
+    tag
+      ? `No scheduled job carries the exact tag “${tag}”. Try another tag or clear the filter.`
+      : 'Schedule a job through a configured queue adapter.',
   rowLabel: (entry: StoredEntry) => {
     const content = entry.content as ScheduleContent
     return `scheduled job ${truncate(content.name ?? content.jobId, 80)}`

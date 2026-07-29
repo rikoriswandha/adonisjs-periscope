@@ -206,7 +206,10 @@ test.group('Configure', () => {
     assert.strictEqual(rerunConfig, config)
     assert.equal(count(rerunRcFile, "import('@rikology/adonisjs-periscope/provider')"), 1)
     assert.equal(count(rerunRcFile, "import('@rikology/adonisjs-periscope/commands')"), 1)
-    assert.equal(count(rerunKernel, "import('@rikology/adonisjs-periscope/middleware/request_watcher')"), 1)
+    assert.equal(
+      count(rerunKernel, "import('@rikology/adonisjs-periscope/middleware/request_watcher')"),
+      1
+    )
     assert.equal(count(rerunShield, '/periscope/api/flags/:name'), 0)
     assert.equal(count(rerunShield, '/periscope/api/clear'), 0)
     assert.equal(count(rerunShield, '/periscope/api/monitored-tags/:tag'), 0)
@@ -240,7 +243,10 @@ test.group('Configure', () => {
       .map((log) => log.message)
       .join('\n')
     assert.include(logs, '--- app/exceptions/handler.ts')
-    assert.include(logs, "import { withPeriscope } from '@rikology/adonisjs-periscope/exception_reporter'")
+    assert.include(
+      logs,
+      "import { withPeriscope } from '@rikology/adonisjs-periscope/exception_reporter'"
+    )
     assert.include(logs, 'export default withPeriscope(HttpExceptionHandler)')
   })
 
@@ -351,7 +357,10 @@ export default compose(HttpExceptionHandler)
     assert.include(logs, `ctx.route?.pattern === "/scope/api/flags/:name"`)
     assert.include(logs, `ctx.route?.pattern === "/scope/api/clear"`)
     assert.include(logs, `ctx.route?.pattern === "/scope/api/monitored-tags/:tag"`)
-    assert.include(logs, "import { withPeriscope } from '@rikology/adonisjs-periscope/exception_reporter'")
+    assert.include(
+      logs,
+      "import { withPeriscope } from '@rikology/adonisjs-periscope/exception_reporter'"
+    )
     assert.include(logs, 'export default withPeriscope(compose(HttpExceptionHandler))')
     assert.include(logs, "environment: ['web', 'console', 'test']")
   })

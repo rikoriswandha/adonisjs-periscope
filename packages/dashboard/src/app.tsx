@@ -7,11 +7,17 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { RegisteredEntryPage } from '@/entry-type-registry'
 import { wave2EntryTypes } from '@/wave2-entry-types'
 
+const EntryPage = lazy(() =>
+  import('@/pages/entry-page').then((module) => ({ default: module.EntryPage }))
+)
 const ExceptionsPage = lazy(() =>
   import('@/pages/exceptions-page').then((module) => ({ default: module.ExceptionsPage }))
 )
 const QueriesPage = lazy(() =>
   import('@/pages/queries-page').then((module) => ({ default: module.QueriesPage }))
+)
+const OverviewPage = lazy(() =>
+  import('@/pages/overview-page').then((module) => ({ default: module.OverviewPage }))
 )
 const RequestBatchPage = lazy(() =>
   import('@/pages/request-batch-page').then((module) => ({ default: module.RequestBatchPage }))
@@ -21,6 +27,9 @@ const RequestsPage = lazy(() =>
 )
 const SearchPage = lazy(() =>
   import('@/pages/search-page').then((module) => ({ default: module.SearchPage }))
+)
+const MonitoredTagsPage = lazy(() =>
+  import('@/pages/monitored-tags-page').then((module) => ({ default: module.MonitoredTagsPage }))
 )
 
 const wave2Routes = wave2EntryTypes.map((registration) => ({
@@ -49,16 +58,19 @@ export function App() {
         >
           <Routes>
             <Route element={<AppShell />}>
-              <Route element={<Navigate replace to="/requests" />} index />
+              <Route element={<OverviewPage />} path="overview" />
+              <Route element={<Navigate replace to="/overview" />} index />
+              <Route element={<EntryPage />} path="entries/:uuid" />
               <Route element={<RequestsPage />} path="requests" />
               <Route element={<RequestBatchPage />} path="requests/:batchId" />
               <Route element={<QueriesPage />} path="queries" />
               <Route element={<ExceptionsPage />} path="exceptions" />
               <Route element={<SearchPage />} path="search" />
+              <Route element={<MonitoredTagsPage />} path="monitored-tags" />
               {wave2Routes.map(({ registration, Page }) => (
                 <Route element={<Page />} key={registration.type} path={registration.path} />
               ))}
-              <Route element={<Navigate replace to="/requests" />} path="*" />
+              <Route element={<Navigate replace to="/overview" />} path="*" />
             </Route>
           </Routes>
         </Suspense>

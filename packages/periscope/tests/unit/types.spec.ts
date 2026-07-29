@@ -22,6 +22,7 @@ import type {
   Paginated,
   PeriscopeConfig,
   PeriscopeStore,
+  PeriscopeStoreFactory,
   PruneOptions,
   ResolvedPeriscopeConfig,
   ResolvedWatchersConfig,
@@ -97,9 +98,11 @@ test.group('Types | EntryType', () => {
 
   test('expose the catalogue as literal string values', ({ assert, expectTypeOf }) => {
     assert.equal(EntryType.HTTP_CLIENT, 'http_client')
+    assert.equal(EntryType.HEALTH_CHECK, 'health_check')
     assert.equal(EntryType.QUERY, 'query')
 
     expectTypeOf(EntryType.HTTP_CLIENT).toEqualTypeOf<'http_client'>()
+    expectTypeOf(EntryType.HEALTH_CHECK).toEqualTypeOf<'health_check'>()
     expectTypeOf<EntryType>().toExtend<string>()
   })
 })
@@ -118,15 +121,18 @@ test.group('Types | WatcherName', () => {
       'model',
       'gate',
       'dump',
+      'view',
       'http_client',
       'job_schedule',
+      'health_check',
+      'transmit',
       'redis',
       'session',
     ])
 
     expectTypeOf<(typeof WATCHER_NAMES)[number]>().toEqualTypeOf<WatcherName>()
-    expectTypeOf<keyof WatchersConfig>().toEqualTypeOf<WatcherName>()
-    expectTypeOf<keyof ResolvedWatchersConfig>().toEqualTypeOf<WatcherName>()
+    expectTypeOf<keyof WatchersConfig>().toEqualTypeOf<WatcherName | 'custom'>()
+    expectTypeOf<keyof ResolvedWatchersConfig>().toEqualTypeOf<WatcherName | 'custom'>()
   })
 })
 
@@ -207,6 +213,10 @@ test.group('Types | EntryQuery', () => {
     const filtered: EntryQuery = {
       type: EntryType.QUERY,
       tag: 'status:500',
+      tags: ['slow', 'failed'],
+      text: 'timeout',
+      from: '2026-04-01T00:00:00.000Z',
+      to: '2026-04-02T00:00:00.000Z',
       familyHash: 'family-1',
       batchId: 'batch-1',
       application: 'default',
@@ -216,12 +226,16 @@ test.group('Types | EntryQuery', () => {
     }
 
     assert.deepEqual(Object.keys(unfiltered), [])
-    assert.lengthOf(Object.keys(filtered), 8)
+    assert.lengthOf(Object.keys(filtered), 12)
 
     expectTypeOf<Partial<EntryQuery>>().toEqualTypeOf<EntryQuery>()
     expectTypeOf<keyof EntryQuery>().toEqualTypeOf<
       | 'type'
       | 'tag'
+      | 'tags'
+      | 'text'
+      | 'from'
+      | 'to'
       | 'familyHash'
       | 'batchId'
       | 'application'
@@ -238,6 +252,10 @@ test.group('Types | EntryQuery', () => {
     expectTypeOf<Required<EntryQuery>['type']>().toEqualTypeOf<EntryType>()
     expectTypeOf<Required<EntryQuery>['limit']>().toEqualTypeOf<number>()
     expectTypeOf<Required<EntryQuery>['displayOnIndex']>().toBeBoolean()
+    expectTypeOf<Required<EntryQuery>['tags']>().toEqualTypeOf<string[]>()
+    expectTypeOf<Required<EntryQuery>['text']>().toEqualTypeOf<string>()
+    expectTypeOf<Required<EntryQuery>['from']>().toEqualTypeOf<string>()
+    expectTypeOf<Required<EntryQuery>['to']>().toEqualTypeOf<string>()
   })
 })
 
@@ -325,7 +343,11 @@ test.group('Types | PeriscopeStore', () => {
     expectTypeOf<PeriscopeStore['clear']>().toEqualTypeOf<(application?: string) => Promise<void>>()
     expectTypeOf<PeriscopeStore['close']>().toEqualTypeOf<() => Promise<void>>()
 
-    expectTypeOf<PruneOptions>().toEqualTypeOf<{ before: Date; keepExceptions?: boolean }>()
+    expectTypeOf<PruneOptions>().toEqualTypeOf<{
+      before: Date
+      keepExceptions?: boolean
+      application?: string
+    }>()
   })
 
   test('pin the monitored tag and flag signatures', async ({ assert, expectTypeOf }) => {
@@ -472,10 +494,12 @@ test.group('Types | configuration', () => {
           model: 100,
           gate: 100,
           dump: 100,
+          view: 100,
           http_client: 100,
           schedule: 100,
           job: 100,
-          notification: 100,
+          health_check: 100,
+          broadcast: 100,
           redis: 100,
           session: 100,
         },
@@ -491,25 +515,36 @@ test.group('Types | configuration', () => {
           enabled: true,
           slowMs: 1_000,
           captureResponse: true,
+          captureInertia: true,
           responseSizeLimitKb: 64,
           captureSession: true,
+          ignorePaths: [],
         },
         query: { enabled: true, slowMs: 100, hideBindings: false },
         exception: { enabled: true, captureCodeFrame: 'dev', captureProcessErrors: true },
         log: { enabled: true, level: 'warn' },
         event: { enabled: true, ignore: [] },
-        command: { enabled: true, ignore: [] },
+        command: { enabled: true, ignore: [], captureOutput: true },
         mail: { enabled: true },
         cache: { enabled: true, captureValues: false },
         model: { enabled: true, captureDirty: false },
         gate: { enabled: true, ignoreAbilities: [] },
         dump: { enabled: true },
-        http_client: { enabled: true },
+        view: { enabled: true, captureDataKeys: true },
+        http_client: { enabled: true, slowMs: 1_000 },
+        health_check: { enabled: true },
+        transmit: { enabled: false, capturePayload: false },
         job_schedule: { enabled: false, adapters: [], capturePayload: false },
         redis: { enabled: false, captureArguments: false },
         session: { enabled: false, captureValues: false },
+        custom: [],
       },
-      dashboard: { path: '/periscope', authorize: () => true, nPlusOneThreshold: 5 },
+      dashboard: {
+        path: '/periscope',
+        authorize: () => true,
+        nPlusOneThreshold: 5,
+        sseMaxClients: 5,
+      },
     }
 
     assert.deepEqual(Object.keys(resolved).sort(), [
@@ -556,10 +591,12 @@ test.group('Types | configuration', () => {
       model: 100,
       gate: 100,
       dump: 100,
+      view: 100,
       http_client: 100,
       schedule: 100,
       job: 100,
-      notification: 100,
+      health_check: 100,
+      broadcast: 100,
       redis: 100,
       session: 100,
     }
@@ -574,20 +611,22 @@ test.group('Types | configuration', () => {
     >()
   })
 
-  test('leave the lucid connection as the only optional resolved key', ({
-    assert,
-    expectTypeOf,
-  }) => {
+  test('leave driver-specific resolved storage keys optional', ({ assert, expectTypeOf }) => {
     const storage: ResolvedPeriscopeConfig['storage'] = { driver: 'memory', maxEntries: 10_000 }
 
     assert.isUndefined(storage.connection)
-
+    assert.isUndefined(storage.factory)
+    assert.isUndefined(storage.retention)
     expectTypeOf<ResolvedPeriscopeConfig['storage']>().toEqualTypeOf<{
       driver: StorageDriverName
       connection?: string
+      factory?: PeriscopeStoreFactory
       maxEntries: number
+      retention?: { hours: number; keepExceptions?: boolean }
     }>()
-    expectTypeOf<StorageDriverName>().toEqualTypeOf<'memory' | 'sqlite-local' | 'database'>()
+    expectTypeOf<StorageDriverName>().toEqualTypeOf<
+      'memory' | 'sqlite-local' | 'database' | 'custom'
+    >()
   })
 
   test('keep the remaining resolved blocks dense', ({ assert, expectTypeOf }) => {

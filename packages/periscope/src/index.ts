@@ -65,6 +65,7 @@ export type {
   RequestAuthSummary,
   RequestEntryContent,
   RequestFileMetadata,
+  RequestInertiaSummary,
   RequestResponseMarker,
 } from './watchers/request/types.ts'
 
@@ -114,11 +115,22 @@ export type { GateEntryContent } from './watchers/gate/types.ts'
 export { DumpWatcher } from './watchers/dump/watcher.ts'
 export type { DumpEntryContent } from './watchers/dump/types.ts'
 
+export { ViewWatcher } from './watchers/view/watcher.ts'
+export type { ViewEntryContent } from './watchers/view/types.ts'
+
 export { HttpClientWatcher } from './watchers/http_client/watcher.ts'
 export type { HttpClientEntryContent } from './watchers/http_client/types.ts'
 
+export { HealthCheckWatcher } from './watchers/health_check/watcher.ts'
+export type {
+  HealthCheckEntryContent,
+  HealthCheckResult,
+  HealthCheckStatus,
+} from './watchers/health_check/types.ts'
+
 export { JobScheduleWatcher } from './watchers/job_schedule/watcher.ts'
 export type { JobEntryContent, ScheduleEntryContent } from './watchers/job_schedule/types.ts'
+export { AdonisQueueAdapter } from './watchers/job_schedule/adonis_queue_adapter.ts'
 
 export { RedisWatcher } from './watchers/redis/watcher.ts'
 export type { RedisEntryContent } from './watchers/redis/types.ts'
@@ -152,10 +164,14 @@ export type {
   Paginated,
   PeriscopeConfig,
   PeriscopeStore,
+  PeriscopeStoreFactory,
+  PeriscopeStoreFactoryContext,
+  PeriscopeWatcherFactory,
   PruneOptions,
   QueueJobEvent,
   QueueJobResult,
   QueueWatcherAdapter,
+  QueueWatcherRegistrationOptions,
   QueueWatcherObserver,
   ResolvedPeriscopeConfig,
   ResolvedDashboardConfig,

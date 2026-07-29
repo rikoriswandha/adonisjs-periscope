@@ -379,6 +379,76 @@ export function runStoreContractTests(driverName: string, createStore: StoreFact
       assert.lengthOf(unknown.data, 0)
     })
 
+    test('require every exact tag and merge the legacy singular tag', async ({ assert }) => {
+      const both = makeStoredEntry({ tags: ['slow', 'failed'] })
+      const slowOnly = makeStoredEntry({ tags: ['slow'] })
+      const failedOnly = makeStoredEntry({ tags: ['failed'] })
+
+      await store.save([both, slowOnly, failedOnly])
+
+      const tags = await store.list({ tags: ['slow', 'failed'] })
+      const merged = await store.list({ tag: 'slow', tags: ['failed'] })
+      const duplicate = await store.list({ tags: ['slow', 'slow'] })
+
+      assert.deepEqual(
+        tags.data.map((entry) => entry.uuid),
+        [both.uuid]
+      )
+      assert.deepEqual(
+        merged.data.map((entry) => entry.uuid),
+        [both.uuid]
+      )
+      assert.deepEqual(
+        duplicate.data.map((entry) => entry.uuid),
+        [slowOnly.uuid, both.uuid]
+      )
+    })
+
+    test('search serialized content by case-insensitive literal substring', async ({ assert }) => {
+      const matching = makeStoredEntry({
+        content: { message: 'Alpha NEEDLE_100% omega', nested: { visible: true } },
+      })
+      const other = makeStoredEntry({ content: { message: 'Alpha needle 100 omega' } })
+
+      await store.save([matching, other])
+
+      const page = await store.list({ text: 'dLe_100%' })
+      const escapedWildcard = await store.list({ text: '%' })
+
+      assert.deepEqual(
+        page.data.map((entry) => entry.uuid),
+        [matching.uuid]
+      )
+      assert.deepEqual(
+        escapedWildcard.data.map((entry) => entry.uuid),
+        [matching.uuid]
+      )
+    })
+
+    test('apply inclusive created-at bounds', async ({ assert }) => {
+      const outsideBefore = makeStoredEntry({
+        createdAt: new Date('2026-04-01T00:00:00.000Z'),
+      })
+      const onFrom = makeStoredEntry({ createdAt: new Date('2026-04-02T00:00:00.000Z') })
+      const inside = makeStoredEntry({ createdAt: new Date('2026-04-03T00:00:00.000Z') })
+      const onTo = makeStoredEntry({ createdAt: new Date('2026-04-04T00:00:00.000Z') })
+      const outsideAfter = makeStoredEntry({
+        createdAt: new Date('2026-04-05T00:00:00.000Z'),
+      })
+
+      await store.save([outsideBefore, onFrom, inside, onTo, outsideAfter])
+
+      const page = await store.list({
+        from: onFrom.createdAt.toISOString(),
+        to: onTo.createdAt.toISOString(),
+      })
+
+      assert.deepEqual(
+        page.data.map((entry) => entry.uuid),
+        [onTo.uuid, inside.uuid, onFrom.uuid]
+      )
+    })
+
     test('filter by family hash', async ({ assert }) => {
       const grouped = makeStoredEntry({ familyHash: 'abc' })
       const other = makeStoredEntry({ familyHash: 'def' })
@@ -816,6 +886,31 @@ export function runStoreContractTests(driverName: string, createStore: StoreFact
       assert.equal(deleted, 1)
       assert.isNull(await store.find(request.uuid))
       assert.isNotNull(await store.find(exception.uuid))
+    })
+
+    test('scope pruning to one application while preserving exceptions', async ({ assert }) => {
+      const createdAt = new Date('2026-01-01T00:00:00.000Z')
+      const alphaRequest = makeStoredEntry({ application: 'alpha', createdAt })
+      const alphaException = makeStoredEntry({
+        application: 'alpha',
+        type: EntryType.EXCEPTION,
+        createdAt,
+      })
+      const betaRequest = makeStoredEntry({ application: 'beta', createdAt })
+
+      await store.save([alphaRequest, alphaException, betaRequest])
+
+      assert.equal(
+        await store.prune({
+          before: new Date('2026-06-01T00:00:00.000Z'),
+          application: 'alpha',
+          keepExceptions: true,
+        }),
+        1
+      )
+      assert.isNull(await store.find(alphaRequest.uuid))
+      assert.isNotNull(await store.find(alphaException.uuid))
+      assert.isNotNull(await store.find(betaRequest.uuid))
     })
 
     test('remove pruned entries from every lookup', async ({ assert }) => {

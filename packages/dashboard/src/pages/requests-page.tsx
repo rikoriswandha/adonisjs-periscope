@@ -9,14 +9,38 @@ import { RequestActivityChart } from '@/components/request-activity-chart'
 import { StatusBadge } from '@/components/status-badge'
 import { TagChip } from '@/components/tag-chip'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { useDashboard } from '@/dashboard-context'
 import { useCursorPagination } from '@/hooks/use-cursor-pagination'
 import { useNewEntryPolling } from '@/hooks/use-polling'
 import { formatRelativeTime, truncate } from '@/lib/format'
+import { normalizeExactTags } from '@/lib/global-search'
 import type { EntryFilters, RequestContent, StoredEntry } from '@/types'
 
 function requestContent(entry: StoredEntry): RequestContent {
   return entry.content as RequestContent
+}
+
+const requestKinds = ['document', 'inertia', 'xhr', 'asset'] as const
+type RequestKind = (typeof requestKinds)[number]
+
+const kindFilters: ReadonlyArray<{ label: string; value?: RequestKind }> = [
+  { label: 'All' },
+  { label: 'Document', value: 'document' },
+  { label: 'Inertia', value: 'inertia' },
+  { label: 'XHR', value: 'xhr' },
+  { label: 'Asset', value: 'asset' },
+]
+
+function isRequestKind(value: string | null): value is RequestKind {
+  return requestKinds.includes(value as RequestKind)
+}
+
+const statusClasses = ['2xx', '3xx', '4xx', '5xx'] as const
+type StatusClass = (typeof statusClasses)[number]
+
+function isStatusClass(value: string | null): value is StatusClass {
+  return statusClasses.includes(value as StatusClass)
 }
 
 const columns: EntryColumn[] = [
@@ -85,12 +109,26 @@ const columns: EntryColumn[] = [
 
 export function RequestsPage() {
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { status, revision } = useDashboard()
-  const tag = searchParams.get('tag')?.trim() || undefined
+  const activeTags = useMemo(() => normalizeExactTags(searchParams.getAll('tag')), [searchParams])
+  const tag = activeTags[0]
+  const requestedKind = searchParams.get('kind')
+  const kind = isRequestKind(requestedKind) ? requestedKind : undefined
+  const requestedStatus = searchParams.get('status')
+  const statusClass = isStatusClass(requestedStatus) ? requestedStatus : undefined
   const filters = useMemo<EntryFilters>(
-    () => ({ type: 'request', tag, displayOnIndex: true, limit: 50 }),
-    [tag]
+    () => ({
+      type: 'request',
+      tags: normalizeExactTags([
+        ...activeTags,
+        kind ? `kind:${kind}` : undefined,
+        statusClass ? `status:${statusClass}` : undefined,
+      ]),
+      displayOnIndex: true,
+      limit: 50,
+    }),
+    [activeTags, kind, statusClass]
   )
   const pagination = useCursorPagination(filters)
   const reload = pagination.reload
@@ -101,6 +139,20 @@ export function RequestsPage() {
   }, [reload, revision])
 
   const acceptNew = () => pagination.prepend(polling.accept())
+
+  const selectKind = (nextKind?: RequestKind) => {
+    const next = new URLSearchParams(searchParams)
+    if (nextKind) next.set('kind', nextKind)
+    else next.delete('kind')
+    setSearchParams(next)
+  }
+
+  const selectStatus = (nextStatus?: StatusClass) => {
+    const next = new URLSearchParams(searchParams)
+    if (nextStatus) next.set('status', nextStatus)
+    else next.delete('status')
+    setSearchParams(next)
+  }
 
   return (
     <div className="space-y-4">
@@ -119,15 +171,80 @@ export function RequestsPage() {
 
       <RequestActivityChart entries={pagination.entries} />
 
+      <div className="flex flex-col gap-1.5">
+        <div
+          aria-label="Filter requests by kind"
+          className="flex flex-wrap items-center gap-1.5"
+          role="group"
+        >
+          <span className="mr-0.5 text-2xs font-medium text-muted-foreground">Kind</span>
+          {kindFilters.map((filter) => {
+            const selected = kind === filter.value
+            return (
+              <Button
+                aria-pressed={selected}
+                key={filter.label}
+                onClick={() => selectKind(filter.value)}
+                size="xs"
+                type="button"
+                variant={selected ? 'secondary' : 'ghost'}
+              >
+                {filter.label}
+              </Button>
+            )
+          })}
+        </div>
+        <div
+          aria-label="Filter requests by status class"
+          className="flex flex-wrap items-center gap-1.5"
+          role="group"
+        >
+          <span className="mr-0.5 text-2xs font-medium text-muted-foreground">Status</span>
+          <Button
+            aria-pressed={!statusClass}
+            onClick={() => selectStatus()}
+            size="xs"
+            type="button"
+            variant={!statusClass ? 'secondary' : 'ghost'}
+          >
+            All
+          </Button>
+          {statusClasses.map((value) => (
+            <Button
+              aria-pressed={statusClass === value}
+              key={value}
+              onClick={() => selectStatus(value)}
+              size="xs"
+              type="button"
+              variant={statusClass === value ? 'secondary' : 'ghost'}
+            >
+              {value}
+            </Button>
+          ))}
+        </div>
+      </div>
+
       <EntryIndexTable
         caption="Recorded HTTP requests"
         columns={columns}
         emptyDescription={
           tag
-            ? `No request carries the exact tag “${tag}”. Try another tag or clear the filter.`
-            : 'Send a request through the application. New request batches appear here automatically.'
+            ? `No request carries the exact tag “${tag}” with the selected predicates.`
+            : statusClass
+              ? `No ${statusClass} requests match the selected kind. New matching requests will appear here automatically.`
+              : kind
+                ? `No ${kind} requests recorded yet. New matching requests will appear here automatically.`
+                : 'Send a request through the application. New request batches appear here automatically.'
         }
-        emptyTitle={tag ? 'No matching requests' : 'Waiting for the first request'}
+        emptyTitle={
+          tag
+            ? 'No matching requests'
+            : statusClass
+              ? `No ${statusClass} requests`
+              : kind
+                ? `No ${kind} requests`
+                : 'Waiting for the first request'
+        }
         error={pagination.error}
         hasMore={pagination.hasMore}
         loading={pagination.loading}

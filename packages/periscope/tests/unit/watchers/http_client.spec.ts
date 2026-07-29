@@ -26,12 +26,14 @@ const errorChannel = channel('undici:request:error')
 
 async function makeWatcher(
   selfAddress?: { host: string; port: number },
-  recording: { sampleRate?: number; keepAlways?: KeepAlwaysHook } = {}
+  recording: { sampleRate?: number; keepAlways?: KeepAlwaysHook } = {},
+  httpClient: { slowMs?: number } = {}
 ) {
   const { app, emitter } = await createApp()
   const config = defineConfig({
     recording,
     storage: { driver: 'memory' },
+    watchers: { http_client: httpClient },
   })
   const store = new MemoryStore({ maxEntries: 100 })
   const recorder = new Recorder({ config, store })
@@ -195,6 +197,7 @@ test.group('HttpClientWatcher', () => {
       message: 'socket closed',
     })
 
+    assert.include(page.data[0].tags, 'failed')
     await watcher.cleanup()
     await watcher.cleanup()
     const afterCleanup = {
@@ -208,6 +211,50 @@ test.group('HttpClientWatcher', () => {
 
     page = await store.list({ type: EntryType.HTTP_CLIENT })
     assert.lengthOf(page.data, 1)
+  })
+
+  test('tag slow requests and failed responses or transport errors', async ({ assert }) => {
+    const { store } = await makeWatcher(undefined, {}, { slowMs: 0 })
+    const successful = {
+      origin: 'https://api.example.test',
+      path: '/successful',
+      method: 'GET',
+    }
+    const serverError = {
+      origin: 'https://api.example.test',
+      path: '/server-error',
+      method: 'GET',
+    }
+    const transportError = {
+      origin: 'https://api.example.test',
+      path: '/transport-error',
+      method: 'GET',
+    }
+
+    publishCompletedRequest(successful)
+    createChannel.publish({ request: serverError })
+    headersChannel.publish({ request: serverError, response: { statusCode: 500 } })
+    trailersChannel.publish({ request: serverError, trailers: [] })
+    createChannel.publish({ request: transportError })
+    errorChannel.publish({ request: transportError, error: new Error('connection reset') })
+
+    await letFlushSettle()
+    const listed = await store.list({ type: EntryType.HTTP_CLIENT })
+    const entries = listed.data
+    const successfulEntry = entries.find((entry) =>
+      (entry.content.url as string).endsWith('/successful')
+    )
+    const serverErrorEntry = entries.find((entry) =>
+      (entry.content.url as string).endsWith('/server-error')
+    )
+    const transportErrorEntry = entries.find((entry) =>
+      (entry.content.url as string).endsWith('/transport-error')
+    )
+
+    assert.include(successfulEntry!.tags, 'slow')
+    assert.notInclude(successfulEntry!.tags, 'failed')
+    assert.includeMembers(serverErrorEntry!.tags, ['slow', 'failed'])
+    assert.includeMembers(transportErrorEntry!.tags, ['slow', 'failed'])
   })
 
   test('skip dashboard requests for exact normalized localhost and custom HOST names', async ({

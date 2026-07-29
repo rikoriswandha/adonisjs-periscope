@@ -49,7 +49,9 @@ export class JobScheduleWatcher implements Watcher, QueueWatcherObserver {
     this.#active = true
 
     for (const adapter of this.#context.config.watchers.job_schedule.adapters) {
-      const cleanup = await adapter.register(this)
+      const cleanup = await adapter.register(this, {
+        capturePayload: this.#context.config.watchers.job_schedule.capturePayload,
+      })
       if (typeof cleanup === 'function') this.#cleanups.push(cleanup)
     }
   }
@@ -144,17 +146,21 @@ export class JobScheduleWatcher implements Watcher, QueueWatcherObserver {
       const context = active?.context ?? BatchScope.createContext('queue')
       const source = active?.event ?? event
       const capturePayload = this.#context.config.watchers.job_schedule.capturePayload
+      const name = source.name ?? event.name
+      const payload = source.payload === undefined ? event.payload : source.payload
       const content: JobEntryContent = {
         adapter: event.adapter,
         queue: event.queue,
         jobId: event.jobId,
         status,
-        ...(source.name === undefined ? {} : { name: source.name }),
-        ...(active === undefined ? {} : { durationMs: durationMs(active.startedAt) }),
+        ...(name === undefined ? {} : { name }),
+        ...(event.durationMs === undefined
+          ? active === undefined
+            ? {}
+            : { durationMs: durationMs(active.startedAt) }
+          : { durationMs: event.durationMs }),
         ...(event.attempts === undefined ? {} : { attempts: event.attempts }),
-        ...(capturePayload && source.payload !== undefined
-          ? { payload: safeSerialize(source.payload) }
-          : {}),
+        ...(capturePayload && payload !== undefined ? { payload: safeSerialize(payload) } : {}),
         ...(capturePayload && event.result !== undefined
           ? { result: safeSerialize(event.result) }
           : {}),
