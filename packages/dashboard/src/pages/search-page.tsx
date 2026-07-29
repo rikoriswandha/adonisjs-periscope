@@ -140,7 +140,7 @@ export function SearchPage() {
 
       <section
         aria-label="Search query"
-        className="flex flex-col gap-3 rounded-lg border bg-background p-3 sm:flex-row sm:items-end"
+        className="flex flex-col gap-3 rounded-lg border bg-background p-3 sm:flex-row sm:items-start"
       >
         <form className="min-w-0 flex-1 space-y-1.5" onSubmit={submitTextSearch} role="search">
           <label className="text-xs font-medium" htmlFor="recording-search-text">
@@ -166,23 +166,25 @@ export function SearchPage() {
           <label className="text-xs font-medium" id="recording-search-type-label">
             Entry type
           </label>
-          <Select
-            items={typeOptions}
-            onValueChange={selectType}
-            value={filterState.type ?? 'all'}
-          >
-            <SelectTrigger aria-labelledby="recording-search-type-label">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectPopup>
-              <SelectItem value="all">All types</SelectItem>
-              {ENTRY_TYPES.map((type) => (
-                <SelectItem key={type} value={type}>
-                  {entryTypeLabel(type)}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
+          <div>
+            <Select
+              items={typeOptions}
+              onValueChange={selectType}
+              value={filterState.type ?? 'all'}
+            >
+              <SelectTrigger aria-labelledby="recording-search-type-label">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup>
+                <SelectItem value="all">All types</SelectItem>
+                {ENTRY_TYPES.map((type) => (
+                  <SelectItem key={type} value={type}>
+                    {entryTypeLabel(type)}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          </div>
         </div>
       </section>
 
