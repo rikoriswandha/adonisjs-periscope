@@ -14,13 +14,20 @@ import { registerDashboardRoutes } from '../../../src/http/routes.ts'
 import { Recorder } from '../../../src/recorder/recorder.ts'
 import { MemoryStore } from '../../../src/storage/memory_store.ts'
 import { EntryType } from '../../../src/types.ts'
-import type { EntryQuery } from '../../../src/types.ts'
+import type { EntryQuery, RequestStatsQuery } from '../../../src/types.ts'
 import { makeStoredEntry } from '../../storage/contract.ts'
 
 function createContext(url: string) {
   const context = new HttpContextFactory().merge({ url, method: 'GET' }).create()
   context.route = { pattern: url, params: {} } as unknown as typeof context.route
   return context
+}
+
+function createController(store: MemoryStore) {
+  return new DashboardController(store, defineConfig({ storage: { driver: 'memory' } }), {
+    nodeEnv: 'development',
+    periscopeEnabled: () => undefined,
+  })
 }
 
 test.group('Dashboard stats API', () => {
@@ -111,6 +118,177 @@ test.group('Dashboard stats API', () => {
       },
     })
     assert.equal(context.response.getHeaders()['cache-control'], 'no-store')
+  })
+
+  test('returns bucketed request statistics with the resolved analytics window', async ({
+    assert,
+  }) => {
+    const store = new MemoryStore()
+    const from = '2026-05-01T12:00:05.000Z'
+    const to = '2026-05-01T12:00:24.000Z'
+    await store.save([
+      makeStoredEntry({
+        application: 'shop',
+        createdAt: new Date('2026-05-01T12:00:06.000Z'),
+        content: {
+          method: 'GET',
+          url: '/users/1',
+          routePattern: '/users/:id',
+          status: 200,
+          durationMs: 10,
+        },
+      }),
+      makeStoredEntry({
+        application: 'shop',
+        createdAt: new Date('2026-05-01T12:00:16.000Z'),
+        content: {
+          method: 'GET',
+          url: '/users/2',
+          routePattern: '/users/:id',
+          status: 500,
+          durationMs: 30,
+        },
+      }),
+      makeStoredEntry({
+        application: 'other',
+        createdAt: new Date('2026-05-01T12:00:16.000Z'),
+        content: { method: 'GET', url: '/foreign', status: 503, durationMs: 999 },
+      }),
+    ])
+    const context = createContext(
+      `/periscope/api/stats?application=shop&bucket=10&group_by=route&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+    )
+
+    const result = await createController(store).stats(context)
+
+    assert.deepEqual(result, {
+      data: {
+        from,
+        to,
+        bucketSeconds: 10,
+        groupBy: 'route',
+        buckets: [
+          {
+            bucketStart: from,
+            group: 'GET /users/:id',
+            count: 1,
+            errorCount: 0,
+            p50: 10,
+            p95: 10,
+          },
+          {
+            bucketStart: '2026-05-01T12:00:15.000Z',
+            group: 'GET /users/:id',
+            count: 1,
+            errorCount: 1,
+            p50: 30,
+            p95: 30,
+          },
+        ],
+        sampled: 2,
+        truncated: false,
+      },
+    })
+    assert.equal(context.response.getHeaders()['cache-control'], 'no-store')
+  })
+
+  test('applies a sixty-bucket default window when only bucket is supplied', async ({ assert }) => {
+    const store = new MemoryStore()
+    const queries: RequestStatsQuery[] = []
+    const originalRequestStats = store.requestStats.bind(store)
+    store.requestStats = async (query) => {
+      queries.push(query)
+      return originalRequestStats(query)
+    }
+    const before = Date.now()
+
+    const result = await createController(store).stats(
+      createContext('/periscope/api/stats?application=shop&bucket=30')
+    )
+    const after = Date.now()
+
+    assert.lengthOf(queries, 1)
+    assert.equal(queries[0].application, 'shop')
+    assert.equal(queries[0].bucketSeconds, 30)
+    assert.isUndefined(queries[0].groupBy)
+    assert.equal(Date.parse(queries[0].to) - Date.parse(queries[0].from), 1_800_000)
+    assert.isAtLeast(Date.parse(queries[0].to), before)
+    assert.isAtMost(Date.parse(queries[0].to), after)
+    assert.deepEqual(result, {
+      data: {
+        from: queries[0].from,
+        to: queries[0].to,
+        bucketSeconds: 30,
+        groupBy: null,
+        buckets: [],
+        sampled: 0,
+        truncated: false,
+      },
+    })
+  })
+
+  test('uses one window-sized bucket for group_by without an explicit bucket', async ({
+    assert,
+  }) => {
+    const store = new MemoryStore()
+    const queries: RequestStatsQuery[] = []
+    const originalRequestStats = store.requestStats.bind(store)
+    store.requestStats = async (query) => {
+      queries.push(query)
+      return originalRequestStats(query)
+    }
+    const from = '2026-05-01T12:00:00.000Z'
+    const to = '2026-05-01T12:00:10.500Z'
+
+    const result = await createController(store).stats(
+      createContext(
+        `/periscope/api/stats?group_by=route&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+      )
+    )
+
+    assert.deepEqual(queries, [
+      { application: undefined, from, to, bucketSeconds: 11, groupBy: 'route' },
+    ])
+    assert.deepEqual(result, {
+      data: {
+        from,
+        to,
+        bucketSeconds: 11,
+        groupBy: 'route',
+        buckets: [],
+        sampled: 0,
+        truncated: false,
+      },
+    })
+  })
+
+  test('rejects invalid bucketed analytics queries before reading the store', async ({
+    assert,
+  }) => {
+    const rejected = [
+      '/periscope/api/stats?bucket=0',
+      '/periscope/api/stats?bucket=1.5',
+      '/periscope/api/stats?bucket=604801',
+      '/periscope/api/stats?group_by=method',
+      '/periscope/api/stats?bucket=10&from=not-a-date',
+      '/periscope/api/stats?bucket=10&from=2026-05-02T00%3A00%3A00Z&to=2026-05-01T00%3A00%3A00Z',
+      '/periscope/api/stats?bucket=1&from=2026-05-01T00%3A00%3A00Z&to=2026-05-01T00%3A08%3A21Z',
+    ]
+
+    for (const url of rejected) {
+      const store = new MemoryStore()
+      let calls = 0
+      store.requestStats = async () => {
+        calls += 1
+        return { buckets: [], sampled: 0, truncated: false }
+      }
+      const context = createContext(url)
+
+      await createController(store).stats(context)
+
+      assert.equal(context.response.getStatus(), 400, url)
+      assert.equal(calls, 0, url)
+    }
   })
 
   test('registers stats before the API catch-all', ({ assert }) => {

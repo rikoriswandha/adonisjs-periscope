@@ -358,6 +358,64 @@ export function runStoreContractTests(driverName: string, createStore: StoreFact
       assert.lengthOf(empty.data, 0)
     })
 
+    test('filter string log levels case-insensitively and combine filters with AND', async ({
+      assert,
+    }) => {
+      const matching = makeStoredEntry({
+        type: EntryType.LOG,
+        tags: ['slow'],
+        content: { level: 'Info', message: 'matching log' },
+      })
+      const wrongTag = makeStoredEntry({
+        type: EntryType.LOG,
+        tags: ['fast'],
+        content: { level: 'INFO', message: 'wrong tag' },
+      })
+      const wrongType = makeStoredEntry({
+        type: EntryType.REQUEST,
+        tags: ['slow'],
+        content: { level: 'info', message: 'wrong type' },
+      })
+      const custom = makeStoredEntry({
+        type: EntryType.LOG,
+        tags: ['slow'],
+        content: { level: 'Verbose', message: 'custom level' },
+      })
+      const nonString = makeStoredEntry({
+        type: EntryType.LOG,
+        tags: ['slow'],
+        content: { level: 30, message: 'numeric level' },
+      })
+      const missing = makeStoredEntry({
+        type: EntryType.REQUEST,
+        tags: ['slow'],
+        content: { message: 'no level' },
+      })
+
+      await store.save([matching, wrongTag, wrongType, custom, nonString, missing])
+
+      const info = await store.list({ level: 'iNfO' })
+      const verbose = await store.list({ level: 'vErBoSe' })
+      const combined = await store.list({
+        type: EntryType.LOG,
+        tag: 'slow',
+        level: 'INFO',
+      })
+
+      assert.deepEqual(
+        info.data.map((entry) => entry.uuid),
+        [wrongType.uuid, wrongTag.uuid, matching.uuid]
+      )
+      assert.deepEqual(
+        verbose.data.map((entry) => entry.uuid),
+        [custom.uuid]
+      )
+      assert.deepEqual(
+        combined.data.map((entry) => entry.uuid),
+        [matching.uuid]
+      )
+    })
+
     test('filter by tag', async ({ assert }) => {
       const tagged = makeStoredEntry({ tags: ['status:500', 'slow'] })
       const other = makeStoredEntry({ tags: ['status:200'] })
@@ -619,6 +677,58 @@ export function runStoreContractTests(driverName: string, createStore: StoreFact
       assert.equal(new Set(seen).size, entries.length)
     })
 
+    test('page oldest-first across tied sequences without overlap', async ({ assert }) => {
+      const sequence = BigInt(Date.now()) * 1_000_000n
+      const entries = [
+        makeStoredEntry({
+          sequence,
+          uuid: '00000000-0000-0000-0000-000000000001',
+        }),
+        makeStoredEntry({
+          sequence,
+          uuid: '00000000-0000-0000-0000-000000000002',
+        }),
+        makeStoredEntry({
+          sequence,
+          uuid: '00000000-0000-0000-0000-000000000003',
+        }),
+        makeStoredEntry({
+          sequence: sequence + 1n,
+          uuid: '00000000-0000-0000-0000-000000000004',
+        }),
+      ]
+
+      await store.save([entries[2], entries[3], entries[0], entries[1]])
+
+      const defaultPage = await store.list()
+      const first = await store.list({ sort: 'sequence', direction: 'asc', limit: 2 })
+      const second = await store.list({
+        sort: 'sequence',
+        direction: 'asc',
+        limit: 2,
+        cursor: first.nextCursor ?? undefined,
+      })
+
+      assert.deepEqual(
+        defaultPage.data.map((entry) => entry.uuid),
+        [...entries].reverse().map((entry) => entry.uuid)
+      )
+      assert.deepEqual(
+        first.data.map((entry) => entry.uuid),
+        entries.slice(0, 2).map((entry) => entry.uuid)
+      )
+      assert.isNotNull(first.nextCursor)
+      assert.deepEqual(
+        second.data.map((entry) => entry.uuid),
+        entries.slice(2).map((entry) => entry.uuid)
+      )
+      assert.isNull(second.nextCursor)
+      assert.lengthOf(
+        first.data.filter((entry) => second.data.some((next) => next.uuid === entry.uuid)),
+        0
+      )
+    })
+
     test('resolve a null cursor on a last page that is exactly full', async ({ assert }) => {
       const entries = Array.from({ length: 4 }, () => makeStoredEntry())
 
@@ -724,6 +834,158 @@ export function runStoreContractTests(driverName: string, createStore: StoreFact
 
       // A type with no entries may be omitted or reported as zero; both are conforming.
       assert.isNotOk(counts.log)
+    })
+
+    /*
+     * request stats
+     */
+
+    test('bucket request statistics from the query origin with portable filtering and grouping', async ({
+      assert,
+    }) => {
+      const fromMs = Date.parse('2026-04-12T10:00:05.000Z')
+      const from = new Date(fromMs).toISOString()
+      const to = new Date(fromMs + 19_000).toISOString()
+      const requests = [
+        makeStoredEntry({
+          application: 'shop',
+          createdAt: new Date(fromMs),
+          content: {
+            method: 'GET',
+            url: '/z/1',
+            routePattern: '/z/:id',
+            status: null,
+            durationMs: 10,
+          },
+        }),
+        makeStoredEntry({
+          application: 'shop',
+          createdAt: new Date(fromMs + 1_000),
+          content: {
+            method: 'GET',
+            url: '/a/1',
+            routePattern: '/a/:id',
+            status: 500,
+            durationMs: 20,
+          },
+        }),
+        makeStoredEntry({
+          application: 'shop',
+          createdAt: new Date(fromMs + 2_000),
+          content: {
+            method: 'GET',
+            url: '/a/2',
+            routePattern: '/a/:id',
+            status: 200,
+            durationMs: 30,
+          },
+        }),
+        makeStoredEntry({
+          application: 'shop',
+          createdAt: new Date(fromMs + 8_000),
+          content: { method: 'POST', url: '/fallback', status: 503, durationMs: 40 },
+        }),
+        makeStoredEntry({
+          application: 'shop',
+          createdAt: new Date(fromMs + 10_000),
+          content: {
+            method: 'GET',
+            url: '/a/3',
+            routePattern: '/a/:id',
+            status: 499,
+            durationMs: 50,
+          },
+        }),
+        makeStoredEntry({
+          application: 'shop',
+          createdAt: new Date(fromMs + 19_000),
+          content: { url: '/missing-method', status: null, durationMs: 60 },
+        }),
+      ]
+
+      await store.save([
+        ...requests,
+        makeStoredEntry({
+          application: 'shop',
+          createdAt: new Date(fromMs - 1),
+          content: { method: 'GET', url: '/before', status: 500, durationMs: 999 },
+        }),
+        makeStoredEntry({
+          application: 'shop',
+          createdAt: new Date(fromMs + 19_001),
+          content: { method: 'GET', url: '/after', status: 500, durationMs: 999 },
+        }),
+        makeStoredEntry({
+          application: 'other',
+          createdAt: new Date(fromMs + 1_000),
+          content: { method: 'GET', url: '/foreign', status: 500, durationMs: 999 },
+        }),
+        makeStoredEntry({
+          application: 'shop',
+          type: EntryType.QUERY,
+          createdAt: new Date(fromMs + 1_000),
+          content: { method: 'GET', url: '/not-a-request', status: 500, durationMs: 999 },
+        }),
+      ])
+
+      const ungrouped = await store.requestStats({
+        application: 'shop',
+        from,
+        to,
+        bucketSeconds: 10,
+      })
+
+      assert.deepEqual(ungrouped, {
+        buckets: [
+          {
+            bucketStart: from,
+            group: null,
+            count: 4,
+            errorCount: 2,
+            p50: 20,
+            p95: 40,
+          },
+          {
+            bucketStart: new Date(fromMs + 10_000).toISOString(),
+            group: null,
+            count: 2,
+            errorCount: 0,
+            p50: 50,
+            p95: 60,
+          },
+        ],
+        sampled: 6,
+        truncated: false,
+      })
+
+      const grouped = await store.requestStats({
+        application: 'shop',
+        from,
+        to,
+        bucketSeconds: 10,
+        groupBy: 'route',
+      })
+
+      assert.deepEqual(
+        grouped.buckets.map((bucket) => ({
+          bucketStart: bucket.bucketStart,
+          group: bucket.group,
+          count: bucket.count,
+        })),
+        [
+          { bucketStart: from, group: 'GET /a/:id', count: 2 },
+          { bucketStart: from, group: 'GET /z/:id', count: 1 },
+          { bucketStart: from, group: 'POST /fallback', count: 1 },
+          {
+            bucketStart: new Date(fromMs + 10_000).toISOString(),
+            group: 'GET /a/:id',
+            count: 1,
+          },
+          { bucketStart: new Date(fromMs + 10_000).toISOString(), group: null, count: 1 },
+        ]
+      )
+      assert.equal(grouped.sampled, 6)
+      assert.isFalse(grouped.truncated)
     })
 
     test('isolate application filters, summaries, counts, and scoped clear', async ({ assert }) => {

@@ -25,12 +25,11 @@
  * writes, and each recorded write would produce another write. Invariant 2 — Periscope never
  * records itself — is enforced here, by not giving the watcher anything to attach to.
  *
- * Dialect differences are handled in exactly two places. `./sql.ts`'s codecs erase the value-level
- * ones (postgres returns a `bigint` column as a string where SQLite returns a number, and
- * `decodeJson` accepts either the JSON text every dialect now stores or an already-parsed value),
- * and knex's `onConflict().ignore()` erases the statement-level one, compiling to `on conflict do
- * nothing` on postgres and SQLite and to `insert ignore` on MySQL. Nothing else in this file
- * branches on `dialect.name`.
+ * Dialect differences are handled at exactly three seams. `./sql.ts`'s codecs erase the
+ * value-level ones, and its `jsonFieldText` helper owns the dialect-specific JSON extraction
+ * syntax used below. Knex's `onConflict().ignore()` erases the statement-level one, compiling to
+ * `on conflict do nothing` on postgres and SQLite and to `insert ignore` on MySQL. Nothing else
+ * in this file branches on `dialect.name`.
  */
 
 import { safeguard } from '../safeguard.ts'
@@ -50,6 +49,7 @@ import {
   TAGS_TABLE,
   entryContentLikePattern,
   encodeSequence,
+  jsonFieldText,
   parseEntryQueryDate,
   resolveEntryQueryTags,
   toEntryRow,
@@ -57,6 +57,11 @@ import {
   toTagRows,
 } from './sql.ts'
 import type { EntryRow, TagRow } from './sql.ts'
+import {
+  aggregateRequestStats,
+  REQUEST_STATS_MAX_SAMPLES,
+  requestStatsSampleFromRow,
+} from './request_stats.ts'
 import type {
   ApplicationSummary,
   EntryQuery,
@@ -67,6 +72,8 @@ import type {
   Paginated,
   PeriscopeStore,
   PruneOptions,
+  RequestStatsQuery,
+  RequestStatsResult,
   StoredEntry,
 } from '../types.ts'
 import type { EntryCursor } from './pagination.ts'
@@ -169,7 +176,8 @@ export class DatabaseStore implements PeriscopeStore {
   #applyFilters(
     builder: DatabaseQueryBuilderContract<EntryRow>,
     query: EntryQuery,
-    cursor: EntryCursor | null
+    cursor: EntryCursor | null,
+    dialect: string
   ): void {
     if (query.type !== undefined) {
       builder.where('type', query.type)
@@ -189,6 +197,12 @@ export class DatabaseStore implements PeriscopeStore {
 
     if (query.displayOnIndex !== undefined) {
       builder.where('should_display_on_index', query.displayOnIndex ? 1 : 0)
+    }
+
+    if (query.level !== undefined) {
+      builder.whereRaw(`lower(${jsonFieldText(dialect, 'content', 'level')}) = ?`, [
+        query.level.toLowerCase(),
+      ])
     }
 
     const tags = resolveEntryQueryTags(query)
@@ -223,15 +237,15 @@ export class DatabaseStore implements PeriscopeStore {
 
     if (cursor !== null) {
       const sequence = encodeSequence(cursor.sequence)
+      const cursorOperator = query.direction === 'asc' ? '>' : '<'
 
       if (cursor.uuid === null) {
-        builder.where('sequence', '<', sequence)
+        builder.where('sequence', cursorOperator, sequence)
       } else {
-        builder.whereRaw('(sequence < ? or (sequence = ? and uuid < ?))', [
-          sequence,
-          sequence,
-          cursor.uuid,
-        ])
+        builder.whereRaw(
+          `(sequence ${cursorOperator} ? or (sequence = ? and uuid ${cursorOperator} ?))`,
+          [sequence, sequence, cursor.uuid]
+        )
       }
     }
   }
@@ -336,8 +350,10 @@ export class DatabaseStore implements PeriscopeStore {
         await this.#client().transaction(async (trx) => {
           for (const chunk of chunked(save.entryRows, INSERT_CHUNK_SIZE)) {
             /*
-             * Conflicts are ignored rather than merged. A repeated uuid means a failed flush was
-             * retried; keeping the identical row lets every other entry in that batch proceed.
+             * Conflicts are ignored rather than merged. A repeated uuid means the same entry was
+             * written twice — for example, an intermediate flush restored entries which a later
+             * flush of that context wrote again. Keeping the identical row lets every other entry
+             * in the batch proceed.
              */
             await trx.knexQuery().table(ENTRIES_TABLE).insert(chunk).onConflict('uuid').ignore()
           }
@@ -370,18 +386,20 @@ export class DatabaseStore implements PeriscopeStore {
 
   async list(query: EntryQuery = {}): Promise<Paginated<StoredEntry>> {
     const limit = resolvePageSize(query.limit)
-    const builder = this.#client().query<EntryRow>().from(ENTRIES_TABLE)
+    const client = this.#client()
+    const builder = client.query<EntryRow>().from(ENTRIES_TABLE)
 
-    this.#applyFilters(builder, query, parseEntryCursor(query.cursor))
+    this.#applyFilters(builder, query, parseEntryCursor(query.cursor), client.dialect.name)
 
     /*
      * One row more than the page: its existence is the whole answer to "is there a next page?",
      * and it costs one row rather than the `count(*)` over the same predicate that the obvious
      * alternative would need.
      */
+    const direction = query.direction === 'asc' ? 'asc' : 'desc'
     const rows = await builder
-      .orderBy('sequence', 'desc')
-      .orderBy('uuid', 'desc')
+      .orderBy('sequence', direction)
+      .orderBy('uuid', direction)
       .limit(limit + 1)
     const page = rows.slice(0, limit)
 
@@ -426,6 +444,66 @@ export class DatabaseStore implements PeriscopeStore {
     }
 
     return counts
+  }
+
+  async requestStats(query: RequestStatsQuery): Promise<RequestStatsResult> {
+    type RequestStatsRow = {
+      created_at: number | string
+      duration: unknown
+      status: unknown
+      method: unknown
+      route_pattern: unknown
+      url: unknown
+    }
+
+    const client = this.#client()
+    const dialect = client.dialect.name
+    const fromMs = parseEntryQueryDate(query.from) as number
+    const builder = client
+      .query<RequestStatsRow>()
+      .from(ENTRIES_TABLE)
+      .select(
+        'created_at',
+        client.raw(`${jsonFieldText(dialect, 'content', 'durationMs')} as duration`),
+        client.raw(`${jsonFieldText(dialect, 'content', 'status')} as status`),
+        client.raw(`${jsonFieldText(dialect, 'content', 'method')} as method`),
+        client.raw(`${jsonFieldText(dialect, 'content', 'routePattern')} as route_pattern`),
+        client.raw(`${jsonFieldText(dialect, 'content', 'url')} as url`)
+      )
+      .where('type', EntryType.REQUEST)
+      .where('created_at', '>=', fromMs)
+      .where('created_at', '<=', parseEntryQueryDate(query.to) as number)
+      .orderBy('created_at', 'desc')
+      .limit(REQUEST_STATS_MAX_SAMPLES + 1)
+
+    if (query.application !== undefined) {
+      builder.where('application', query.application)
+    }
+
+    const rows = await builder
+    const truncated = rows.length > REQUEST_STATS_MAX_SAMPLES
+    const grouped = query.groupBy === 'route'
+    const samples = rows.slice(0, REQUEST_STATS_MAX_SAMPLES).map((row) =>
+      requestStatsSampleFromRow(
+        {
+          createdAt: row.created_at,
+          duration: row.duration,
+          status: row.status,
+          method: row.method,
+          routePattern: row.route_pattern,
+          url: row.url,
+        },
+        grouped
+      )
+    )
+
+    return aggregateRequestStats({
+      samples,
+      fromMs,
+      bucketSeconds: query.bucketSeconds,
+      grouped,
+      truncated,
+    })
   }
 
   async applications(): Promise<ApplicationSummary[]> {
@@ -502,7 +580,7 @@ export class DatabaseStore implements PeriscopeStore {
         'sequence',
         page.map(({ latest_sequence: sequence }) => sequence)
       )
-    this.#applyFilters(entryBuilder, query, null)
+    this.#applyFilters(entryBuilder, query, null, client.dialect.name)
 
     const rows = await entryBuilder
     const latestByFamily = new Map(

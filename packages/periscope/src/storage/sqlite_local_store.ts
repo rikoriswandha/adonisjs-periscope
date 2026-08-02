@@ -23,6 +23,8 @@ import type {
   Paginated,
   PeriscopeStore,
   PruneOptions,
+  RequestStatsQuery,
+  RequestStatsResult,
   StoredEntry,
 } from '../types.ts'
 import {
@@ -42,6 +44,7 @@ import {
   TAG_INDEX_MAX_LENGTH,
   entryContentLikePattern,
   encodeSequence,
+  jsonFieldText,
   parseEntryQueryDate,
   resolveEntryQueryTags,
   toEntryRow,
@@ -50,6 +53,11 @@ import {
 } from './sql.ts'
 import type { EntryRow, TagRow } from './sql.ts'
 import type { EntryCursor } from './pagination.ts'
+import {
+  aggregateRequestStats,
+  REQUEST_STATS_MAX_SAMPLES,
+  requestStatsSampleFromRow,
+} from './request_stats.ts'
 
 /**
  * Everything better-sqlite3 will bind. The driver refuses a JavaScript `boolean`, a `Date`, a
@@ -88,8 +96,9 @@ const MAINTENANCE_INTERVAL_MS = 30_000
 
 /**
  * better-sqlite3 waits synchronously on the event-loop thread. WAL keeps normal reads concurrent,
- * while this short ceiling lets the recorder retain and retry a fragment instead of freezing the
- * host for seconds when another process holds the writer lock.
+ * while this short ceiling makes the save fail fast so the recorder can restore the fragment to
+ * its context instead of freezing the host for seconds when another process holds the writer
+ * lock. The fragment is retried only when that context still has another flush coming.
  */
 const BUSY_TIMEOUT_MS = 100
 
@@ -586,10 +595,10 @@ export class SqliteLocalStore implements PeriscopeStore {
   /**
    * Insert the entry rows of one batch, `INSERT_CHUNK_SIZE` rows per statement.
    *
-   * `insert or ignore` rather than an upsert: a save retried after a partially applied
-   * transaction, or a batch replayed by a flush that already succeeded, must not fail the rows
-   * around the duplicate. Keeping the stored version also keeps the tag rows below consistent
-   * with it — an upsert would rewrite the entry while its old tags stayed indexed.
+   * `insert or ignore` rather than an upsert: invoking a save again after uncertain storage
+   * progress, or replaying a batch whose flush already succeeded, must not fail the rows around
+   * the duplicate. Keeping the stored version also keeps the tag rows below consistent with it —
+   * an upsert would rewrite the entry while its old tags stayed indexed.
    */
   #insertEntries(entries: StoredEntry[]): number {
     let inserted = 0
@@ -757,13 +766,23 @@ export class SqliteLocalStore implements PeriscopeStore {
       values.push(query.displayOnIndex ? 1 : 0)
     }
 
+    if (query.level !== undefined) {
+      conditions.push(`lower(${jsonFieldText('sqlite', 'content', 'level')}) = ?`)
+      values.push(query.level.toLowerCase())
+    }
+
+    const direction = query.direction === 'asc' ? 'asc' : 'desc'
+    const cursorOperator = direction === 'asc' ? '>' : '<'
+
     if (cursor !== null) {
       const sequence = encodeSequence(cursor.sequence)
       if (cursor.uuid === null) {
-        conditions.push('sequence < ?')
+        conditions.push(`sequence ${cursorOperator} ?`)
         values.push(sequence)
       } else {
-        conditions.push('(sequence < ? or (sequence = ? and uuid < ?))')
+        conditions.push(
+          `(sequence ${cursorOperator} ? or (sequence = ? and uuid ${cursorOperator} ?))`
+        )
         values.push(sequence, sequence, cursor.uuid)
       }
     }
@@ -771,7 +790,7 @@ export class SqliteLocalStore implements PeriscopeStore {
     const where = conditions.length === 0 ? '' : ` where ${conditions.join(' and ')}`
 
     return {
-      sql: `select ${ENTRY_COLUMNS} from ${ENTRIES_TABLE}${where} order by sequence desc, uuid desc limit ?`,
+      sql: `select ${ENTRY_COLUMNS} from ${ENTRIES_TABLE}${where} order by sequence ${direction}, uuid ${direction} limit ?`,
       values,
     }
   }
@@ -843,6 +862,53 @@ export class SqliteLocalStore implements PeriscopeStore {
     }
 
     return counts
+  }
+
+  async requestStats(query: RequestStatsQuery): Promise<RequestStatsResult> {
+    type RequestStatsRow = {
+      createdAt: number | string
+      duration: unknown
+      status: unknown
+      method: unknown
+      routePattern: unknown
+      url: unknown
+    }
+
+    const fromMs = parseEntryQueryDate(query.from) as number
+    const conditions = ['type = ?', 'created_at between ? and ?']
+    const values: Binding[] = [EntryType.REQUEST, fromMs, parseEntryQueryDate(query.to) as number]
+
+    if (query.application !== undefined) {
+      conditions.push('application = ?')
+      values.push(query.application)
+    }
+
+    const rows = this.#prepare<RequestStatsRow>(
+      `select
+         created_at as createdAt,
+         ${jsonFieldText('sqlite', 'content', 'durationMs')} as duration,
+         ${jsonFieldText('sqlite', 'content', 'status')} as status,
+         ${jsonFieldText('sqlite', 'content', 'method')} as method,
+         ${jsonFieldText('sqlite', 'content', 'routePattern')} as routePattern,
+         ${jsonFieldText('sqlite', 'content', 'url')} as url
+       from ${ENTRIES_TABLE}
+       where ${conditions.join(' and ')}
+       order by created_at desc
+       limit ?`
+    ).all(...values, REQUEST_STATS_MAX_SAMPLES + 1)
+    const truncated = rows.length > REQUEST_STATS_MAX_SAMPLES
+    const grouped = query.groupBy === 'route'
+    const samples = rows
+      .slice(0, REQUEST_STATS_MAX_SAMPLES)
+      .map((row) => requestStatsSampleFromRow(row, grouped))
+
+    return aggregateRequestStats({
+      samples,
+      fromMs,
+      bucketSeconds: query.bucketSeconds,
+      grouped,
+      truncated,
+    })
   }
 
   async applications(): Promise<ApplicationSummary[]> {

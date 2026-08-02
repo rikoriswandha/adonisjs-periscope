@@ -43,7 +43,14 @@ const HEALTHY_DASHBOARD_ROUTES = [
   { domain: 'root', methods: ['GET', 'HEAD'], pattern: '/scope/api/entries/:uuid' },
   { domain: 'root', methods: ['GET', 'HEAD'], pattern: '/scope/api/entries/:uuid/eml' },
   { domain: 'root', methods: ['GET', 'HEAD'], pattern: '/scope/api/batches/:batchId' },
+  {
+    domain: 'root',
+    methods: ['GET', 'HEAD'],
+    pattern: '/scope/api/batches/:batchId/export',
+  },
+  { domain: 'root', methods: ['GET', 'HEAD'], pattern: '/scope/api/csrf-token' },
   { domain: 'root', methods: ['GET', 'HEAD'], pattern: '/scope/api/counts' },
+  { domain: 'root', methods: ['GET', 'HEAD'], pattern: '/scope/api/stats' },
   { domain: 'root', methods: ['GET', 'HEAD'], pattern: '/scope/api/status' },
   { domain: 'root', methods: ['PUT'], pattern: '/scope/api/flags/:name' },
   { domain: 'root', methods: ['DELETE'], pattern: '/scope/api/flags/:name' },
@@ -125,6 +132,7 @@ test.group('Periscope doctor', () => {
     assert.equal(doctor.output[0].match(/\bPASS\b/g)?.length, 5)
     assert.include(doctor.output[0], 'Periscope migration found for "primary"')
     assert.include(doctor.output[0], 'first in server.use')
+    assert.include(doctor.output[0], 'no collisions under /scope')
   })
 
   test('reports missing migration, disabled Lucid debug, route collision, and bad ordering', async ({

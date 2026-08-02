@@ -27,6 +27,7 @@ import type {
   KeepAlwaysHook,
   FilterHook,
   Paginated,
+  RequestStatsResult,
   PeriscopeStore,
   ResolvedPeriscopeConfig,
   StoredEntry,
@@ -112,6 +113,10 @@ class FakeStore implements PeriscopeStore {
 
   async counts(): Promise<EntryTypeCounts> {
     return {}
+  }
+
+  async requestStats(): Promise<RequestStatsResult> {
+    return { buckets: [], sampled: 0, truncated: false }
   }
 
   async applications(): Promise<[]> {

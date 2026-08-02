@@ -224,10 +224,11 @@ export class Recorder {
   readonly #flushedListeners: FlushedListener[] = []
 
   /**
-   * Monitored tags are cold-path storage state. The set and in-flight promise make concurrent
-   * sampled-out flushes share one muted read.
+   * Monitored tags are cold-path storage state. The last successful set and in-flight promise
+   * make concurrent sampled-out flushes share one muted read. `null` means storage has never
+   * supplied a value, rather than an empty monitored set.
    */
-  #monitoredTags = new Set<string>()
+  #monitoredTags: ReadonlySet<string> | null = null
   #monitoredTagsExpiresAt = 0n
   #monitoredTagsRefresh: Promise<ReadonlySet<string> | null> | null = null
 
@@ -352,7 +353,11 @@ export class Recorder {
       )
 
       if (tags === undefined) {
-        return null
+        /**
+         * Preserve the last successful read and leave its expiry untouched so the next flush
+         * retries storage. `null` deliberately survives only when storage has never been readable.
+         */
+        return this.#monitoredTags
       }
 
       this.#monitoredTags = new Set(tags)
@@ -511,7 +516,9 @@ export class Recorder {
     /**
      * Keep the fragment in the context until storage confirms it. Concurrent records append
      * behind this snapshot, while the per-context queue above prevents a second flush from
-     * replaying it. A failed save can therefore be retried without reconstructing lost entries.
+     * replaying it. Restoring a failed save pays off when an intermediate flush still has a later
+     * flush coming; the final flush is the last chance, and its failure loses the fragment with
+     * the context.
      */
     const drained = context.buffer.slice()
     let bufferedEntries = drained.length
@@ -580,6 +587,10 @@ export class Recorder {
               ) === true
           }
 
+          /**
+           * `null` means no monitored-tag read has ever succeeded. That one case deliberately
+           * fails open; after the first success, read failures reuse the last-known set instead.
+           */
           kept ||=
             monitoredTags === null ||
             batchView.hasEntryWhere((entry) => entry.tags.some((tag) => monitoredTags.has(tag)))

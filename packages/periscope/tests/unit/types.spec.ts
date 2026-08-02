@@ -55,6 +55,7 @@ const storeDouble: PeriscopeStore = {
   list: async () => ({ data: [], nextCursor: null }),
   batch: async () => [],
   counts: async () => ({}),
+  requestStats: async () => ({ buckets: [], sampled: 0, truncated: false }),
   applications: async () => [],
   exceptionGroups: async () => ({ data: [], nextCursor: null }),
   prune: async () => 0,
@@ -221,12 +222,15 @@ test.group('Types | EntryQuery', () => {
       batchId: 'batch-1',
       application: 'default',
       displayOnIndex: true,
+      level: 'error',
+      sort: 'sequence',
+      direction: 'asc',
       cursor: 'cursor-1',
       limit: 25,
     }
 
     assert.deepEqual(Object.keys(unfiltered), [])
-    assert.lengthOf(Object.keys(filtered), 12)
+    assert.lengthOf(Object.keys(filtered), 15)
 
     expectTypeOf<Partial<EntryQuery>>().toEqualTypeOf<EntryQuery>()
     expectTypeOf<keyof EntryQuery>().toEqualTypeOf<
@@ -240,6 +244,9 @@ test.group('Types | EntryQuery', () => {
       | 'batchId'
       | 'application'
       | 'displayOnIndex'
+      | 'level'
+      | 'sort'
+      | 'direction'
       | 'cursor'
       | 'limit'
     >()
@@ -256,6 +263,9 @@ test.group('Types | EntryQuery', () => {
     expectTypeOf<Required<EntryQuery>['text']>().toEqualTypeOf<string>()
     expectTypeOf<Required<EntryQuery>['from']>().toEqualTypeOf<string>()
     expectTypeOf<Required<EntryQuery>['to']>().toEqualTypeOf<string>()
+    expectTypeOf<Required<EntryQuery>['level']>().toEqualTypeOf<string>()
+    expectTypeOf<Required<EntryQuery>['sort']>().toEqualTypeOf<'sequence'>()
+    expectTypeOf<Required<EntryQuery>['direction']>().toEqualTypeOf<'asc' | 'desc'>()
   })
 })
 
@@ -276,6 +286,7 @@ test.group('Types | PeriscopeStore', () => {
       'monitorTag',
       'monitoredTags',
       'prune',
+      'requestStats',
       'save',
       'setFlag',
       'trim',
@@ -288,6 +299,7 @@ test.group('Types | PeriscopeStore', () => {
       | 'list'
       | 'batch'
       | 'counts'
+      | 'requestStats'
       | 'applications'
       | 'exceptionGroups'
       | 'prune'

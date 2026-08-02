@@ -5,7 +5,7 @@
  * file that was distributed with this source code.
  */
 
-import type { Router } from '@adonisjs/core/http'
+import type { HttpContext, Router } from '@adonisjs/core/http'
 
 import type { Recorder } from '../recorder/recorder.ts'
 import type { ResolvedPeriscopeConfig } from '../types.ts'
@@ -18,6 +18,8 @@ import { StreamController } from './controllers/stream_controller.ts'
 import { createDashboardAuthorize } from './middleware/authorize.ts'
 import type { DashboardEnvironment } from './middleware/authorize.ts'
 import { protectDashboardMutation } from './middleware/protect_mutations.ts'
+import { DASHBOARD_ROUTE_MANIFEST } from './route_manifest.ts'
+import type { DashboardRouteId } from './route_manifest.ts'
 
 export type RegisterDashboardRoutesOptions = {
   router: Router
@@ -46,31 +48,35 @@ export function registerDashboardRoutes(options: RegisterDashboardRoutesOptions)
   })
   const authorize = createDashboardAuthorize(config, recorder, environment)
 
+  const handlers: Record<DashboardRouteId, (context: HttpContext) => unknown> = {
+    entriesIndex: entries.index.bind(entries),
+    entriesShow: entries.show.bind(entries),
+    entriesEml: entries.eml.bind(entries),
+    entriesBatch: entries.batch.bind(entries),
+    entriesExportBatch: entries.exportBatch.bind(entries),
+    dashboardCsrfToken: dashboard.csrfToken.bind(dashboard),
+    dashboardCounts: dashboard.counts.bind(dashboard),
+    dashboardStats: dashboard.stats.bind(dashboard),
+    dashboardStatus: dashboard.status.bind(dashboard),
+    dashboardSetFlag: dashboard.setFlag.bind(dashboard),
+    dashboardDeleteFlag: dashboard.deleteFlag.bind(dashboard),
+    dashboardClear: dashboard.clear.bind(dashboard),
+    exceptionGroupsIndex: exceptionGroups.index.bind(exceptionGroups),
+    stream: stream.stream.bind(stream),
+    monitoredTagsIndex: monitoredTags.index.bind(monitoredTags),
+    monitoredTagsSet: monitoredTags.set.bind(monitoredTags),
+    monitoredTagsDelete: monitoredTags.delete.bind(monitoredTags),
+    apiNotFound: ({ response }) => response.notFound(),
+    apiWildcardNotFound: ({ response }) => response.notFound(),
+    staticAsset: staticFiles.asset.bind(staticFiles),
+    staticRoot: staticFiles.root.bind(staticFiles),
+    staticSpa: staticFiles.spa.bind(staticFiles),
+  }
+
   const routes = router.group(() => {
-    router.get('/api/entries', entries.index.bind(entries))
-    router.get('/api/entries/:uuid', entries.show.bind(entries))
-    router.get('/api/entries/:uuid/eml', entries.eml.bind(entries))
-    router.get('/api/batches/:batchId', entries.batch.bind(entries))
-    router.get('/api/batches/:batchId/export', entries.exportBatch.bind(entries))
-    router.get('/api/csrf-token', dashboard.csrfToken.bind(dashboard))
-    router.get('/api/counts', dashboard.counts.bind(dashboard))
-    router.get('/api/stats', dashboard.stats.bind(dashboard))
-    router.get('/api/status', dashboard.status.bind(dashboard))
-    router.put('/api/flags/:name', dashboard.setFlag.bind(dashboard))
-    router.delete('/api/flags/:name', dashboard.deleteFlag.bind(dashboard))
-    router.post('/api/clear', dashboard.clear.bind(dashboard))
-    router.get('/api/exception-groups', exceptionGroups.index.bind(exceptionGroups))
-    router.route('/api/stream', ['GET'], stream.stream.bind(stream))
-    router.get('/api/monitored-tags', monitoredTags.index.bind(monitoredTags))
-    router.put('/api/monitored-tags/:tag', monitoredTags.set.bind(monitoredTags))
-    router.delete('/api/monitored-tags/:tag', monitoredTags.delete.bind(monitoredTags))
-
-    router.any('/api', ({ response }) => response.notFound())
-    router.any('/api/*', ({ response }) => response.notFound())
-
-    router.get('/assets/*', staticFiles.asset.bind(staticFiles))
-    router.get('/', staticFiles.root.bind(staticFiles))
-    router.get('*', staticFiles.spa.bind(staticFiles))
+    for (const route of DASHBOARD_ROUTE_MANIFEST) {
+      router.route(route.pattern, [...route.methods], handlers[route.id])
+    }
   })
 
   if (config.dashboard.path !== '/') {

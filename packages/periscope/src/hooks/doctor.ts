@@ -9,6 +9,8 @@ import { readFile, readdir, stat } from 'node:fs/promises'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { DASHBOARD_ROUTE_MANIFEST } from '../http/route_manifest.ts'
+
 const CONFIG_EXTENSIONS = ['.ts', '.js', '.mts', '.mjs', '.cts', '.cjs'] as const
 const REQUEST_MIDDLEWARE_PATH = '@rikology/adonisjs-periscope/middleware/request_watcher'
 const DEFAULT_MIGRATIONS_PATH = 'database/migrations'
@@ -592,28 +594,6 @@ async function middlewareCheck(appRoot: string): Promise<DoctorCheck> {
   }
 }
 
-const PERISCOPE_ROUTES = [
-  ['/api/entries', ['GET', 'HEAD']],
-  ['/api/entries/:uuid', ['GET', 'HEAD']],
-  ['/api/entries/:uuid/eml', ['GET', 'HEAD']],
-  ['/api/batches/:batchId', ['GET', 'HEAD']],
-  ['/api/counts', ['GET', 'HEAD']],
-  ['/api/status', ['GET', 'HEAD']],
-  ['/api/flags/:name', ['PUT']],
-  ['/api/flags/:name', ['DELETE']],
-  ['/api/clear', ['POST']],
-  ['/api/exception-groups', ['GET', 'HEAD']],
-  ['/api/stream', ['GET']],
-  ['/api/monitored-tags', ['GET', 'HEAD']],
-  ['/api/monitored-tags/:tag', ['PUT']],
-  ['/api/monitored-tags/:tag', ['DELETE']],
-  ['/api', ['HEAD', 'OPTIONS', 'GET', 'POST', 'PUT', 'PATCH', 'DELETE']],
-  ['/api/*', ['HEAD', 'OPTIONS', 'GET', 'POST', 'PUT', 'PATCH', 'DELETE']],
-  ['/assets/*', ['GET', 'HEAD']],
-  ['/', ['GET', 'HEAD']],
-  ['/*', ['GET', 'HEAD']],
-] as const
-
 function normalizeRoutePattern(pattern: string): string {
   const segments = pattern.split('/').filter(Boolean)
   return segments.length === 0 ? '/' : `/${segments.join('/')}`
@@ -684,7 +664,8 @@ function routeCollisionCheck(periscope: PeriscopeSettings, routes: unknown): Doc
     }
 
     const expectedCounts = new Map<string, number>()
-    for (const [suffix, methods] of PERISCOPE_ROUTES) {
+    for (const { pattern: routePattern, methods } of DASHBOARD_ROUTE_MANIFEST) {
+      const suffix = normalizeRoutePattern(routePattern)
       const pattern =
         periscope.dashboardPath === '/'
           ? suffix

@@ -10,51 +10,10 @@ import type { HttpContext } from '@adonisjs/core/http'
 import { serializeBatchExport } from '../../batch_export.ts'
 import { EntryType } from '../../types.ts'
 import type { EntryQuery, PeriscopeStore } from '../../types.ts'
-import { firstQueryString } from '../query.ts'
+import { firstQueryString, validIsoDateTime } from '../query.ts'
 import { serializeEntry, serializeEntryPage } from '../serialize.ts'
 
 const MAX_EML_FILENAME_STEM_LENGTH = 120
-const ISO_DATETIME =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/
-
-/**
- * Keep only unambiguous, real ISO datetimes. Invalid filters are omitted rather than turning a
- * dashboard typo into an API error or an empty result set.
- */
-function validIsoDateTime(value: string | undefined): string | undefined {
-  if (value === undefined) {
-    return undefined
-  }
-
-  const match = ISO_DATETIME.exec(value)
-  if (match === null) {
-    return undefined
-  }
-
-  const year = Number(match[1])
-  const month = Number(match[2])
-  const day = Number(match[3])
-  const hour = Number(match[4])
-  const minute = Number(match[5])
-  const second = match[6] === undefined ? 0 : Number(match[6])
-  const calendar = new Date(0)
-  calendar.setUTCFullYear(year, month, 0)
-
-  if (
-    month < 1 ||
-    month > 12 ||
-    day < 1 ||
-    day > calendar.getUTCDate() ||
-    hour > 23 ||
-    minute > 59 ||
-    second > 59 ||
-    !Number.isFinite(Date.parse(value))
-  ) {
-    return undefined
-  }
-
-  return value
-}
 
 /**
  * Keep the download name portable and, more importantly, incapable of escaping the quoted
@@ -127,6 +86,9 @@ export class EntriesController {
     const familyHash = firstQueryString(qs.family_hash)
     const batchId = firstQueryString(qs.batch_id)
     const application = firstQueryString(qs.application)
+    const level = firstQueryString(qs.level)?.trim()
+    const sort = firstQueryString(qs.sort)
+    const direction = firstQueryString(qs.direction)
     const cursor = firstQueryString(qs.cursor)
     const rawLimit = firstQueryString(qs.limit)
     const rawDisplayOnIndex = firstQueryString(qs.display_on_index)
@@ -141,6 +103,9 @@ export class EntriesController {
     if (familyHash !== undefined) query.familyHash = familyHash
     if (batchId !== undefined) query.batchId = batchId
     if (application !== undefined) query.application = application
+    if (level !== undefined && level.length > 0) query.level = level
+    if (sort === 'sequence') query.sort = sort
+    if (direction === 'asc' || direction === 'desc') query.direction = direction
     if (cursor !== undefined) query.cursor = cursor
     if (rawLimit !== undefined) query.limit = Number(rawLimit)
 

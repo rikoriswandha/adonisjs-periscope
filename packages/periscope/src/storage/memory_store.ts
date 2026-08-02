@@ -19,9 +19,16 @@ import type {
   Paginated,
   PeriscopeStore,
   PruneOptions,
+  RequestStatsQuery,
+  RequestStatsResult,
   StoredEntry,
 } from '../types.ts'
 import type { EntryCursor } from './pagination.ts'
+import {
+  aggregateRequestStats,
+  REQUEST_STATS_MAX_SAMPLES,
+  requestStatsSampleFromContent,
+} from './request_stats.ts'
 
 /**
  * Ceiling used when the caller gives none. Matches `storage.maxEntries` in the resolved config,
@@ -98,12 +105,19 @@ function matchesQuery(
   from: number | undefined,
   to: number | undefined
 ): boolean {
-  if (
-    cursor !== null &&
-    (entry.sequence > cursor.sequence ||
-      (entry.sequence === cursor.sequence && (cursor.uuid === null || entry.uuid >= cursor.uuid)))
-  ) {
-    return false
+  if (cursor !== null) {
+    const outsidePage =
+      query.direction === 'asc'
+        ? entry.sequence < cursor.sequence ||
+          (entry.sequence === cursor.sequence &&
+            (cursor.uuid === null || entry.uuid <= cursor.uuid))
+        : entry.sequence > cursor.sequence ||
+          (entry.sequence === cursor.sequence &&
+            (cursor.uuid === null || entry.uuid >= cursor.uuid))
+
+    if (outsidePage) {
+      return false
+    }
   }
 
   if (query.type !== undefined && entry.type !== query.type) {
@@ -123,6 +137,14 @@ function matchesQuery(
   }
 
   if (query.displayOnIndex !== undefined && entry.shouldDisplayOnIndex !== query.displayOnIndex) {
+    return false
+  }
+
+  if (
+    query.level !== undefined &&
+    (typeof entry.content.level !== 'string' ||
+      entry.content.level.toLowerCase() !== query.level.toLowerCase())
+  ) {
     return false
   }
 
@@ -385,7 +407,7 @@ export class MemoryStore implements PeriscopeStore {
       }
     }
 
-    matches.sort(bySequenceDescending)
+    matches.sort(query.direction === 'asc' ? bySequenceAscending : bySequenceDescending)
 
     const page = matches.slice(0, limit)
 
@@ -436,6 +458,38 @@ export class MemoryStore implements PeriscopeStore {
     }
 
     return counts
+  }
+
+  async requestStats(query: RequestStatsQuery): Promise<RequestStatsResult> {
+    const fromMs = parseEntryQueryDate(query.from) as number
+    const toMs = parseEntryQueryDate(query.to) as number
+    const grouped = query.groupBy === 'route'
+    const entries = [...this.#entries.values()]
+      .filter(
+        (entry) =>
+          entry.type === EntryType.REQUEST &&
+          (query.application === undefined || entry.application === query.application) &&
+          entry.createdAt.getTime() >= fromMs &&
+          entry.createdAt.getTime() <= toMs
+      )
+      .sort((left, right) => {
+        const byCreatedAt = right.createdAt.getTime() - left.createdAt.getTime()
+        return byCreatedAt === 0 ? bySequenceDescending(left, right) : byCreatedAt
+      })
+    const truncated = entries.length > REQUEST_STATS_MAX_SAMPLES
+    const samples = entries
+      .slice(0, REQUEST_STATS_MAX_SAMPLES)
+      .map((entry) =>
+        requestStatsSampleFromContent(entry.content, entry.createdAt.getTime(), grouped)
+      )
+
+    return aggregateRequestStats({
+      samples,
+      fromMs,
+      bucketSeconds: query.bucketSeconds,
+      grouped,
+      truncated,
+    })
   }
 
   async applications(): Promise<ApplicationSummary[]> {

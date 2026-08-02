@@ -133,9 +133,11 @@ with scoped counts, exception groups, clears, and prunes.
 `src/http/routes.ts` mounts everything below `dashboard.path`:
 
 - `controllers/entries_controller.ts`, `exception_groups_controller.ts`, and
-  `monitored_tags_controller.ts` serve the JSON API, including text/time-range/multi-tag entry
-  filters, single-entry lookup, and batch export; `dashboard_controller.ts` serves status,
-  counts, flags, clear, and the bounded `GET /api/stats` overview aggregates.
+  `monitored_tags_controller.ts` serve the JSON API, including text/time-range/multi-tag/log-level
+  entry filters with allowlisted `sort`/`direction` ordering, single-entry lookup, and batch
+  export; `dashboard_controller.ts` serves status, counts, flags, clear, and `GET /api/stats` —
+  the bounded legacy overview by default, or store-side time-bucketed counts, error rates, and
+  duration percentiles (optionally grouped by route) when `bucket`/`group_by` are present.
 - `stream_controller.ts` serves the SSE live feed with a configurable connection cap
   (`dashboard.sseMaxClients`).
 - `static_controller.ts` serves the built dashboard assets with path-traversal protection.

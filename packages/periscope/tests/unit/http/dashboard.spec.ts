@@ -313,7 +313,49 @@ test.group('Dashboard JSON API', () => {
     })
   })
 
-  test('pass search, ISO bounds, and repeated exact tags to the store', async ({ assert }) => {
+  test('filter entry levels and allowlist list ordering query parameters', async ({ assert }) => {
+    const config = defineConfig({ storage: { driver: 'memory' } })
+    const { store } = createRecorder(config)
+    const oldest = makeStoredEntry({
+      type: EntryType.LOG,
+      content: { level: 'Info', message: 'oldest' },
+    })
+    const middle = makeStoredEntry({
+      type: EntryType.LOG,
+      content: { level: 'error', message: 'middle' },
+    })
+    const newest = makeStoredEntry({
+      type: EntryType.LOG,
+      content: { level: 'INFO', message: 'newest' },
+    })
+    await store.save([middle, newest, oldest])
+    const controller = new EntriesController(store)
+
+    const omitted = await controller.index(createContext('/periscope/api/entries'))
+    const info = await controller.index(createContext('/periscope/api/entries?level=%20INFO%20'))
+    const ascending = await controller.index(
+      createContext('/periscope/api/entries?sort=sequence&direction=asc')
+    )
+    const invalid = await controller.index(
+      createContext('/periscope/api/entries?sort=bogus&direction=sideways')
+    )
+
+    assert.deepEqual(
+      omitted.data.map((entry) => entry.uuid),
+      [newest.uuid, middle.uuid, oldest.uuid]
+    )
+    assert.deepEqual(
+      info.data.map((entry) => entry.uuid),
+      [newest.uuid, oldest.uuid]
+    )
+    assert.deepEqual(
+      ascending.data.map((entry) => entry.uuid),
+      [oldest.uuid, middle.uuid, newest.uuid]
+    )
+    assert.deepEqual(invalid, omitted)
+  })
+
+  test('pass tolerant list filters and ordering parameters to the store', async ({ assert }) => {
     const config = defineConfig({ storage: { driver: 'memory' } })
     const { store } = createRecorder(config)
     const calls: EntryQuery[] = []
@@ -332,6 +374,12 @@ test.group('Dashboard JSON API', () => {
     await controller.index(
       createContext('/periscope/api/entries?from=not-a-date&to=2026-02-30T00%3A00%3A00.000Z')
     )
+    await controller.index(
+      createContext('/periscope/api/entries?level=%20INFO%20&sort=sequence&direction=asc')
+    )
+    await controller.index(
+      createContext('/periscope/api/entries?level=%20%20&sort=bogus&direction=sideways')
+    )
 
     assert.deepInclude(calls[0], {
       tags: ['slow', 'failed'],
@@ -342,6 +390,10 @@ test.group('Dashboard JSON API', () => {
     assert.isUndefined(calls[0].tag)
     assert.isUndefined(calls[1].from)
     assert.isUndefined(calls[1].to)
+    assert.deepInclude(calls[2], { level: 'INFO', sort: 'sequence', direction: 'asc' })
+    assert.isUndefined(calls[3].level)
+    assert.isUndefined(calls[3].sort)
+    assert.isUndefined(calls[3].direction)
   })
 
   test('serve only mail raw as a safely named EML attachment', async ({ assert }) => {
@@ -636,6 +688,14 @@ test.group('Dashboard static routes', () => {
     assert.equal(
       router.match('/periscope/api/csrf-token', 'GET', true)?.route.pattern,
       '/periscope/api/csrf-token'
+    )
+    assert.equal(
+      router.match('/periscope/api/entries', 'HEAD', true)?.route.pattern,
+      '/periscope/api/entries'
+    )
+    assert.equal(
+      router.match('/periscope/api/batches/batch-id/export', 'HEAD', true)?.route.pattern,
+      '/periscope/api/batches/:batchId/export'
     )
     assert.equal(
       router.match('/periscope/api/monitored-tags/slow', 'PUT', true)?.route.pattern,

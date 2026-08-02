@@ -11,7 +11,7 @@ import { isRecordingEnabled } from '../../define_config.ts'
 import { Flag } from '../../types.ts'
 import type { PeriscopeStore, ResolvedPeriscopeConfig } from '../../types.ts'
 import type { DashboardEnvironment } from '../middleware/authorize.ts'
-import { firstQueryString } from '../query.ts'
+import { firstQueryString, validIsoDateTime } from '../query.ts'
 
 const DUMP_OPEN_LEASE_FLAG_PATTERN = /^dump-open:[A-Za-z0-9_-]{1,128}$/
 const DUMP_OPEN_TTL_MS = 30_000
@@ -52,7 +52,101 @@ export class DashboardController {
   }
 
   async stats({ request, response }: HttpContext) {
-    const application = firstQueryString(request.qs().application)
+    const qs = request.qs()
+    const application = firstQueryString(qs.application)
+    const bucketPresent = qs.bucket !== undefined
+    const groupByPresent = qs.group_by !== undefined
+
+    if (bucketPresent || groupByPresent) {
+      const rawBucket = firstQueryString(qs.bucket)
+      const rawGroupBy = firstQueryString(qs.group_by)
+      let bucketSeconds: number | undefined
+      let groupBy: 'route' | undefined
+
+      if (bucketPresent) {
+        if (
+          rawBucket === undefined ||
+          !/^\d+$/.test(rawBucket) ||
+          Number(rawBucket) < 1 ||
+          Number(rawBucket) > 604_800
+        ) {
+          response.badRequest({ error: 'bucket must be a whole number between 1 and 604800' })
+          return
+        }
+        bucketSeconds = Number(rawBucket)
+      }
+
+      if (groupByPresent) {
+        if (rawGroupBy !== 'route') {
+          response.badRequest({ error: 'group_by must be route' })
+          return
+        }
+        groupBy = 'route'
+      }
+
+      const rawFrom = firstQueryString(qs.from)
+      const rawTo = firstQueryString(qs.to)
+      const from = validIsoDateTime(rawFrom)
+      const to = validIsoDateTime(rawTo)
+
+      /*
+       * Entry-list filters deliberately omit malformed dates. Analytics cannot make the same
+       * tolerant choice: silently widening a requested window would produce plausible but false
+       * numbers, so a present invalid bound is an API error here.
+       */
+      if (
+        (qs.from !== undefined && from === undefined) ||
+        (qs.to !== undefined && to === undefined)
+      ) {
+        response.badRequest({ error: 'from and to must be valid ISO datetimes' })
+        return
+      }
+
+      const resolvedTo = to ?? new Date().toISOString()
+      const toMs = Date.parse(resolvedTo)
+      const resolvedFrom =
+        from ??
+        new Date(
+          toMs - (bucketSeconds === undefined ? 3_600 : 60 * bucketSeconds) * 1_000
+        ).toISOString()
+      const fromMs = Date.parse(resolvedFrom)
+
+      if (fromMs > toMs) {
+        response.badRequest({ error: 'from must be before or equal to to' })
+        return
+      }
+
+      if (bucketSeconds === undefined) {
+        bucketSeconds = Math.max(1, Math.ceil((toMs - fromMs) / 1_000))
+      }
+
+      if (Math.ceil((toMs - fromMs) / (bucketSeconds * 1_000)) > 500) {
+        response.badRequest({ error: 'stats windows may contain at most 500 buckets' })
+        return
+      }
+
+      const result = await this.store.requestStats({
+        application,
+        from: resolvedFrom,
+        to: resolvedTo,
+        bucketSeconds,
+        groupBy,
+      })
+      response.header('cache-control', 'no-store')
+
+      return {
+        data: {
+          from: resolvedFrom,
+          to: resolvedTo,
+          bucketSeconds,
+          groupBy: groupBy ?? null,
+          buckets: result.buckets,
+          sampled: result.sampled,
+          truncated: result.truncated,
+        },
+      }
+    }
+
     const [requestPage, slowQueryPage] = await Promise.all([
       this.store.list({
         type: 'request',

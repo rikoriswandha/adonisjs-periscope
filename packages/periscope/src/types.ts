@@ -17,9 +17,10 @@
  * 1. **No dead knobs.** A configuration key exists here only once something reads it. Config is
  *    resolved by deep-merging user input over defaults, so compatible keys can be added
  *    without breaking an application's `config/periscope.ts`.
- * 2. **The entry shape is fixed now.** Storage schemas, dashboard routes and every watcher key
- *    off `EntryType` and `StoredEntry`, so those are complete from day one even though most
- *    watchers land later.
+ * 2. **The entry shape is stable; the catalogue is open.** Storage schemas, dashboard routes and
+ *    every watcher key off `EntryType` and `StoredEntry`. The `StoredEntry` shape is what every
+ *    driver persists and must stay compatible, while new `EntryType` values are added as watcher
+ *    coverage grows — the storage column is plain text, so a new kind needs no migration.
  */
 
 import type { HttpContext } from '@adonisjs/core/http'
@@ -29,9 +30,11 @@ import type { IncomingEntry } from './entry.ts'
 import type { WatcherContext } from './watchers/context.ts'
 
 /**
- * Every kind of entry Periscope can record. Watchers are added across phases 1 to 6, but the
- * catalogue is fixed now because storage schemas, dashboard routes and config keys are all
- * derived from it.
+ * Every kind of entry Periscope can record. The catalogue is open, not fixed: storage keeps the
+ * type in a plain `varchar(32)` column (see `./storage/database_schema.ts`), so kinds have been
+ * added repeatedly — `view`/`health_check`/`broadcast`, later `redis`/`session` — without a
+ * schema change. This object is the single place a new kind is declared; config keys, dashboard
+ * routes and watcher names are all derived from it.
  */
 export const EntryType = {
   REQUEST: 'request',
@@ -227,7 +230,8 @@ export type FlushedListener = (event: FlushedEvent) => void | Promise<void>
 
 /**
  * Filters accepted by {@link PeriscopeStore.list}. Every field is optional and they combine
- * with AND. Results are always ordered by `sequence` descending — newest first.
+ * with AND. Results are ordered on the composite `(sequence, uuid)` key — newest first unless
+ * `direction` asks for the oldest.
  */
 export type EntryQuery = {
   type?: EntryType
@@ -264,8 +268,28 @@ export type EntryQuery = {
   displayOnIndex?: boolean
 
   /**
-   * Opaque cursor from a previous page's `nextCursor`. Returns entries strictly older than the
-   * cursor position.
+   * Case-insensitive exact match on the `level` field of the entry content — the label the log
+   * watcher records (`info`, `error`, or a custom pino level's own label). Entries whose
+   * content carries no string `level` never match.
+   */
+  level?: string
+
+  /**
+   * Sort key, checked against the {@link EntrySortKey} allowlist rather than forwarded to the
+   * store verbatim. `sequence` — the insertion order the composite cursor is defined over — is
+   * the only key today; the field exists so further keys can land without reshaping the query.
+   */
+  sort?: EntrySortKey
+
+  /**
+   * Direction over `sort`; `desc` (newest first) when omitted. Cursors page onward in the
+   * requested direction, so a cursor taken under one direction is not valid under the other.
+   */
+  direction?: 'asc' | 'desc'
+
+  /**
+   * Opaque cursor from a previous page's `nextCursor`. Returns entries strictly beyond the
+   * cursor position in the requested direction — older under `desc`, newer under `asc`.
    */
   cursor?: string
 
@@ -274,6 +298,12 @@ export type EntryQuery = {
    */
   limit?: number
 }
+
+/**
+ * Sort keys {@link PeriscopeStore.list} accepts. An allowlist, not a passthrough: every key
+ * here must be backed by an index and a cursor encoding in every shipped driver.
+ */
+export type EntrySortKey = 'sequence'
 
 /**
  * A page of results plus the cursor for the next one. `nextCursor` is `null` when the page is
@@ -317,6 +347,88 @@ export type ExceptionGroupQuery = {
 
   cursor?: string
   limit?: number
+}
+
+/**
+ * Time-bucketed request aggregation accepted by {@link PeriscopeStore.requestStats}.
+ *
+ * `from` and `to` are required, inclusive ISO instants: the window is the caller's decision,
+ * and `from` doubles as the alignment origin so the window always starts on a bucket boundary.
+ */
+export type RequestStatsQuery = {
+  application?: string
+
+  /**
+   * Inclusive ISO-datetime start of the window; also the origin buckets are aligned to.
+   */
+  from: string
+
+  /**
+   * Inclusive ISO-datetime end of the window.
+   */
+  to: string
+
+  /**
+   * Bucket width in whole seconds. A single bucket spanning the window is legal — it is how the
+   * per-route summary table asks for "no time axis".
+   */
+  bucketSeconds: number
+
+  /**
+   * Optional second dimension. `route` groups by `METHOD routePattern`, falling back to the
+   * request URL when the router never matched a pattern.
+   */
+  groupBy?: 'route'
+}
+
+/**
+ * One aggregated cell: a time bucket, or a (bucket, group) pair when `groupBy` was requested.
+ */
+export type RequestStatsBucket = {
+  /**
+   * ISO instant of the bucket's inclusive start.
+   */
+  bucketStart: string
+
+  /**
+   * Group key when the query asked for one, `null` otherwise. Under `groupBy: 'route'`, routes
+   * beyond the driver's per-group ceiling are folded into a `null` long-tail group rather than
+   * dropped, so bucket totals still add up.
+   */
+  group: string | null
+
+  count: number
+
+  /**
+   * Requests whose recorded status was 500 or above.
+   */
+  errorCount: number
+
+  /**
+   * Nearest-rank duration percentiles in milliseconds; `null` when no entry in the cell carried
+   * a finite duration.
+   */
+  p50: number | null
+  p95: number | null
+}
+
+/**
+ * Result of {@link PeriscopeStore.requestStats}. Buckets are ordered by `bucketStart` ascending,
+ * then by group key. Empty cells are omitted — the caller knows the window and can zero-fill.
+ */
+export type RequestStatsResult = {
+  buckets: RequestStatsBucket[]
+
+  /**
+   * Request entries aggregated into `buckets`.
+   */
+  sampled: number
+
+  /**
+   * `true` when the driver hit its sampling ceiling and dropped the oldest part of the window.
+   * The newest buckets stay exact; the bucket containing the cut-off is partial.
+   */
+  truncated: boolean
 }
 
 /**
@@ -392,6 +504,14 @@ export interface PeriscopeStore {
    * entries may be omitted.
    */
   counts(application?: string): Promise<EntryTypeCounts>
+
+  /**
+   * Time-bucketed aggregates over request entries: counts, error counts and duration
+   * percentiles per bucket — and per route when asked. Powers the dashboard's stats endpoint.
+   * Drivers push the type, application and window filters into storage; how they aggregate is
+   * their own business, but the work must be bounded — `truncated` reports a ceiling was hit.
+   */
+  requestStats(query: RequestStatsQuery): Promise<RequestStatsResult>
 
   /**
    * Applications represented in the store, newest activity first.

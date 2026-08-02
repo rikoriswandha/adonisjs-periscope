@@ -196,6 +196,43 @@ export function entryContentLikePattern(text: string): string {
 }
 
 /**
+ * Only identifier-shaped JSON fields may be interpolated into SQL. Every call site passes a
+ * literal, so a violation is a programming error worth throwing on, not a value to escape.
+ */
+const JSON_FIELD_PATTERN = /^[A-Za-z][A-Za-z0-9_]*$/
+
+/**
+ * SQL expression extracting one top-level field of the JSON text in `column` as text (scalars
+ * come back in their lexical form; a missing field is NULL on every dialect).
+ *
+ * `content` is a TEXT column holding `JSON.stringify` output — see `./database_schema.ts` for
+ * why it is never a native JSON type — so extraction has to name the dialect: postgres needs an
+ * explicit `::json` cast before `->>`, MySQL returns a *quoted* JSON scalar from `json_extract`
+ * until `json_unquote` strips it, and the SQLite family unquotes on its own. The default arm is
+ * SQLite's spelling, which is also what `better-sqlite3`, `sqlite3` and `libsql` all report.
+ *
+ * `field` must be identifier-shaped; it is interpolated, never bound.
+ */
+export function jsonFieldText(dialect: string, column: string, field: string): string {
+  if (!JSON_FIELD_PATTERN.test(field)) {
+    throw new Error(`Periscope: refusing to extract non-identifier JSON field "${field}"`)
+  }
+
+  switch (dialect) {
+    case 'postgres':
+    case 'redshift':
+      return `(${column}::json ->> '${field}')`
+    case 'mysql':
+      return `json_unquote(json_extract(${column}, '$."${field}"'))`
+    case 'mssql':
+    case 'oracledb':
+      return `json_value(${column}, '$."${field}"')`
+    default:
+      return `json_extract(${column}, '$."${field}"')`
+  }
+}
+
+/**
  * Encode a sequence for storage: fixed-width, zero-padded decimal.
  */
 export function encodeSequence(sequence: bigint): string {

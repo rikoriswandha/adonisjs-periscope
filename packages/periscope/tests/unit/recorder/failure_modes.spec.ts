@@ -17,10 +17,12 @@ import { test } from '@japa/runner'
 import { defineConfig } from '../../../src/define_config.ts'
 import { IncomingEntry } from '../../../src/entry.ts'
 import { BatchScope } from '../../../src/recorder/context.ts'
-import { Recorder } from '../../../src/recorder/recorder.ts'
+import { MONITORED_TAGS_CACHE_TTL_MS, Recorder } from '../../../src/recorder/recorder.ts'
 import { setInternalLogger } from '../../../src/safeguard.ts'
+import { MemoryStore } from '../../../src/storage/memory_store.ts'
 import { SqliteLocalStore } from '../../../src/storage/sqlite_local_store.ts'
 import { EntryType } from '../../../src/types.ts'
+import type { StoredEntry } from '../../../src/types.ts'
 
 function listen(server: Server): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -54,6 +56,26 @@ function close(server: Server): Promise<void> {
   return new Promise((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()))
   })
+}
+
+class MonitoredTagsFailureStore extends MemoryStore {
+  readonly saves: StoredEntry[][] = []
+  monitoredTagsFailure: Error | null = null
+  monitoredTagsCalls = 0
+
+  override async save(entries: StoredEntry[]): Promise<void> {
+    this.saves.push(entries)
+    await super.save(entries)
+  }
+
+  override async monitoredTags(): Promise<string[]> {
+    this.monitoredTagsCalls++
+    if (this.monitoredTagsFailure !== null) {
+      throw this.monitoredTagsFailure
+    }
+
+    return super.monitoredTags()
+  }
 }
 
 test.group('Recorder | failure drills', (group) => {
@@ -95,5 +117,64 @@ test.group('Recorder | failure drills', (group) => {
     assert.lengthOf(internalLogs, 1)
     assert.equal(internalLogs[0].label, 'periscope.recorder.flush')
     assert.instanceOf(internalLogs[0].error, Error)
+  })
+
+  test('reuse last-known monitored tags when a later read fails', async ({ assert }) => {
+    const originalHrtime = process.hrtime.bigint
+    let monotonic = 1_000_000_000n
+    Object.defineProperty(process.hrtime, 'bigint', { value: () => monotonic })
+    setInternalLogger(() => {})
+
+    try {
+      const store = new MonitoredTagsFailureStore()
+      await store.monitorTag('tenant:42')
+      const recorder = new Recorder({
+        config: defineConfig({ recording: { sampleRate: 0 } }),
+        store,
+      })
+      const flushBatch = async (tag?: string) => {
+        const context = BatchScope.createContext('request')
+        BatchScope.runWith(context, () => {
+          const entry = IncomingEntry.make(EntryType.REQUEST, { tag: tag ?? null })
+          recorder.record(tag === undefined ? entry : entry.withTags(tag))
+        })
+        await recorder.flush(context)
+        return context
+      }
+
+      await flushBatch('tenant:42')
+      monotonic += BigInt(MONITORED_TAGS_CACHE_TTL_MS) * 1_000_000n + 1n
+      store.monitoredTagsFailure = new Error('tags unavailable')
+
+      const formerlyMonitored = await flushBatch('tenant:42')
+      const unmonitored = await flushBatch()
+
+      assert.equal(formerlyMonitored.retention, 'kept')
+      assert.equal(unmonitored.retention, 'dropped')
+      assert.lengthOf(store.saves, 2)
+      assert.equal(store.monitoredTagsCalls, 3)
+    } finally {
+      Object.defineProperty(process.hrtime, 'bigint', { value: originalHrtime })
+    }
+  })
+
+  test('fail open when monitored tags have never been read successfully', async ({ assert }) => {
+    const store = new MonitoredTagsFailureStore()
+    store.monitoredTagsFailure = new Error('tags unavailable')
+    setInternalLogger(() => {})
+    const recorder = new Recorder({
+      config: defineConfig({ recording: { sampleRate: 0 } }),
+      store,
+    })
+    const context = BatchScope.createContext('request')
+
+    BatchScope.runWith(context, () => {
+      recorder.record(IncomingEntry.make(EntryType.REQUEST, { path: '/first-read-failure' }))
+    })
+    await recorder.flush(context)
+
+    assert.equal(context.retention, 'kept')
+    assert.lengthOf(store.saves, 1)
+    assert.equal(store.monitoredTagsCalls, 1)
   })
 })
