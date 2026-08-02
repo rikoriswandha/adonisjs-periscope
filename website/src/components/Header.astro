@@ -7,7 +7,7 @@ import { SearchTrigger } from "./ui/search";
 import { config } from "virtual:nimbus/config";
 import { getSidebarSections } from "@cloudflare/nimbus-docs";
 
-import { withBasePath } from "@/lib/site-url";
+import { withBasePath, withoutBasePath } from "@/lib/site-url";
 interface Props {
   /** Astro collection id for the current page, forwarded from DocsLayout. */
   collection?: string;
@@ -27,7 +27,7 @@ interface Props {
 const { collection, showSidebar = true } = Astro.props;
 
 // Normalize trailing slash so isActive matches sidebar hrefs.
-const currentSlug = Astro.url.pathname.replace(/\/$/, "") || "/";
+const currentSlug = withoutBasePath(Astro.url.pathname).replace(/\/$/, "") || "/";
 const sections = await getSidebarSections(currentSlug, { collection });
 const showSections = sections.length >= 2;
 const basePath = withBasePath("/");
@@ -62,7 +62,7 @@ const basePath = withBasePath("/");
         <nav aria-label="Sections" class="hidden md:flex items-center gap-1 ml-4 pl-4 border-l border-border h-6">
           {sections.map((section) => (
             <a
-              href={section.href}
+              href={withBasePath(section.href)}
               aria-current={section.isActive ? "page" : undefined}
               class:list={[
                 "px-2 py-1 rounded-md text-[0.8125rem] font-medium no-underline transition-colors",

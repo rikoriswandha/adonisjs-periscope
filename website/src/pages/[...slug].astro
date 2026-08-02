@@ -12,7 +12,7 @@ import {
   getTOC,
 } from "@cloudflare/nimbus-docs";
 import { components } from "../components";
-import { absoluteSiteUrl, withBasePath } from "@/lib/site-url";
+import { absoluteSiteUrl, withBasePath, withoutBasePath } from "@/lib/site-url";
 
 export const prerender = true;
 export const getStaticPaths = async (
@@ -28,7 +28,7 @@ export const getStaticPaths = async (
 
 const { entry, Content, headings } = await getDocsPageProps(Astro);
 
-const currentSlug = Astro.url.pathname.replace(/\/$/, "") || "/";
+const currentSlug = withoutBasePath(Astro.url.pathname).replace(/\/$/, "") || "/";
 
 const { sidebar: sidebarOn, tableOfContents: tocOn } = await getRouteFlags(entry);
 

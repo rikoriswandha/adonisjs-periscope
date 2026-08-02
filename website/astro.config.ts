@@ -24,7 +24,7 @@ const nimbusConfig = defineNimbusConfig({
 })
 
 export default defineConfig({
-  base: '/adonisjs-periscope',
+  base: '/adonisjs-periscope/',
   output: 'static',
   // Tailwind v4 via its Vite plugin (the integration Astro recommends for
   // Tailwind v4 — replaces the PostCSS plugin, which doesn't build under

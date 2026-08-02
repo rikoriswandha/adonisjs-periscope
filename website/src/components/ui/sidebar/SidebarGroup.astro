@@ -21,6 +21,7 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/component
 import SidebarLink from "./SidebarLink.astro";
 import { Badge } from "@/components/ui/badge";
 import type { SidebarItem, SidebarBadge } from "@cloudflare/nimbus-docs/types";
+import { withBasePath } from "@/lib/site-url";
 
 interface Props extends HTMLAttributes<"div"> {
   label: string;
@@ -62,6 +63,7 @@ function hasActiveDescendant(items: SidebarItem[]): boolean {
 
 const hasActive = Boolean(indexIsCurrent) || hasActiveDescendant(items);
 const isOpen = Boolean(hasActive || collapsed === false || collapsed === undefined);
+const resolvedIndexHref = indexHref ? withBasePath(indexHref) : undefined;
 
 // Shared classes for the row that holds the label + caret in both
 // rendering modes (landing-as-link vs. label-as-trigger).
@@ -95,7 +97,7 @@ const caretClass =
       data-nb-sidebar-group-label
     >
       <a
-        href={indexHref}
+        href={resolvedIndexHref}
         aria-current={indexIsCurrent ? "page" : undefined}
         target={indexIsExternal ? "_blank" : undefined}
         rel={indexIsExternal ? "noopener" : undefined}

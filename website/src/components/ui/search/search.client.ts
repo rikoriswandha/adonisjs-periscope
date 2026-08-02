@@ -1,6 +1,7 @@
 import { mount } from '@cloudflare/nimbus-docs/client'
 import type { SearchProvider, SearchResult } from '@cloudflare/nimbus-docs/types'
 import { provider } from './providers/pagefind'
+import { withBasePath } from '@/lib/site-url'
 
 export interface SearchConfig {
   input: HTMLInputElement
@@ -56,7 +57,7 @@ export function initSearch(config: SearchConfig): SearchInstance {
 
   function resultLink(title: string, href: string, className: string): HTMLAnchorElement {
     const link = document.createElement('a')
-    link.href = href
+    link.href = withBasePath(href)
     link.className = className
     link.textContent = title
     link.addEventListener('click', () => onNavigate?.())
