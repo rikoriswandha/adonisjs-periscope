@@ -18,6 +18,14 @@ export const ENTRY_TYPES = [
   'health_check',
   'redis',
   'session',
+  'validation',
+  'rate_limit',
+  'lock',
+  'drive',
+  'ally',
+  'i18n',
+  'notification',
+  'socket',
 ] as const
 
 export type EntryType = (typeof ENTRY_TYPES)[number]

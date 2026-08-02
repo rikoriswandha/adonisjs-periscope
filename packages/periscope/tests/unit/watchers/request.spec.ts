@@ -15,7 +15,11 @@ import { Recorder } from '../../../src/recorder/recorder.ts'
 import { MemoryStore } from '../../../src/storage/memory_store.ts'
 import { EntryType } from '../../../src/types.ts'
 import type { KeepAlwaysHook } from '../../../src/types.ts'
-import { findRequestBatch, isIgnoredRequest } from '../../../src/watchers/http_batch.ts'
+import {
+  findRequestBatch,
+  isIgnoredRequest,
+  markIgnoredRequest,
+} from '../../../src/watchers/http_batch.ts'
 import { RequestWatcherMiddleware } from '../../../src/watchers/request/middleware.ts'
 import { RequestWatcher } from '../../../src/watchers/request/watcher.ts'
 import { createApp } from '../../helpers/app_factory.ts'
@@ -104,6 +108,7 @@ type WatcherOptions = {
   captureInertia?: boolean
   responseSizeLimitKb?: number
   captureSession?: boolean
+  captureStatic?: boolean
   sampleRate?: number
   keepAlways?: KeepAlwaysHook
   monitoredTags?: string[]
@@ -126,6 +131,7 @@ async function makeWatcher(options: WatcherOptions = {}) {
         captureInertia: options.captureInertia,
         responseSizeLimitKb: options.responseSizeLimitKb,
         captureSession: options.captureSession,
+        captureStatic: options.captureStatic,
         ignorePaths: options.ignorePaths,
       },
     },
@@ -659,5 +665,90 @@ test.group('RequestWatcher', () => {
     const page = await second.store.list({ type: EntryType.REQUEST })
     assert.lengthOf(page.data, 1)
     assert.equal(page.data[0].content.url, '/owned-by-second-app')
+  })
+})
+
+test.group('RequestWatcher static capture', () => {
+  test('record a bounded static summary when no request batch was attached', async ({ assert }) => {
+    const { emitter, store } = await makeWatcher({ captureStatic: true })
+    const ctx = makeHttpContext({
+      method: 'GET',
+      url: '/assets/app.css?v=42',
+      status: 304,
+      responseHeaders: { 'content-type': 'text/css; charset=utf-8' },
+    })
+
+    await emitter.emit('http:request_completed', { ctx, duration: [0, 12_500_000] })
+    await settleScheduledCompletion()
+
+    const page = await store.list({ type: EntryType.REQUEST })
+    assert.lengthOf(page.data, 1)
+    assert.deepInclude(page.data[0].content, {
+      method: 'GET',
+      url: '/assets/app.css?v=42',
+      status: 304,
+      durationMs: 12.5,
+      contentType: 'text/css; charset=utf-8',
+      static: true,
+    })
+    assert.include(page.data[0].tags, 'static')
+    assert.include(page.data[0].tags, 'status:304')
+    assert.include(page.data[0].tags, 'method:GET')
+    assert.include(page.data[0].tags, 'kind:asset')
+    assert.notProperty(page.data[0].content, 'payload')
+    assert.notProperty(page.data[0].content, 'response')
+    assert.notProperty(page.data[0].content, 'session')
+    assert.notProperty(page.data[0].content, 'user')
+    assert.notProperty(page.data[0].content, 'memoryDeltaBytes')
+  })
+
+  test('preserve the no-op when static capture is disabled', async ({ assert }) => {
+    const { emitter, store } = await makeWatcher()
+    const ctx = makeHttpContext({ url: '/assets/app.css' })
+
+    await emitter.emit('http:request_completed', { ctx, duration: [0, 1_000_000] })
+    await settleScheduledCompletion()
+
+    const page = await store.list({ type: EntryType.REQUEST })
+    assert.isEmpty(page.data)
+  })
+
+  test('skip explicitly ignored, dashboard, and configured ignored paths', async ({ assert }) => {
+    const { emitter, store } = await makeWatcher({
+      captureStatic: true,
+      dashboardPath: '/periscope',
+      ignorePaths: ['/assets/private/*'],
+    })
+    const explicitlyIgnored = makeHttpContext({ url: '/ignored-by-marker' })
+    markIgnoredRequest(explicitlyIgnored)
+
+    for (const ctx of [
+      explicitlyIgnored,
+      makeHttpContext({ url: '/periscope/assets/app.js' }),
+      makeHttpContext({ url: '/assets/private/app.js?version=1' }),
+    ]) {
+      await emitter.emit('http:request_completed', { ctx, duration: [0, 1_000_000] })
+    }
+    await settleScheduledCompletion()
+
+    const page = await store.list({ type: EntryType.REQUEST })
+    assert.isEmpty(page.data)
+  })
+
+  test('mark an unbatched routed summary without claiming it was static', async ({ assert }) => {
+    const { emitter, store } = await makeWatcher({ captureStatic: true })
+    const ctx = makeHttpContext({
+      url: '/served-before-periscope',
+      route: { pattern: '/served-before-periscope' },
+    })
+
+    await emitter.emit('http:request_completed', { ctx, duration: [0, 1_000_000] })
+    await settleScheduledCompletion()
+
+    const page = await store.list({ type: EntryType.REQUEST })
+    assert.lengthOf(page.data, 1)
+    assert.isTrue(page.data[0].content.static)
+    assert.include(page.data[0].tags, 'unbatched')
+    assert.notInclude(page.data[0].tags, 'static')
   })
 })

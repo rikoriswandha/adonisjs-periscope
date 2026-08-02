@@ -38,6 +38,7 @@ const PRIMARY_ENTRY_TYPE: Record<BatchKind, EntryType | undefined> = {
   request: EntryType.REQUEST,
   command: EntryType.COMMAND,
   queue: EntryType.JOB,
+  schedule: EntryType.SCHEDULE,
   test: undefined,
   ambient: undefined,
 }

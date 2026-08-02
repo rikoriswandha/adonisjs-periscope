@@ -47,6 +47,9 @@ import type {
   PeriscopeStoreFactory,
   PeriscopeWatcherFactory,
   QueueWatcherAdapter,
+  SchedulerWatcherAdapter,
+  NotificationWatcherAdapter,
+  SocketWatcherAdapter,
   ResolvedPeriscopeConfig,
   ResolvedWatchersConfig,
   StorageDriverName,
@@ -143,6 +146,7 @@ const DEFAULT_REQUEST_SLOW_MS = 1_000
 const DEFAULT_RESPONSE_SIZE_LIMIT_KB = 64
 const DEFAULT_QUERY_SLOW_MS = 100
 const DEFAULT_HTTP_CLIENT_SLOW_MS = 1_000
+const DEFAULT_LOCK_CONTENTION_MS = 50
 
 /**
  * Recorded log levels start at `warn`. The destination runs after pino's own filter, so the
@@ -451,17 +455,22 @@ function readFunction<T>(path: string, value: unknown, issues: string[]): T | un
   return value as T
 }
 
-function readQueueAdapters(
+/**
+ * Validates a `watchers.*.adapters`-style array: each element must expose a non-empty `name`
+ * and a `register` function. The array is copied, never aliased, like every other config array.
+ */
+function readAdapters<T extends { name: string; register: unknown }>(
   path: string,
   value: unknown,
-  issues: string[]
-): QueueWatcherAdapter[] | undefined {
+  issues: string[],
+  label: string
+): T[] | undefined {
   if (value === undefined) {
     return undefined
   }
 
   if (!Array.isArray(value)) {
-    issues.push(`${path}: must be an array of queue watcher adapters; got ${describe(value)}`)
+    issues.push(`${path}: must be an array of ${label}; got ${describe(value)}`)
     return undefined
   }
 
@@ -470,16 +479,16 @@ function readQueueAdapters(
     if (
       adapter === null ||
       typeof adapter !== 'object' ||
-      typeof (adapter as QueueWatcherAdapter).name !== 'string' ||
-      (adapter as QueueWatcherAdapter).name.trim() === '' ||
-      typeof (adapter as QueueWatcherAdapter).register !== 'function'
+      typeof (adapter as T).name !== 'string' ||
+      (adapter as T).name.trim() === '' ||
+      typeof (adapter as T).register !== 'function'
     ) {
       issues.push(`${path}[${index}]: must expose a non-empty name and register(observer) function`)
       valid = false
     }
   }
 
-  return valid ? (value as QueueWatcherAdapter[]).slice() : undefined
+  return valid ? (value as T[]).slice() : undefined
 }
 
 /**
@@ -625,6 +634,14 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
       'job_schedule',
       'redis',
       'session',
+      'vine',
+      'limiter',
+      'lock',
+      'drive',
+      'ally',
+      'i18n',
+      'notification',
+      'socket',
       'custom',
     ],
     issues
@@ -640,6 +657,7 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
       'captureInertia',
       'responseSizeLimitKb',
       'captureSession',
+      'captureStatic',
       'ignorePaths',
     ],
     issues,
@@ -698,7 +716,7 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
   const jobSchedule = readBlock(
     watchers,
     'job_schedule',
-    ['enabled', 'adapters', 'capturePayload'],
+    ['enabled', 'adapters', 'schedulers', 'capturePayload'],
     issues,
     'watchers.job_schedule'
   )
@@ -715,6 +733,26 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
     ['enabled', 'captureValues'],
     issues,
     'watchers.session'
+  )
+  const vine = readBlock(watchers, 'vine', ['enabled'], issues, 'watchers.vine')
+  const limiter = readBlock(watchers, 'limiter', ['enabled'], issues, 'watchers.limiter')
+  const lock = readBlock(watchers, 'lock', ['enabled', 'contentionMs'], issues, 'watchers.lock')
+  const drive = readBlock(watchers, 'drive', ['enabled'], issues, 'watchers.drive')
+  const ally = readBlock(watchers, 'ally', ['enabled'], issues, 'watchers.ally')
+  const i18n = readBlock(watchers, 'i18n', ['enabled'], issues, 'watchers.i18n')
+  const notification = readBlock(
+    watchers,
+    'notification',
+    ['enabled', 'adapters', 'capturePayload'],
+    issues,
+    'watchers.notification'
+  )
+  const socket = readBlock(
+    watchers,
+    'socket',
+    ['enabled', 'adapters', 'capturePayload'],
+    issues,
+    'watchers.socket'
   )
   const custom = readFunctionArray<PeriscopeWatcherFactory>(
     'watchers.custom',
@@ -741,6 +779,8 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
         ) ?? DEFAULT_RESPONSE_SIZE_LIMIT_KB,
       captureSession:
         readBoolean('watchers.request.captureSession', request.captureSession, issues) ?? true,
+      captureStatic:
+        readBoolean('watchers.request.captureStatic', request.captureStatic, issues) ?? false,
       ignorePaths:
         readStringArray('watchers.request.ignorePaths', request.ignorePaths, issues) ?? [],
     },
@@ -824,7 +864,19 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
     job_schedule: {
       enabled: readBoolean('watchers.job_schedule.enabled', jobSchedule.enabled, issues) ?? false,
       adapters:
-        readQueueAdapters('watchers.job_schedule.adapters', jobSchedule.adapters, issues) ?? [],
+        readAdapters<QueueWatcherAdapter>(
+          'watchers.job_schedule.adapters',
+          jobSchedule.adapters,
+          issues,
+          'queue watcher adapters'
+        ) ?? [],
+      schedulers:
+        readAdapters<SchedulerWatcherAdapter>(
+          'watchers.job_schedule.schedulers',
+          jobSchedule.schedulers,
+          issues,
+          'scheduler watcher adapters'
+        ) ?? [],
       capturePayload:
         readBoolean('watchers.job_schedule.capturePayload', jobSchedule.capturePayload, issues) ??
         false,
@@ -838,6 +890,52 @@ function resolveWatchers(input: Record<string, unknown>, issues: string[]): Reso
       enabled: readBoolean('watchers.session.enabled', session.enabled, issues) ?? false,
       captureValues:
         readBoolean('watchers.session.captureValues', session.captureValues, issues) ?? false,
+    },
+    vine: {
+      enabled: readBoolean('watchers.vine.enabled', vine.enabled, issues) ?? true,
+    },
+    limiter: {
+      enabled: readBoolean('watchers.limiter.enabled', limiter.enabled, issues) ?? false,
+    },
+    lock: {
+      enabled: readBoolean('watchers.lock.enabled', lock.enabled, issues) ?? false,
+      contentionMs:
+        readInteger('watchers.lock.contentionMs', lock.contentionMs, 0, issues) ??
+        DEFAULT_LOCK_CONTENTION_MS,
+    },
+    drive: {
+      enabled: readBoolean('watchers.drive.enabled', drive.enabled, issues) ?? false,
+    },
+    ally: {
+      enabled: readBoolean('watchers.ally.enabled', ally.enabled, issues) ?? false,
+    },
+    i18n: {
+      enabled: readBoolean('watchers.i18n.enabled', i18n.enabled, issues) ?? true,
+    },
+    notification: {
+      enabled: readBoolean('watchers.notification.enabled', notification.enabled, issues) ?? false,
+      adapters:
+        readAdapters<NotificationWatcherAdapter>(
+          'watchers.notification.adapters',
+          notification.adapters,
+          issues,
+          'notification watcher adapters'
+        ) ?? [],
+      capturePayload:
+        readBoolean('watchers.notification.capturePayload', notification.capturePayload, issues) ??
+        false,
+    },
+    socket: {
+      enabled: readBoolean('watchers.socket.enabled', socket.enabled, issues) ?? false,
+      adapters:
+        readAdapters<SocketWatcherAdapter>(
+          'watchers.socket.adapters',
+          socket.adapters,
+          issues,
+          'socket watcher adapters'
+        ) ?? [],
+      capturePayload:
+        readBoolean('watchers.socket.capturePayload', socket.capturePayload, issues) ?? false,
     },
     custom: custom ?? [],
   }

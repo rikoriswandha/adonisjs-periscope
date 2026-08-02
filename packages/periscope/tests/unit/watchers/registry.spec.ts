@@ -57,9 +57,28 @@ const WATCHER_EVENTS: Record<WatcherName, string> = {
   view: 'test:view',
   http_client: 'test:http_client',
   health_check: 'test:health_check',
+  vine: 'test:vine',
+  limiter: 'test:limiter',
+  lock: 'test:lock',
+  drive: 'test:drive',
+  ally: 'test:ally',
+  i18n: 'test:i18n',
+  notification: 'test:notification',
+  socket: 'test:socket',
 }
 
-const OPT_IN_WATCHERS: readonly WatcherName[] = ['transmit', 'job_schedule', 'redis', 'session']
+const OPT_IN_WATCHERS: readonly WatcherName[] = [
+  'transmit',
+  'job_schedule',
+  'redis',
+  'session',
+  'limiter',
+  'lock',
+  'drive',
+  'ally',
+  'notification',
+  'socket',
+]
 const DEFAULT_ENABLED_WATCHER_NAMES = WATCHER_NAMES.filter(
   (name) => !OPT_IN_WATCHERS.includes(name)
 )
@@ -138,6 +157,12 @@ function makeStructuralContext(enabled = true): TestContext {
       transmit: { enabled: true },
       redis: { enabled: true },
       session: { enabled: true },
+      limiter: { enabled: true },
+      lock: { enabled: true },
+      drive: { enabled: true },
+      ally: { enabled: true },
+      notification: { enabled: true },
+      socket: { enabled: true },
     },
   })
   const store = new MemoryStore({ maxEntries: 100 })
@@ -350,7 +375,7 @@ test.group('WatcherRegistry', () => {
     await registry.register()
     const elapsedMs = performance.now() - startedAt
 
-    assert.lengthOf(WATCHER_NAMES, 18)
+    assert.lengthOf(WATCHER_NAMES, 26)
     assert.deepEqual(constructed, WATCHER_NAMES)
     assert.deepEqual(registered, WATCHER_NAMES)
     assert.deepEqual(
@@ -427,6 +452,8 @@ test.group('WatcherRegistry', () => {
           view: { enabled: false },
           health_check: { enabled: false },
           http_client: { enabled: false },
+          vine: { enabled: false },
+          i18n: { enabled: false },
         },
       },
     })
@@ -507,6 +534,12 @@ test.group('WatcherRegistry', () => {
           transmit: { enabled: true },
           redis: { enabled: true },
           session: { enabled: true },
+          limiter: { enabled: true },
+          lock: { enabled: true },
+          drive: { enabled: true },
+          ally: { enabled: true },
+          notification: { enabled: true },
+          socket: { enabled: true },
         },
       },
     })

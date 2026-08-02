@@ -17,6 +17,9 @@ import type {
   QueueWatcherAdapter,
   QueueWatcherObserver,
   QueueWatcherRegistrationOptions,
+  SchedulerWatcherAdapter,
+  SchedulerWatcherObserver,
+  SchedulerWatcherRegistrationOptions,
 } from '../../../src/types.ts'
 import { JobScheduleWatcher } from '../../../src/watchers/job_schedule/watcher.ts'
 import { createApp } from '../../helpers/app_factory.ts'
@@ -36,6 +39,21 @@ class TestQueueAdapter implements QueueWatcherAdapter {
   }
 }
 
+class TestSchedulerAdapter implements SchedulerWatcherAdapter {
+  readonly name = 'scheduler'
+  observer: SchedulerWatcherObserver | null = null
+  options: SchedulerWatcherRegistrationOptions | undefined
+  cleaned = false
+
+  register(observer: SchedulerWatcherObserver, options?: SchedulerWatcherRegistrationOptions) {
+    this.observer = observer
+    this.options = options
+    return () => {
+      this.cleaned = true
+    }
+  }
+}
+
 async function settle() {
   await new Promise<void>((resolve) => setImmediate(resolve))
 }
@@ -46,6 +64,28 @@ async function makeWatcher(capturePayload = false, store = new MemoryStore({ max
   const config = defineConfig({
     storage: { driver: 'memory' },
     watchers: { job_schedule: { enabled: true, adapters: [adapter], capturePayload } },
+  })
+  const recorder = new Recorder({ config, store })
+  const watcher = new JobScheduleWatcher({ app, emitter, config, recorder, dev: true })
+  await watcher.register()
+  getActiveTest()?.cleanup(async () => {
+    await watcher.cleanup()
+    await recorder.shutdown()
+  })
+  return { adapter, recorder, store, watcher }
+}
+
+async function makeSchedulerWatcher(
+  capturePayload = false,
+  store = new MemoryStore({ maxEntries: 100 })
+) {
+  const { app, emitter } = await createApp()
+  const adapter = new TestSchedulerAdapter()
+  const config = defineConfig({
+    storage: { driver: 'memory' },
+    watchers: {
+      job_schedule: { enabled: true, schedulers: [adapter], capturePayload },
+    },
   })
   const recorder = new Recorder({ config, store })
   const watcher = new JobScheduleWatcher({ app, emitter, config, recorder, dev: true })
@@ -80,7 +120,7 @@ test.group('JobScheduleWatcher', () => {
     assert.lengthOf(page.data, 1)
     assert.equal(page.data[0].batchId, producerContext.batchId)
     assert.include(page.data[0].tags, `queue-correlation:${correlation.correlationId}`)
-    assert.deepEqual(watcher.stats, { jobs: 0, schedules: 1 })
+    assert.deepEqual(watcher.stats, { jobs: 0, schedules: 1, tasks: 0 })
   })
 
   test('wraps handler recording in the correlation batch', async ({ assert }) => {
@@ -179,7 +219,7 @@ test.group('JobScheduleWatcher', () => {
     })
     assert.deepEqual(adapter.options, { capturePayload: true })
     assert.equal(page.data[0].content.durationMs, 17.5)
-    assert.deepEqual(watcher.stats, { jobs: 1, schedules: 0 })
+    assert.deepEqual(watcher.stats, { jobs: 1, schedules: 0, tasks: 0 })
   })
 
   test('uses terminal metadata when the start lookup had no details', async ({ assert }) => {
@@ -295,5 +335,124 @@ test.group('JobScheduleWatcher', () => {
     await cleaning
     await recorder.shutdown()
     assert.isTrue(cleaned)
+  })
+})
+
+test.group('JobScheduleWatcher scheduler adapters', () => {
+  test('scopes wrapped task work with its completed schedule entry', async ({ assert }) => {
+    const { adapter, recorder, store, watcher } = await makeSchedulerWatcher(true)
+    const event = {
+      adapter: 'scheduler',
+      task: 'reports:daily',
+      schedule: '0 0 * * *',
+      runId: 'run-42',
+    }
+
+    adapter.observer!.taskStarted(event)
+    await adapter.observer!.wrapTask!(event, async () => {
+      recorder.record(IncomingEntry.make(EntryType.LOG, { message: 'inside scheduled task' }))
+    })
+    adapter.observer!.taskCompleted({
+      ...event,
+      durationMs: 12.5,
+      result: { generated: 4 },
+    })
+    await settle()
+
+    const schedules = await store.list({ type: EntryType.SCHEDULE })
+    const logs = await store.list({ type: EntryType.LOG })
+    assert.lengthOf(schedules.data, 1)
+    assert.lengthOf(logs.data, 1)
+    assert.equal(schedules.data[0].batchId, logs.data[0].batchId)
+    assert.deepEqual(schedules.data[0].content, {
+      adapter: 'scheduler',
+      task: 'reports:daily',
+      schedule: '0 0 * * *',
+      runId: 'run-42',
+      status: 'completed',
+      durationMs: 12.5,
+      result: { generated: 4 },
+    })
+    assert.includeMembers(schedules.data[0].tags, [
+      'task:reports:daily',
+      'adapter:scheduler',
+      'completed',
+      'schedule:0 0 * * *',
+    ])
+    assert.deepEqual(adapter.options, { capturePayload: true })
+    assert.deepEqual(watcher.stats, { jobs: 0, schedules: 0, tasks: 1 })
+  })
+
+  test('records serialized failures', async ({ assert }) => {
+    const { adapter, store } = await makeSchedulerWatcher()
+
+    adapter.observer!.taskStarted({
+      adapter: 'scheduler',
+      task: 'reports:weekly',
+      runId: 'failed-run',
+    })
+    adapter.observer!.taskFailed({
+      adapter: 'scheduler',
+      task: 'reports:weekly',
+      runId: 'failed-run',
+      error: new Error('schedule exploded'),
+    })
+    await settle()
+
+    const page = await store.list({ type: EntryType.SCHEDULE })
+    assert.lengthOf(page.data, 1)
+    assert.deepInclude(page.data[0].content, {
+      adapter: 'scheduler',
+      task: 'reports:weekly',
+      runId: 'failed-run',
+      status: 'failed',
+    })
+    assert.deepInclude(page.data[0].content.error, {
+      name: 'Error',
+      message: 'schedule exploded',
+    })
+    assert.isNumber(page.data[0].content.durationMs)
+  })
+
+  test('omits completed results when payload capture is disabled', async ({ assert }) => {
+    const { adapter, store } = await makeSchedulerWatcher(false)
+
+    adapter.observer!.taskStarted({ adapter: 'scheduler', task: 'cleanup' })
+    adapter.observer!.taskCompleted({
+      adapter: 'scheduler',
+      task: 'cleanup',
+      result: { removed: 10 },
+    })
+    await settle()
+
+    const page = await store.list({ type: EntryType.SCHEDULE })
+    assert.lengthOf(page.data, 1)
+    assert.notProperty(page.data[0].content, 'result')
+  })
+
+  test('records completion without a matching start and runs adapter cleanup', async ({
+    assert,
+  }) => {
+    const { adapter, store, watcher } = await makeSchedulerWatcher(true)
+
+    adapter.observer!.taskCompleted({
+      adapter: 'scheduler',
+      task: 'orphaned',
+      schedule: 'every minute',
+      result: 'done',
+    })
+    await settle()
+
+    const page = await store.list({ type: EntryType.SCHEDULE })
+    assert.lengthOf(page.data, 1)
+    assert.deepInclude(page.data[0].content, {
+      task: 'orphaned',
+      status: 'completed',
+      result: 'done',
+    })
+    assert.notProperty(page.data[0].content, 'durationMs')
+
+    await watcher.cleanup()
+    assert.isTrue(adapter.cleaned)
   })
 })

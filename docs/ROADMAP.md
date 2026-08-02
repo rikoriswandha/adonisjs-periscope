@@ -79,6 +79,20 @@ real coss Dialog and table skeletons/error banners carry `status`/`alert` roles.
 
 ## 5. New watchers and integrations
 
+**Status: shipped.** Eight watchers/seams landed. VineJS validation failures are recorded by
+wrapping the default error-reporter factory (`validation` entries; one reporter boundary covers
+throwing `validate` and non-throwing `tryValidate`). `SchedulerWatcherAdapter` — parallel to
+`QueueWatcherAdapter`, registered via `watchers.job_schedule.schedulers` — gives real cron/task
+executions their own `schedule`-kind batches with `wrapTask` execution scoping. `@adonisjs/limiter`
+rejections and `@adonisjs/lock` contention/timeouts are recorded through container-binding patches
+(`rate_limit` / `lock` entries, `watchers.lock.contentionMs` threshold). `@adonisjs/drive` file
+operations, `ally` OAuth steps (token-free identity summaries) and `i18n` missing translations get
+semantic entries. Notification and WebSocket lifecycles ship as adapter seams
+(`NotificationWatcherAdapter`, `SocketWatcherAdapter`) rather than couplings. Requests terminated
+before routing (for example by `@adonisjs/static`) are summarized behind
+`watchers.request.captureStatic`, default off. All eight entry types render in the dashboard; the
+config stub and README document every new block.
+
 | Target                                                          | Signal                                                                                                                                                                              | Rating  |
 | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | Vine validation failures                                        | Error-reporter wrapper; structured fields/rules/messages, including non-throwing `tryValidate`. The most common request-debugging signal not captured today.                        | H / M   |
@@ -106,6 +120,6 @@ real coss Dialog and table skeletons/error banners carry `status`/`alert` roles.
 2. ~~Bucketed stats API (5) + per-route table + level filter (6)~~ — shipped.
 3. Testing export (21) + doctor command (22) — converts evaluators into adopters.
 4. ~~SSE efficiency (18) + per-type retention (11) + tag scoping (12)~~ — shipped.
-5. Vine + scheduler watchers.
+5. ~~Vine + scheduler watchers~~ — shipped, alongside the rest of §5 (limiter/lock, drive/ally/i18n, notification/socket seams, static-request capture).
 6. ~~Waterfall (14) + exception triage (15)~~ — shipped, alongside compare (16), live tail (17) and pins/notes (19).
 7. ~~Multi-process story (7-10)~~ — shipped as one wave: fanout seam, lease, continuation batches, queue correlation.

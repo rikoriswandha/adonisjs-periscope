@@ -20,3 +20,14 @@ export type ScheduleEntryContent = Record<string, unknown> & {
   delayMs?: number
   payload?: unknown
 }
+
+export type ScheduledTaskEntryContent = Record<string, unknown> & {
+  adapter: string
+  task: string
+  schedule?: string
+  runId?: string
+  status: 'completed' | 'failed'
+  durationMs?: number
+  result?: unknown
+  error?: unknown
+}

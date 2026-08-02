@@ -56,6 +56,15 @@ export type RequestEntryContent = Record<string, unknown> & {
   payload: unknown
   status: number | null
   durationMs: number
+  /**
+   * Marks the bounded summary produced when an upstream server middleware completes the request
+   * before Periscope's own middleware can open a request batch.
+   */
+  static?: boolean
+  /**
+   * Final response content type retained by an unbatched summary without capturing the body.
+   */
+  contentType?: string
   user?: RequestAuthSummary
   memoryDeltaBytes: number
   ip: string

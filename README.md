@@ -2,9 +2,11 @@
 
 Periscope is a Laravel Telescope-style runtime recorder and local dashboard for AdonisJS v7. It
 correlates the work an application actually performs—HTTP requests, database queries, exceptions,
-logs, events, commands, mail, cache operations, model changes, authorization checks, dumps,
-outbound HTTP calls, Edge view renders, health check reports, queue jobs, Redis commands,
-sessions, and Transmit broadcasts—without sending telemetry to an external service.
+logs, events, commands, mail, cache operations, model changes, authorization checks, validation
+failures, rate limits, distributed locks, Drive operations, Ally OAuth flows, translations,
+notifications, socket traffic, dumps, outbound HTTP calls, Edge view renders, health check reports,
+queue jobs and scheduled tasks, Redis commands, sessions, and Transmit broadcasts—without sending
+telemetry to an external service.
 
 Periscope is a development and staging diagnostic tool, not an APM or a production tracing backend.
 Recorded values remain in the configured local store.
@@ -236,7 +238,7 @@ export default defineConfig({
   },
 
   watchers: {
-    request: { captureResponse: false, captureSession: false },
+    request: { captureResponse: false, captureSession: false, captureStatic: false },
     query: { hideBindings: true },
     command: { enabled: false },
     mail: { enabled: false },
@@ -271,13 +273,17 @@ pattern-scanned; deny-listed keys are still replaced wholesale.
 
 ## Watcher reference
 
-Core watchers are enabled by default, including `view` (Edge) and `health_check`, which silently
-no-op when their host module is absent. The infrastructure integrations `job_schedule`, `redis`,
-`session`, and `transmit` are off by default and subscribe to nothing until explicitly enabled.
+Core watchers are enabled by default, including `view` (Edge), `health_check`, `vine`, and `i18n`,
+which silently no-op when their host module is absent. The infrastructure integrations
+`job_schedule`, `redis`, `session`, `transmit`, `limiter`, `lock`, `drive`, `ally`, `notification`,
+and `socket` are off by default and subscribe to nothing until explicitly enabled.
 
 | Watcher        | Source                                                       | Recorded content                                                                                                                                              |
 | -------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `request`      | Request middleware and `http:request_completed`              | Method, URL, query, route, redacted headers and payload, status, duration, memory delta, client identity summary, optional response/session, Inertia component/prop keys, disconnect state; exact `slow`, `status:<code>`, and `status:Nxx` tags |
+| `vine`         | VineJS reporter patch                                        | Validation error count, affected field names, and field/rule/message details; submitted values are never recorded                                             |
+| `limiter`      | `@adonisjs/limiter` service methods                          | Key, action, limit, remaining quota, retry delay, and store                                                                                                    |
+| `lock`         | `@adonisjs/lock` service methods                             | Lock key, acquired/denied/timeout outcome, wait duration, optional TTL, and contention signalling controlled by `contentionMs`                                |
 | `query`        | Lucid `db:query`                                             | SQL, serialized or hidden bindings, connection, model/method, duration, transaction/DDL flags, compact error                                                  |
 | `exception`    | Exception handler mixin and process observers                | Name, message, code/status, stack, parsed frames, application code frame, request summary, serialized context                                                 |
 | `log`          | AdonisJS/Pino destination                                    | Level, message, context, and source timestamp; self-generated Periscope logs are excluded                                                                     |
@@ -288,6 +294,9 @@ no-op when their host module is absent. The infrastructure integrations `job_sch
 | `model`        | Lucid model lifecycle                                        | Create, update, or delete; model, primary key, optional attributes and dirty diff                                                                             |
 | `gate`         | Bouncer authorization events                                 | Ability, decision, user ID, arguments, optional user/status/message                                                                                           |
 | `dump`         | `dump()` helper                                              | Safely serialized values and the application call site                                                                                                        |
+| `drive`        | `@adonisjs/drive` service methods                            | Operation, key, disk, duration, destination/size when available, and compact errors                                                                           |
+| `ally`         | `@adonisjs/ally` service methods                             | Provider, OAuth operation, duration, compact error, and safe user summary                                                                                      |
+| `i18n`         | `@adonisjs/i18n` translation methods                         | Locale, translation identifier, and fallback state; interpolation parameters are never recorded                                                               |
 | `http_client`  | Node diagnostics channel for Undici                          | Method, URL, status, duration, redacted request/response headers, completion/error; exact `slow` (>= `slowMs`) and `failed` tags                                                              |
 | `view`         | Edge `onRender` hook                                         | Template name, render duration, and top-level data key names only—values are never read                                                                                                      |
 | `health_check` | AdonisJS core `HealthChecks.run()`                           | Overall status plus per-check name, status, duration, and bounded message; `failed` tag on unhealthy reports                                                                                 |
@@ -295,9 +304,15 @@ no-op when their host module is absent. The infrastructure integrations `job_sch
 | `redis`        | `@adonisjs/redis` diagnostics channel                        | Command, argument count, duration, error, and opt-in arguments; `AUTH` arguments are always replaced                                                          |
 | `session`      | `@adonisjs/session` lifecycle events                         | Initiated, committed, or migrated state with hashed session IDs and opt-in redacted values                                                                                                    |
 | `transmit`     | `@adonisjs/transmit` broadcast hook                          | Channel, event metadata, and opt-in bounded payload summary                                                                                                                                   |
+| `notification` | Pluggable notification adapters                              | Adapter, channel, notification, scalar recipient descriptor, sent/failed outcome, duration, and opt-in payload                                                |
+| `socket`       | Pluggable socket adapters                                    | Connection lifecycle and messages, transport/channel, scalar user identity, direction, size/duration, reason, and opt-in payload                              |
 
 Watcher-specific options in the generated config control sensitive or expensive captures. All
 application-owned values pass through bounded serialization and recursive redaction before storage.
+
+Request recording excludes static-asset traffic by default. Set `watchers.request.captureStatic`
+to `true` only when asset requests are relevant to an investigation; `ignorePaths` still takes
+precedence.
 
 Queue integrations use the exported `QueueWatcherAdapter` contract. Two reference adapters ship
 with the package: `BullQueueAdapter` observes BullMQ queue events (enriching entries with job
@@ -324,6 +339,19 @@ export default defineConfig({
   },
 })
 ```
+
+Scheduled-task integrations use the exported `SchedulerWatcherAdapter` contract and are registered
+in `watchers.job_schedule.schedulers`; queue adapters remain in `adapters`. A scheduler adapter
+reports `taskStarted`, `taskCompleted`, and `taskFailed` to its observer and may use `wrapTask` to
+place queries, logs, and other work inside a `schedule` batch.
+
+Notification and socket integrations follow the same seam: implement `NotificationWatcherAdapter`
+or `SocketWatcherAdapter`, then add the instance to `watchers.notification.adapters` or
+`watchers.socket.adapters` with that watcher enabled. Their observer contracts expose
+`sent`/`failed` and `connected`/`disconnected`/`message`, respectively. Each adapter's `register`
+method receives the observer plus `{ capturePayload }` and may return an idempotent cleanup
+function. Keep application payloads out of emitted events unless `capturePayload` is true; Periscope
+still applies bounded serialization and redaction before recording them.
 
 ## Hooks and extensibility
 

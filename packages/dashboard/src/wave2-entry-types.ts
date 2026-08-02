@@ -1,18 +1,26 @@
 import {
+  Bell,
   Box,
   Braces,
+  ClipboardCheck,
   CalendarClock,
   CircleGauge,
   DatabaseZap,
+  Gauge,
   Globe2,
   HeartPulse,
+  Handshake,
+  HardDrive,
   KeyRound,
+  Languages,
+  LockKeyhole,
   Mail,
   PanelsTopLeft,
   Radio,
   RadioTower,
   ScrollText,
   ShieldCheck,
+  PlugZap,
   SquareTerminal,
 } from 'lucide-react'
 
@@ -172,6 +180,126 @@ const sessionsEntryType = registerEntryType({
     import('@/pages/sessions-page').then((module) => module.sessionsEntryTypeImplementation),
 })
 
+const validationsEntryType = registerEntryType({
+  type: 'validation',
+  path: 'validations',
+  label: 'Validations',
+  group: 'Application',
+  icon: ClipboardCheck,
+  load: () =>
+    import('@/pages/integration-entry-page').then((module) =>
+      module.createIntegrationEntryTypeImplementation({
+        heading: 'Validations',
+        description: 'Inspect failed validation attempts and their field-level errors.',
+      })
+    ),
+})
+
+const rateLimitsEntryType = registerEntryType({
+  type: 'rate_limit',
+  path: 'rate-limits',
+  label: 'Rate limits',
+  group: 'Infrastructure',
+  icon: Gauge,
+  load: () =>
+    import('@/pages/integration-entry-page').then((module) =>
+      module.createIntegrationEntryTypeImplementation({
+        heading: 'Rate limits',
+        description: 'Track limiter decisions, consumption, and rejected attempts.',
+      })
+    ),
+})
+
+const locksEntryType = registerEntryType({
+  type: 'lock',
+  path: 'locks',
+  label: 'Locks',
+  group: 'Infrastructure',
+  icon: LockKeyhole,
+  load: () =>
+    import('@/pages/integration-entry-page').then((module) =>
+      module.createIntegrationEntryTypeImplementation({
+        heading: 'Locks',
+        description: 'Follow distributed lock acquisition, release, and contention.',
+      })
+    ),
+})
+
+const driveEntryType = registerEntryType({
+  type: 'drive',
+  path: 'drive',
+  label: 'Drive',
+  group: 'Infrastructure',
+  icon: HardDrive,
+  load: () =>
+    import('@/pages/integration-entry-page').then((module) =>
+      module.createIntegrationEntryTypeImplementation({
+        heading: 'Drive',
+        description: 'Inspect filesystem operations across configured Drive disks.',
+      })
+    ),
+})
+
+const allyEntryType = registerEntryType({
+  type: 'ally',
+  path: 'ally',
+  label: 'OAuth (Ally)',
+  group: 'Infrastructure',
+  icon: Handshake,
+  load: () =>
+    import('@/pages/integration-entry-page').then((module) =>
+      module.createIntegrationEntryTypeImplementation({
+        heading: 'OAuth (Ally)',
+        description: 'Follow OAuth redirects, callbacks, and provider outcomes.',
+      })
+    ),
+})
+
+const i18nEntryType = registerEntryType({
+  type: 'i18n',
+  path: 'i18n',
+  label: 'I18n',
+  group: 'Infrastructure',
+  icon: Languages,
+  load: () =>
+    import('@/pages/integration-entry-page').then((module) =>
+      module.createIntegrationEntryTypeImplementation({
+        heading: 'I18n',
+        description: 'Inspect translation lookups and missing translation keys.',
+      })
+    ),
+})
+
+const notificationsEntryType = registerEntryType({
+  type: 'notification',
+  path: 'notifications',
+  label: 'Notifications',
+  group: 'Infrastructure',
+  icon: Bell,
+  load: () =>
+    import('@/pages/integration-entry-page').then((module) =>
+      module.createIntegrationEntryTypeImplementation({
+        heading: 'Notifications',
+        description: 'Track notification delivery outcomes through configured adapters.',
+      })
+    ),
+})
+
+const socketsEntryType = registerEntryType({
+  type: 'socket',
+  path: 'sockets',
+  label: 'Sockets',
+  group: 'Infrastructure',
+  icon: PlugZap,
+  load: () =>
+    import('@/pages/integration-entry-page').then((module) =>
+      module.createIntegrationEntryTypeImplementation({
+        heading: 'Sockets',
+        description: 'Inspect socket connections, disconnections, and messages.',
+      })
+    ),
+})
+
 export const wave2EntryTypes: readonly EntryTypeRegistration[] = Object.freeze([
   eventsEntryType,
   commandsEntryType,
@@ -189,6 +317,14 @@ export const wave2EntryTypes: readonly EntryTypeRegistration[] = Object.freeze([
   healthChecksEntryType,
   redisEntryType,
   sessionsEntryType,
+  validationsEntryType,
+  rateLimitsEntryType,
+  locksEntryType,
+  driveEntryType,
+  allyEntryType,
+  i18nEntryType,
+  notificationsEntryType,
+  socketsEntryType,
 ])
 
 assertUniqueEntryTypeMetadata(wave2EntryTypes)
@@ -213,6 +349,14 @@ const entryTypeLabels: Record<EntryType, string> = {
   health_check: 'Health check',
   redis: 'Redis',
   session: 'Session',
+  validation: 'Validation',
+  rate_limit: 'Rate limit',
+  lock: 'Lock',
+  drive: 'Drive',
+  ally: 'OAuth (Ally)',
+  i18n: 'I18n',
+  notification: 'Notification',
+  socket: 'Socket',
 }
 
 export function getWave2EntryType(type: EntryType): EntryTypeRegistration | undefined {

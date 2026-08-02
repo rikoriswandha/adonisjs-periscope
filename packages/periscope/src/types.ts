@@ -56,6 +56,14 @@ export const EntryType = {
   BROADCAST: 'broadcast',
   REDIS: 'redis',
   SESSION: 'session',
+  VALIDATION: 'validation',
+  RATE_LIMIT: 'rate_limit',
+  LOCK: 'lock',
+  DRIVE: 'drive',
+  ALLY: 'ally',
+  I18N: 'i18n',
+  NOTIFICATION: 'notification',
+  SOCKET: 'socket',
 } as const
 
 /**
@@ -74,7 +82,7 @@ export const ENTRY_TYPES = Object.values(EntryType) as readonly EntryType[]
  * outside a request, command, queue job or test — it is drained by a rotating module-level
  * context.
  */
-export type BatchKind = 'request' | 'command' | 'queue' | 'test' | 'ambient'
+export type BatchKind = 'request' | 'command' | 'queue' | 'schedule' | 'test' | 'ambient'
 
 /**
  * The mutable state of one batch: a correlation id, the entries recorded so far, and the
@@ -808,6 +816,196 @@ export interface QueueWatcherAdapter {
 }
 
 /**
+ * Scheduled-task lifecycle metadata emitted by pluggable scheduler adapters. Unlike
+ * {@link QueueJobEvent}, this describes an actual cron/task execution — not a delayed queue
+ * dispatch.
+ */
+export type ScheduledTaskEvent = {
+  adapter: string
+
+  /**
+   * Stable task identifier: the command name, task class name, or whatever the scheduler uses
+   * to address the task.
+   */
+  task: string
+
+  /**
+   * Human-readable schedule expression — a cron pattern or an interval description.
+   */
+  schedule?: string
+
+  /**
+   * Identifier of this particular run, when the scheduler has one. Used to pair start and
+   * finish events; adapters without run ids pair on `task` alone.
+   */
+  runId?: string
+
+  durationMs?: number
+}
+
+export type ScheduledTaskResult = ScheduledTaskEvent & {
+  result?: unknown
+  error?: unknown
+}
+
+/**
+ * Implemented by the job/schedule watcher; called by scheduler adapters. Method names are
+ * task-prefixed so one watcher can implement this contract next to
+ * {@link QueueWatcherObserver}.
+ */
+export interface SchedulerWatcherObserver {
+  taskStarted(event: ScheduledTaskEvent): void
+  taskCompleted(event: ScheduledTaskResult): void
+  taskFailed(event: ScheduledTaskResult): void
+
+  /**
+   * Called by an adapter around the task handler's execution so work recorded during the run —
+   * queries, logs, outgoing requests — is scoped into the task's batch instead of the ambient
+   * context. Adapters that cannot wrap execution simply never call it; the final lifecycle
+   * entry is then the only record.
+   */
+  wrapTask?<T>(event: ScheduledTaskEvent, run: () => Promise<T>): Promise<T>
+}
+
+export type SchedulerWatcherRegistrationOptions = {
+  /**
+   * Include application-owned task results in lifecycle events.
+   */
+  capturePayload: boolean
+}
+
+/**
+ * Bridges one scheduler package to Periscope, parallel to {@link QueueWatcherAdapter}. There is
+ * no official AdonisJS scheduler, so Periscope ships the seam rather than a coupling.
+ */
+export interface SchedulerWatcherAdapter {
+  readonly name: string
+  register(
+    observer: SchedulerWatcherObserver,
+    options?: SchedulerWatcherRegistrationOptions
+  ): void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
+}
+
+/**
+ * One notification delivery as reported by a pluggable notification adapter.
+ */
+export type NotificationEvent = {
+  adapter: string
+
+  /**
+   * Delivery channel: `mail`, `sms`, `database`, `push`, …
+   */
+  channel: string
+
+  /**
+   * Notification identifier — usually the notification class or template name.
+   */
+  notification: string
+
+  /**
+   * Scalar recipient descriptor. Adapters should pass an id or an already-masked address, never
+   * a full user model.
+   */
+  notifiable?: string | number
+
+  payload?: unknown
+  durationMs?: number
+}
+
+export type NotificationResult = NotificationEvent & {
+  error?: unknown
+}
+
+export interface NotificationWatcherObserver {
+  sent(event: NotificationEvent): void
+  failed(event: NotificationResult): void
+}
+
+export type NotificationWatcherRegistrationOptions = {
+  /**
+   * Include application-owned notification payloads in lifecycle events.
+   */
+  capturePayload: boolean
+}
+
+/**
+ * Bridges a notification implementation to Periscope. There is no official AdonisJS
+ * notification package — this is a seam, not a coupling.
+ */
+export interface NotificationWatcherAdapter {
+  readonly name: string
+  register(
+    observer: NotificationWatcherObserver,
+    options?: NotificationWatcherRegistrationOptions
+  ): void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
+}
+
+/**
+ * One WebSocket connection as reported by a pluggable socket adapter. The transmit watcher
+ * covers server-to-client broadcasts; this contract covers the connection lifecycle and
+ * inbound traffic Periscope cannot otherwise see.
+ */
+export type SocketConnectionEvent = {
+  adapter: string
+  socketId: string
+
+  /**
+   * Transport or library label: `ws`, `socket.io`, …
+   */
+  transport?: string
+
+  /**
+   * Channel, room or namespace the event belongs to, when the transport has such a concept.
+   */
+  channel?: string
+
+  remoteAddress?: string
+  userId?: string | number
+}
+
+export type SocketDisconnectionEvent = SocketConnectionEvent & {
+  reason?: string
+
+  /**
+   * How long the connection was open.
+   */
+  durationMs?: number
+}
+
+export type SocketMessageEvent = SocketConnectionEvent & {
+  direction: 'inbound' | 'outbound'
+
+  /**
+   * Message or event name, when the protocol has one.
+   */
+  event?: string
+
+  payload?: unknown
+  sizeBytes?: number
+}
+
+export interface SocketWatcherObserver {
+  connected(event: SocketConnectionEvent): void
+  disconnected(event: SocketDisconnectionEvent): void
+  message(event: SocketMessageEvent): void
+}
+
+export type SocketWatcherRegistrationOptions = {
+  /**
+   * Include message payloads in recorded entries.
+   */
+  capturePayload: boolean
+}
+
+export interface SocketWatcherAdapter {
+  readonly name: string
+  register(
+    observer: SocketWatcherObserver,
+    options?: SocketWatcherRegistrationOptions
+  ): void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
+}
+
+/**
  * A watcher: something that subscribes to a source of events and feeds the recorder.
  *
  * The registry resolves enabled watchers from config, calls `register()` inside
@@ -857,6 +1055,14 @@ export const WatcherName = {
   TRANSMIT: 'transmit',
   REDIS: 'redis',
   SESSION: 'session',
+  VINE: 'vine',
+  LIMITER: 'limiter',
+  LOCK: 'lock',
+  DRIVE: 'drive',
+  ALLY: 'ally',
+  I18N: 'i18n',
+  NOTIFICATION: 'notification',
+  SOCKET: 'socket',
 } as const
 
 export type WatcherName = (typeof WatcherName)[keyof typeof WatcherName]
@@ -918,6 +1124,13 @@ export type WatchersConfig = {
      * session middleware ran. Values pass through the redactor. Defaults to `true`.
      */
     captureSession?: boolean
+
+    /**
+     * Record a summarized entry for requests terminated before routing — typically assets served
+     * by `@adonisjs/static` when its middleware runs ahead of Periscope's. Off by default: static
+     * traffic is high-volume and rarely diagnostic.
+     */
+    captureStatic?: boolean
   }
 
   query?: {
@@ -1051,6 +1264,12 @@ export type WatchersConfig = {
   job_schedule?: {
     enabled?: boolean
     adapters?: QueueWatcherAdapter[]
+
+    /**
+     * Scheduler adapters reporting real cron/task executions, recorded as `schedule` entries.
+     */
+    schedulers?: SchedulerWatcherAdapter[]
+
     /**
      * Capture job payloads and completed results. Defaults to `false`.
      */
@@ -1063,6 +1282,66 @@ export type WatchersConfig = {
   session?: {
     enabled?: boolean
     captureValues?: boolean
+  }
+  vine?: {
+    /**
+     * Record VineJS validation failures — fields, rules and messages — by wrapping the global
+     * error-reporter factory. Covers throwing `validate` and non-throwing `tryValidate` alike.
+     * Defaults to `true`; a no-op when `@vinejs/vine` is not installed.
+     */
+    enabled?: boolean
+  }
+  limiter?: {
+    /**
+     * Record `@adonisjs/limiter` rejections as semantic `rate_limit` entries. Defaults to
+     * `false` because it patches limiter instances resolved from the container.
+     */
+    enabled?: boolean
+  }
+  lock?: {
+    enabled?: boolean
+
+    /**
+     * Successful acquisitions that waited at least this many milliseconds are recorded as
+     * contention; failed acquisitions are always recorded. Defaults to 50.
+     */
+    contentionMs?: number
+  }
+  drive?: {
+    /**
+     * Record `@adonisjs/drive` file operations. Defaults to `false`.
+     */
+    enabled?: boolean
+  }
+  ally?: {
+    /**
+     * Record `@adonisjs/ally` OAuth flow steps. Defaults to `false`.
+     */
+    enabled?: boolean
+  }
+  i18n?: {
+    /**
+     * Record `@adonisjs/i18n` missing-translation reports. Defaults to `true`.
+     */
+    enabled?: boolean
+  }
+  notification?: {
+    enabled?: boolean
+    adapters?: NotificationWatcherAdapter[]
+
+    /**
+     * Capture notification payloads. Defaults to `false`.
+     */
+    capturePayload?: boolean
+  }
+  socket?: {
+    enabled?: boolean
+    adapters?: SocketWatcherAdapter[]
+
+    /**
+     * Capture inbound/outbound message payloads. Defaults to `false`.
+     */
+    capturePayload?: boolean
   }
   /**
    * Application-defined watcher factories, registered after all enabled shipped watchers.
@@ -1081,6 +1360,7 @@ export type ResolvedWatchersConfig = {
     captureInertia: boolean
     responseSizeLimitKb: number
     captureSession: boolean
+    captureStatic: boolean
     ignorePaths: string[]
   }
   query: {
@@ -1142,6 +1422,7 @@ export type ResolvedWatchersConfig = {
   job_schedule: {
     enabled: boolean
     adapters: QueueWatcherAdapter[]
+    schedulers: SchedulerWatcherAdapter[]
     capturePayload: boolean
   }
   redis: {
@@ -1151,6 +1432,35 @@ export type ResolvedWatchersConfig = {
   session: {
     enabled: boolean
     captureValues: boolean
+  }
+  vine: {
+    enabled: boolean
+  }
+  limiter: {
+    enabled: boolean
+  }
+  lock: {
+    enabled: boolean
+    contentionMs: number
+  }
+  drive: {
+    enabled: boolean
+  }
+  ally: {
+    enabled: boolean
+  }
+  i18n: {
+    enabled: boolean
+  }
+  notification: {
+    enabled: boolean
+    adapters: NotificationWatcherAdapter[]
+    capturePayload: boolean
+  }
+  socket: {
+    enabled: boolean
+    adapters: SocketWatcherAdapter[]
+    capturePayload: boolean
   }
   custom: PeriscopeWatcherFactory[]
 }

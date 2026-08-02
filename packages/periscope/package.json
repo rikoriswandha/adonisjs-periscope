@@ -71,20 +71,25 @@
     "better-sqlite3": "^12.10.0"
   },
   "peerDependencies": {
-    "@adonisjs/queue": "^0.6.2",
+    "@adonisjs/ally": "^6.3.0",
     "@adonisjs/bouncer": "^4.0.0",
     "@adonisjs/cache": "^2.0.0",
     "@adonisjs/core": "^7.0.0",
     "@adonisjs/lucid": "^22.0.0",
     "@adonisjs/mail": "^10.0.0",
+    "@adonisjs/queue": "^0.6.2",
     "@adonisjs/redis": "^10.0.0",
     "@adonisjs/session": "^8.0.0",
     "@adonisjs/transmit": "^3.0.0",
     "@opentelemetry/api": "^1.9.0",
+    "@vinejs/vine": "^3.0.0 || ^4.0.0",
     "bullmq": "^5.0.0",
     "edge.js": "^6.4.0"
   },
   "peerDependenciesMeta": {
+    "@adonisjs/ally": {
+      "optional": true
+    },
     "@adonisjs/queue": {
       "optional": true
     },
@@ -112,6 +117,9 @@
     "@opentelemetry/api": {
       "optional": true
     },
+    "@vinejs/vine": {
+      "optional": true
+    },
     "bullmq": {
       "optional": true
     },
@@ -120,36 +128,38 @@
     }
   },
   "devDependencies": {
-    "@adonisjs/queue": "^0.6.2",
+    "@adonisjs/ally": "^6.3.0",
     "@adonisjs/assembler": "^8.4.0",
     "@adonisjs/bouncer": "^4.0.0",
     "@adonisjs/cache": "^2.1.0",
     "@adonisjs/core": "^7.3.5",
-    "@adonisjs/redis": "^10.0.0",
-    "@adonisjs/session": "^8.1.0",
     "@adonisjs/eslint-config": "^3.1.0",
     "@adonisjs/lucid": "^22.4.2",
     "@adonisjs/mail": "^10.4.0",
-    "@opentelemetry/api": "^1.9.0",
     "@adonisjs/prettier-config": "^1.5.0",
+    "@adonisjs/queue": "^0.6.2",
+    "@adonisjs/redis": "^10.0.0",
+    "@adonisjs/session": "^8.1.0",
     "@adonisjs/tsconfig": "^2.0.0",
     "@japa/assert": "^4.2.0",
     "@japa/expect-type": "^2.0.4",
     "@japa/file-system": "^3.0.0",
     "@japa/plugin-adonisjs": "^5.2.0",
     "@japa/runner": "^5.3.0",
+    "@opentelemetry/api": "^1.9.0",
     "@poppinss/ts-exec": "^1.4.4",
     "@types/autocannon": "^7.12.7",
     "@types/better-sqlite3": "^7.6.13",
     "@types/luxon": "^3.7.1",
     "@types/node": "~25.9.1",
     "@types/pg": "^8.20.0",
+    "@vinejs/vine": "^4.4.0",
     "autocannon": "^8.0.0",
+    "bullmq": "^5.81.2",
     "eslint": "^10.4.0",
     "fast-check": "^4.9.0",
     "luxon": "^3.7.2",
     "mitata": "^1.0.34",
-    "bullmq": "^5.81.2",
     "pg": "^8.22.0",
     "typescript": "~6.0.3"
   },

@@ -1,0 +1,15 @@
+/*
+ * periscope
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+export type RateLimitEntryContent = Record<string, unknown> & {
+  key: string
+  action: string
+  limit?: number
+  remaining?: number
+  retryAfterMs?: number
+  store?: string
+}

@@ -212,6 +212,12 @@ export default defineConfig({
       captureSession: true,
 
       /**
+       * Capture requests for static assets. Disabled by default because asset traffic is usually
+       * high-volume and adds little application context.
+       */
+      captureStatic: false,
+
+      /**
        * Path patterns to skip recording entirely, matched against the request path. A \`*\`
        * matches any run of characters, so \`/assets/*\` drops every compiled asset request.
        */
@@ -384,6 +390,11 @@ export default defineConfig({
       enabled: false,
       adapters: [],
       /**
+       * Add scheduler adapters here to correlate scheduled task starts and outcomes. Scheduler
+       * payloads follow the same \`capturePayload\` setting as queue jobs.
+       */
+      schedulers: [],
+      /**
        * Capture job payloads and completed results. Disabled by default because both may contain
        * arbitrary application data.
        */
@@ -406,6 +417,70 @@ export default defineConfig({
     session: {
       enabled: false,
       captureValues: false,
+    },
+
+    /**
+     * Vine validation failures are enabled by default and retain field-level errors without
+     * recording the submitted values.
+     */
+    vine: {
+      enabled: true,
+    },
+
+    /**
+     * Enable this when limiter consumption and rejected attempts are useful diagnostic signals.
+     */
+    limiter: {
+      enabled: false,
+    },
+
+    /**
+     * Enable this to observe distributed lock acquisition, release, and contention.
+     */
+    lock: {
+      enabled: false,
+      contentionMs: 50,
+    },
+
+    /**
+     * Enable this to observe Drive filesystem operations across configured disks.
+     */
+    drive: {
+      enabled: false,
+    },
+
+    /**
+     * Enable this to follow Ally OAuth redirects, callbacks, and provider outcomes.
+     */
+    ally: {
+      enabled: false,
+    },
+
+    /**
+     * Translation lookups and missing keys are enabled by default and never retain parameters.
+     */
+    i18n: {
+      enabled: true,
+    },
+
+    /**
+     * Notification providers are adapter-based and opt-in. Payloads remain excluded unless
+     * explicitly enabled because they may contain arbitrary application data.
+     */
+    notification: {
+      enabled: false,
+      adapters: [],
+      capturePayload: false,
+    },
+
+    /**
+     * Socket servers are adapter-based and opt-in. Payloads remain excluded unless explicitly
+     * enabled because messages may contain arbitrary application data.
+     */
+    socket: {
+      enabled: false,
+      adapters: [],
+      capturePayload: false,
     },
   },
 

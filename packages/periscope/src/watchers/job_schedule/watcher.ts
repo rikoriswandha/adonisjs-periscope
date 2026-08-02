@@ -10,10 +10,13 @@ import type {
   QueueJobEvent,
   QueueJobResult,
   QueueWatcherObserver,
+  ScheduledTaskEvent,
+  ScheduledTaskResult,
+  SchedulerWatcherObserver,
   Watcher,
 } from '../../types.ts'
 import type { WatcherContext } from '../context.ts'
-import type { JobEntryContent, ScheduleEntryContent } from './types.ts'
+import type { JobEntryContent, ScheduledTaskEntryContent, ScheduleEntryContent } from './types.ts'
 
 type ActiveJob = {
   context: BatchContext
@@ -21,10 +24,20 @@ type ActiveJob = {
   startedAt: bigint
 }
 
-const MAX_ACTIVE_JOBS = 1_000
+type ActiveTask = {
+  context: BatchContext
+  event: ScheduledTaskEvent
+  startedAt: bigint
+}
+
+const MAX_ACTIVE = 1_000
 
 function jobKey(event: QueueJobEvent): string {
   return `${event.adapter}\u0000${event.queue}\u0000${event.jobId}`
+}
+
+function taskKey(event: ScheduledTaskEvent): string {
+  return `${event.adapter}\u0000${event.task}\u0000${event.runId ?? ''}`
 }
 
 function durationMs(startedAt: bigint): number {
@@ -42,12 +55,13 @@ function correlatedContext(correlationId: string): BatchContext {
 }
 
 /** Correlates pluggable queue lifecycle adapters without coupling Periscope to one queue package. */
-export class JobScheduleWatcher implements Watcher, QueueWatcherObserver {
+export class JobScheduleWatcher implements Watcher, QueueWatcherObserver, SchedulerWatcherObserver {
   readonly name = WatcherName.JOB_SCHEDULE
-  readonly stats = { jobs: 0, schedules: 0 }
+  readonly stats = { jobs: 0, schedules: 0, tasks: 0 }
 
   readonly #context: WatcherContext
   readonly #activeJobs = new Map<string, ActiveJob>()
+  readonly #activeTasks = new Map<string, ActiveTask>()
   readonly #cleanups: (() => void | Promise<void>)[] = []
   readonly #flushes = new Set<Promise<unknown>>()
   #active = false
@@ -66,12 +80,24 @@ export class JobScheduleWatcher implements Watcher, QueueWatcherObserver {
       })
       if (typeof cleanup === 'function') this.#cleanups.push(cleanup)
     }
+
+    for (const adapter of this.#context.config.watchers.job_schedule.schedulers) {
+      const cleanup = await safeguardAsync(
+        'periscope.watcher.job_schedule.register_scheduler',
+        () =>
+          adapter.register(this, {
+            capturePayload: this.#context.config.watchers.job_schedule.capturePayload,
+          })
+      )
+      if (typeof cleanup === 'function') this.#cleanups.push(cleanup)
+    }
   }
 
   async cleanup(): Promise<void> {
     this.#active = false
     const cleanups = this.#cleanups.splice(0)
     this.#activeJobs.clear()
+    this.#activeTasks.clear()
     await Promise.allSettled(
       cleanups.map((cleanup) =>
         safeguardAsync('periscope.watcher.job_schedule.cleanup', () => Promise.resolve(cleanup()))
@@ -153,7 +179,7 @@ export class JobScheduleWatcher implements Watcher, QueueWatcherObserver {
         startedAt: process.hrtime.bigint(),
       })
 
-      if (this.#activeJobs.size > MAX_ACTIVE_JOBS) {
+      if (this.#activeJobs.size > MAX_ACTIVE) {
         const oldest = this.#activeJobs.keys().next().value
 
         if (oldest !== undefined) this.#activeJobs.delete(oldest)
@@ -201,6 +227,94 @@ export class JobScheduleWatcher implements Watcher, QueueWatcherObserver {
       this.stats.schedules += 1
       this.#flush(context)
     })
+  }
+
+  taskStarted(event: ScheduledTaskEvent): void {
+    safeguard('periscope.watcher.job_schedule.task_started', () => {
+      if (!this.#active) return
+      const key = taskKey(event)
+      this.#activeTasks.delete(key)
+      this.#activeTasks.set(key, {
+        context: BatchScope.createContext('schedule'),
+        event,
+        startedAt: process.hrtime.bigint(),
+      })
+
+      if (this.#activeTasks.size > MAX_ACTIVE) {
+        const oldest = this.#activeTasks.keys().next().value
+
+        if (oldest !== undefined) this.#activeTasks.delete(oldest)
+      }
+    })
+  }
+
+  async wrapTask<T>(event: ScheduledTaskEvent, run: () => Promise<T>): Promise<T> {
+    const context = safeguard(
+      'periscope.watcher.job_schedule.wrap_task',
+      () => {
+        if (!this.#active) return
+        return this.#activeTasks.get(taskKey(event))?.context
+      },
+      undefined
+    )
+
+    return context === undefined ? run() : BatchScope.runWith(context, run)
+  }
+
+  taskCompleted(event: ScheduledTaskResult): void {
+    safeguard('periscope.watcher.job_schedule.task_completed', () => {
+      this.#finishTask('completed', event)
+    })
+  }
+
+  taskFailed(event: ScheduledTaskResult): void {
+    safeguard('periscope.watcher.job_schedule.task_failed', () => {
+      this.#finishTask('failed', event)
+    })
+  }
+
+  #finishTask(status: ScheduledTaskEntryContent['status'], event: ScheduledTaskResult): void {
+    if (!this.#active) return
+    const key = taskKey(event)
+    const active = this.#activeTasks.get(key)
+    this.#activeTasks.delete(key)
+    const context = active?.context ?? BatchScope.createContext('schedule')
+    const source = active?.event ?? event
+    const schedule = source.schedule ?? event.schedule
+    const runId = source.runId ?? event.runId
+    const content: ScheduledTaskEntryContent = {
+      adapter: event.adapter,
+      task: event.task,
+      status,
+      ...(schedule === undefined ? {} : { schedule }),
+      ...(runId === undefined ? {} : { runId }),
+      ...(event.durationMs === undefined
+        ? active === undefined
+          ? {}
+          : { durationMs: durationMs(active.startedAt) }
+        : { durationMs: event.durationMs }),
+      ...(status === 'completed' &&
+      this.#context.config.watchers.job_schedule.capturePayload &&
+      event.result !== undefined
+        ? { result: safeSerialize(event.result) }
+        : {}),
+      ...(status === 'failed' && event.error !== undefined
+        ? { error: safeSerialize(event.error) }
+        : {}),
+    }
+
+    BatchScope.runWith(context, () => {
+      this.#context.recorder.record(
+        IncomingEntry.make(EntryType.SCHEDULE, content).withTags(
+          `task:${event.task}`,
+          `adapter:${event.adapter}`,
+          status,
+          ...(schedule === undefined ? [] : [`schedule:${schedule}`])
+        )
+      )
+    })
+    this.stats.tasks += 1
+    this.#flush(context)
   }
 
   #finish(status: JobEntryContent['status'], event: QueueJobResult): void {

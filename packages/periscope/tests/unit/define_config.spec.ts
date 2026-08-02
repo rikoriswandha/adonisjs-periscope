@@ -56,6 +56,14 @@ const DEFAULTS: ResolvedPeriscopeConfig = {
       broadcast: 100,
       redis: 100,
       session: 100,
+      validation: 100,
+      rate_limit: 100,
+      lock: 100,
+      drive: 100,
+      ally: 100,
+      i18n: 100,
+      notification: 100,
+      socket: 100,
     },
     sampleRate: 1,
     keepAlways: DEFAULT_KEEP_ALWAYS,
@@ -81,6 +89,7 @@ const DEFAULTS: ResolvedPeriscopeConfig = {
       captureInertia: true,
       responseSizeLimitKb: 64,
       captureSession: true,
+      captureStatic: false,
       ignorePaths: [],
     },
     query: {
@@ -134,9 +143,17 @@ const DEFAULTS: ResolvedPeriscopeConfig = {
     },
     health_check: { enabled: true },
     transmit: { enabled: false, capturePayload: false },
-    job_schedule: { enabled: false, adapters: [], capturePayload: false },
+    job_schedule: { enabled: false, adapters: [], schedulers: [], capturePayload: false },
     redis: { enabled: false, captureArguments: false },
     session: { enabled: false, captureValues: false },
+    vine: { enabled: true },
+    limiter: { enabled: false },
+    lock: { enabled: false, contentionMs: 50 },
+    drive: { enabled: false },
+    ally: { enabled: false },
+    i18n: { enabled: true },
+    notification: { enabled: false, adapters: [], capturePayload: false },
+    socket: { enabled: false, adapters: [], capturePayload: false },
     custom: [],
   },
   dashboard: {
@@ -306,6 +323,19 @@ test.group('defineConfig | merging', () => {
     assert.deepEqual(config.watchers.dump, DEFAULTS.watchers.dump)
     assert.deepEqual(config.watchers.view, DEFAULTS.watchers.view)
     assert.deepEqual(config.watchers.http_client, DEFAULTS.watchers.http_client)
+    assert.deepEqual(config.watchers.job_schedule, DEFAULTS.watchers.job_schedule)
+    assert.deepEqual(config.watchers.health_check, DEFAULTS.watchers.health_check)
+    assert.deepEqual(config.watchers.transmit, DEFAULTS.watchers.transmit)
+    assert.deepEqual(config.watchers.redis, DEFAULTS.watchers.redis)
+    assert.deepEqual(config.watchers.session, DEFAULTS.watchers.session)
+    assert.deepEqual(config.watchers.vine, DEFAULTS.watchers.vine)
+    assert.deepEqual(config.watchers.limiter, DEFAULTS.watchers.limiter)
+    assert.deepEqual(config.watchers.lock, DEFAULTS.watchers.lock)
+    assert.deepEqual(config.watchers.drive, DEFAULTS.watchers.drive)
+    assert.deepEqual(config.watchers.ally, DEFAULTS.watchers.ally)
+    assert.deepEqual(config.watchers.i18n, DEFAULTS.watchers.i18n)
+    assert.deepEqual(config.watchers.notification, DEFAULTS.watchers.notification)
+    assert.deepEqual(config.watchers.socket, DEFAULTS.watchers.socket)
   })
 
   test('parse request ignore paths as a resolved string array', ({ assert }) => {

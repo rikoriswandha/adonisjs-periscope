@@ -63,6 +63,14 @@ const paletteByType: Record<EntryType, PaletteName> = {
   health_check: 'success',
   redis: 'destructive',
   session: 'secondary',
+  validation: 'destructive',
+  rate_limit: 'warning',
+  lock: 'warning',
+  drive: 'info',
+  ally: 'primary',
+  i18n: 'secondary',
+  notification: 'success',
+  socket: 'info',
 }
 
 type WaterfallItem = {

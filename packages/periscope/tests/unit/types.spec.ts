@@ -102,9 +102,15 @@ test.group('Types | EntryType', () => {
     assert.equal(EntryType.HTTP_CLIENT, 'http_client')
     assert.equal(EntryType.HEALTH_CHECK, 'health_check')
     assert.equal(EntryType.QUERY, 'query')
+    assert.equal(EntryType.VALIDATION, 'validation')
+    assert.equal(EntryType.RATE_LIMIT, 'rate_limit')
+    assert.equal(EntryType.SOCKET, 'socket')
 
     expectTypeOf(EntryType.HTTP_CLIENT).toEqualTypeOf<'http_client'>()
     expectTypeOf(EntryType.HEALTH_CHECK).toEqualTypeOf<'health_check'>()
+    expectTypeOf(EntryType.VALIDATION).toEqualTypeOf<'validation'>()
+    expectTypeOf(EntryType.RATE_LIMIT).toEqualTypeOf<'rate_limit'>()
+    expectTypeOf(EntryType.SOCKET).toEqualTypeOf<'socket'>()
     expectTypeOf<EntryType>().toExtend<string>()
   })
 })
@@ -130,6 +136,14 @@ test.group('Types | WatcherName', () => {
       'transmit',
       'redis',
       'session',
+      'vine',
+      'limiter',
+      'lock',
+      'drive',
+      'ally',
+      'i18n',
+      'notification',
+      'socket',
     ])
 
     expectTypeOf<(typeof WATCHER_NAMES)[number]>().toEqualTypeOf<WatcherName>()
@@ -444,11 +458,13 @@ test.group('Types | BatchContext', () => {
   })
 
   test('enumerate every batch kind the recorder can open', ({ assert, expectTypeOf }) => {
-    const kinds: BatchKind[] = ['request', 'command', 'queue', 'test', 'ambient']
+    const kinds: BatchKind[] = ['request', 'command', 'queue', 'schedule', 'test', 'ambient']
 
-    assert.lengthOf(kinds, 5)
+    assert.lengthOf(kinds, 6)
 
-    expectTypeOf<BatchKind>().toEqualTypeOf<'request' | 'command' | 'queue' | 'test' | 'ambient'>()
+    expectTypeOf<BatchKind>().toEqualTypeOf<
+      'request' | 'command' | 'queue' | 'schedule' | 'test' | 'ambient'
+    >()
   })
 })
 
@@ -527,6 +543,14 @@ test.group('Types | configuration', () => {
           broadcast: 100,
           redis: 100,
           session: 100,
+          validation: 100,
+          rate_limit: 100,
+          lock: 100,
+          drive: 100,
+          ally: 100,
+          i18n: 100,
+          notification: 100,
+          socket: 100,
         },
         sampleRate: 1,
         keepAlways: () => false,
@@ -544,6 +568,7 @@ test.group('Types | configuration', () => {
           captureInertia: true,
           responseSizeLimitKb: 64,
           captureSession: true,
+          captureStatic: false,
           ignorePaths: [],
         },
         query: { enabled: true, slowMs: 100, hideBindings: false },
@@ -560,9 +585,17 @@ test.group('Types | configuration', () => {
         http_client: { enabled: true, slowMs: 1_000 },
         health_check: { enabled: true },
         transmit: { enabled: false, capturePayload: false },
-        job_schedule: { enabled: false, adapters: [], capturePayload: false },
+        job_schedule: { enabled: false, adapters: [], schedulers: [], capturePayload: false },
         redis: { enabled: false, captureArguments: false },
         session: { enabled: false, captureValues: false },
+        vine: { enabled: true },
+        limiter: { enabled: false },
+        lock: { enabled: false, contentionMs: 50 },
+        drive: { enabled: false },
+        ally: { enabled: false },
+        i18n: { enabled: true },
+        notification: { enabled: false, adapters: [], capturePayload: false },
+        socket: { enabled: false, adapters: [], capturePayload: false },
         custom: [],
       },
       dashboard: {
@@ -625,6 +658,14 @@ test.group('Types | configuration', () => {
       broadcast: 100,
       redis: 100,
       session: 100,
+      validation: 100,
+      rate_limit: 100,
+      lock: 100,
+      drive: 100,
+      ally: 100,
+      i18n: 100,
+      notification: 100,
+      socket: 100,
     }
 
     assert.deepEqual(new Set(Object.keys(caps)), new Set(ENTRY_TYPES))

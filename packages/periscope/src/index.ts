@@ -130,7 +130,11 @@ export type {
 } from './watchers/health_check/types.ts'
 
 export { JobScheduleWatcher } from './watchers/job_schedule/watcher.ts'
-export type { JobEntryContent, ScheduleEntryContent } from './watchers/job_schedule/types.ts'
+export type {
+  JobEntryContent,
+  ScheduleEntryContent,
+  ScheduledTaskEntryContent,
+} from './watchers/job_schedule/types.ts'
 export { AdonisQueueAdapter } from './watchers/job_schedule/adonis_queue_adapter.ts'
 
 export { RedisWatcher } from './watchers/redis/watcher.ts'
@@ -138,6 +142,30 @@ export type { RedisEntryContent } from './watchers/redis/types.ts'
 
 export { SessionWatcher } from './watchers/session/watcher.ts'
 export type { SessionEntryContent, SessionOperation } from './watchers/session/types.ts'
+
+export { VineWatcher } from './watchers/vine/watcher.ts'
+export type { ValidationEntryContent, ValidationFieldError } from './watchers/vine/types.ts'
+
+export { LimiterWatcher } from './watchers/limiter/watcher.ts'
+export type { RateLimitEntryContent } from './watchers/limiter/types.ts'
+
+export { LockWatcher } from './watchers/lock/watcher.ts'
+export type { LockEntryContent } from './watchers/lock/types.ts'
+
+export { DriveWatcher } from './watchers/drive/watcher.ts'
+export type { DriveEntryContent } from './watchers/drive/types.ts'
+
+export { AllyWatcher } from './watchers/ally/watcher.ts'
+export type { AllyEntryContent } from './watchers/ally/types.ts'
+
+export { I18nWatcher } from './watchers/i18n/watcher.ts'
+export type { I18nEntryContent } from './watchers/i18n/types.ts'
+
+export { NotificationWatcher } from './watchers/notification/watcher.ts'
+export type { NotificationEntryContent } from './watchers/notification/types.ts'
+
+export { SocketWatcher } from './watchers/socket/watcher.ts'
+export type { SocketEntryContent } from './watchers/socket/types.ts'
 
 export { ENTRY_TYPES, EntryType, Flag, WATCHER_NAMES, WatcherName } from './types.ts'
 export type {
@@ -178,9 +206,25 @@ export type {
   QueueWatcherAdapter,
   QueueWatcherRegistrationOptions,
   QueueWatcherObserver,
+  NotificationEvent,
+  NotificationResult,
+  NotificationWatcherAdapter,
+  NotificationWatcherObserver,
+  NotificationWatcherRegistrationOptions,
   ResolvedPeriscopeConfig,
   ResolvedDashboardConfig,
   ResolvedWatchersConfig,
+  ScheduledTaskEvent,
+  ScheduledTaskResult,
+  SchedulerWatcherAdapter,
+  SchedulerWatcherObserver,
+  SchedulerWatcherRegistrationOptions,
+  SocketConnectionEvent,
+  SocketDisconnectionEvent,
+  SocketMessageEvent,
+  SocketWatcherAdapter,
+  SocketWatcherObserver,
+  SocketWatcherRegistrationOptions,
   StorageDriverName,
   StoredEntry,
   StoredFlag,

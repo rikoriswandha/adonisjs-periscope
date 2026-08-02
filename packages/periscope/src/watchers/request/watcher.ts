@@ -20,6 +20,7 @@ import type { WatcherContext } from '../context.ts'
 import {
   attachRequestBatch,
   findRequestBatch,
+  isIgnoredRequest,
   markIgnoredRequest,
   takeRequestBatch,
 } from '../http_batch.ts'
@@ -445,6 +446,44 @@ function makeRequestEntry(
 }
 
 /**
+ * Build the deliberately bounded fallback for requests completed before Periscope's server
+ * middleware opened a batch. No application payload, session, auth state, response body, or
+ * process-wide memory sample belongs in this summary.
+ */
+function makeUnbatchedRequestEntry(
+  watcherContext: WatcherContext,
+  payload: RequestCompletedPayload
+): IncomingEntry {
+  const { ctx, duration } = payload
+  const { request, response } = ctx
+  const url = request.url()
+  const path = requestPath(url)
+  const kind = classifyRequest(ctx, path)
+  const durationMs = durationInMilliseconds(duration)
+  const clientDisconnected = !response.headersSent && !response.finished
+  const status = clientDisconnected ? null : response.getStatus()
+  const rawContentType = response.getHeader('content-type')
+  const contentType = Array.isArray(rawContentType) ? rawContentType[0] : rawContentType
+  const content = {
+    method: request.method(),
+    url,
+    status,
+    durationMs,
+    static: true,
+    ...(typeof contentType === 'string' ? { contentType } : {}),
+  } satisfies Partial<RequestEntryContent>
+
+  return IncomingEntry.make(EntryType.REQUEST, content).withTags(
+    status === null ? undefined : `status:${status}`,
+    status === null ? undefined : `status:${Math.floor(status / 100)}xx`,
+    durationMs >= watcherContext.config.watchers.request.slowMs ? 'slow' : undefined,
+    `method:${content.method}`,
+    `kind:${kind}`,
+    ctx.route === undefined ? 'static' : 'unbatched'
+  )
+}
+
+/**
  * Opens and closes the request batches that every in-request watcher joins. The server middleware
  * opens the scope because it surrounds all downstream work; the completion event closes it
  * because that is the first point with the final route, response and duration.
@@ -484,11 +523,13 @@ export class RequestWatcher implements Watcher {
         (payload: RequestCompletedPayload) => {
           safeguard('periscope.watcher.request.schedule', () => {
             const batch = takeRequestBatch(payload.ctx)
-            if (batch === undefined) return
+            if (batch === undefined && !this.#context.config.watchers.request.captureStatic) {
+              return
+            }
 
-            const intermediate = this.#openContexts.has(batch.context)
+            const intermediate = batch !== undefined && this.#openContexts.has(batch.context)
             const completion = Promise.withResolvers<void>()
-            if (intermediate) {
+            if (batch !== undefined && intermediate) {
               this.#completionFlushes.set(batch.context, completion.promise)
             }
             this.#pendingCompletions.add(completion.promise)
@@ -501,6 +542,29 @@ export class RequestWatcher implements Watcher {
              */
             setImmediate(() => {
               void safeguardAsync('periscope.watcher.request.completed', async () => {
+                if (batch === undefined) {
+                  const path = requestPath(payload.ctx.request.url())
+                  if (
+                    isIgnoredRequest(payload.ctx) ||
+                    isDashboardRequest(path, this.#context.config.dashboard.path) ||
+                    this.#ignoredPathPatterns.some((pattern) => pattern.test(path))
+                  ) {
+                    return
+                  }
+
+                  const context = BatchScope.createContext('request')
+                  try {
+                    BatchScope.runWith(context, () => {
+                      this.#context.recorder.record(
+                        makeUnbatchedRequestEntry(this.#context, payload)
+                      )
+                    })
+                  } finally {
+                    await this.#context.recorder.flush(context, 'final')
+                  }
+                  return
+                }
+
                 try {
                   const completed = makeRequestEntry(
                     this.#context,
@@ -532,7 +596,7 @@ export class RequestWatcher implements Watcher {
               }).finally(() => {
                 completion.resolve()
                 this.#pendingCompletions.delete(completion.promise)
-                if (intermediate) {
+                if (batch !== undefined && intermediate) {
                   this.#completionFlushes.delete(batch.context)
                 }
               })

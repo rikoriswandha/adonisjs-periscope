@@ -27,6 +27,14 @@ import { SessionWatcher } from './session/watcher.ts'
 import { TransmitWatcher } from './transmit/watcher.ts'
 import { ViewWatcher } from './view/watcher.ts'
 import { RequestWatcher } from './request/watcher.ts'
+import { VineWatcher } from './vine/watcher.ts'
+import { LimiterWatcher } from './limiter/watcher.ts'
+import { LockWatcher } from './lock/watcher.ts'
+import { DriveWatcher } from './drive/watcher.ts'
+import { AllyWatcher } from './ally/watcher.ts'
+import { I18nWatcher } from './i18n/watcher.ts'
+import { NotificationWatcher } from './notification/watcher.ts'
+import { SocketWatcher } from './socket/watcher.ts'
 
 /**
  * Builds one watcher. Exported as a type so an application — or a test — can substitute a
@@ -60,6 +68,14 @@ export const WATCHER_FACTORIES: Record<WatcherName, WatcherFactory> = {
   job_schedule: (context) => new JobScheduleWatcher(context),
   redis: (context) => new RedisWatcher(context),
   session: (context) => new SessionWatcher(context),
+  vine: (context) => new VineWatcher(context),
+  limiter: (context) => new LimiterWatcher(context),
+  lock: (context) => new LockWatcher(context),
+  drive: (context) => new DriveWatcher(context),
+  ally: (context) => new AllyWatcher(context),
+  i18n: (context) => new I18nWatcher(context),
+  notification: (context) => new NotificationWatcher(context),
+  socket: (context) => new SocketWatcher(context),
 }
 
 /**
