@@ -1,0 +1,129 @@
+---
+title: CLI commands
+description: Diagnose, maintain, pause, export, and import Periscope recordings with Ace.
+sidebar:
+  order: 2
+---
+
+Periscope registers Ace commands during application boot. Run them from the AdonisJS application
+root with `node ace`.
+
+Except for `periscope:doctor`, commands that read or modify recordings require durable storage:
+`sqlite-local`, `database`, or a durable `custom` driver. They reject `memory` because Ace runs in a
+separate process and cannot access the application's in-process store.
+
+Command activity is muted inside the recorder, so maintenance does not create entries about itself.
+
+## Diagnose an installation
+
+```sh
+node ace periscope:doctor
+node ace periscope:doctor --fix
+```
+
+`periscope:doctor` checks the generated wiring and host integration, including routes and Lucid
+query debugging. It prints all check results and exits with status `1` when any check fails.
+
+`--fix` conservatively adds missing `debug: true` properties to Lucid connection objects in
+`config/database.ts`. It does not overwrite an existing debug value or rewrite configurations it
+cannot recognize safely. Review the reported changes, restart the application, and run the command
+again.
+
+Run the doctor after installation, an AdonisJS upgrade, a storage-driver change, or when the
+dashboard receives requests but expected signals are absent.
+
+## Clear recordings
+
+```sh
+node ace periscope:clear
+node ace periscope:clear --application=billing-api
+```
+
+Without a flag, `periscope:clear` deletes every recorded entry in the configured store. The
+`--application` flag limits deletion to entries carrying that exact application name.
+
+Clearing entries preserves monitored tags and runtime flags. Use the application-scoped form when
+several applications share the database driver.
+
+## Prune old recordings
+
+```sh
+node ace periscope:prune
+node ace periscope:prune --hours=24
+node ace periscope:prune --hours=168 --keep-exceptions --application=billing-api
+```
+
+| Flag                   | Default          | Behavior                                                                          |
+| ---------------------- | ---------------- | --------------------------------------------------------------------------------- |
+| `--hours=<number>`     | `48`             | Deletes entries older than this many hours. Must be finite and greater than zero. |
+| `--keep-exceptions`    | `false`          | Preserves exception entries regardless of age.                                    |
+| `--application=<name>` | all applications | Limits pruning to one exact application name.                                     |
+
+The command reports the number of deleted entries. Prefer `storage.retention` for routine cleanup;
+the provider applies it shortly after boot and every 15 minutes. Use the command for one-off cleanup
+or a different temporary cutoff.
+
+## Export a batch
+
+```sh
+node ace periscope:export --batch=<batch-id>
+node ace periscope:export --batch=<batch-id> --out=report.json
+```
+
+`--batch` is required. Without `--out`, the versioned JSON document is written to stdout. With
+`--out`, it is written as UTF-8 to the named file. An unknown or empty batch is an error.
+
+The export contains the entries already stored for the batch. It does not run a second redaction
+pass. Review and transport exports as potentially sensitive artifacts. See the
+[batch export format](/adonisjs-periscope/reference/batch-export) for the stable envelope and public
+parser.
+
+## Import a batch
+
+```sh
+node ace periscope:import --file=report.json
+cat report.json | node ace periscope:import --file=-
+node ace periscope:import --file=report.json --application=support-sandbox
+```
+
+| Flag                   | Required | Behavior                                                                                               |
+| ---------------------- | -------- | ------------------------------------------------------------------------------------------------------ |
+| `--file=<path>`        | yes      | Reads a batch export from a UTF-8 file. Use `-` to read stdin.                                         |
+| `--application=<name>` | no       | Replaces the application name on every imported entry. Otherwise the exported application is retained. |
+
+Import validates the format and version before writing. Entries retain their UUIDs and batch ID but
+receive fresh sequence values so they appear in the imported store's ordering. Already-present UUIDs
+are skipped; importing a batch for which every UUID already exists is an error.
+
+Use `--application` to isolate externally supplied diagnostics from local recordings or to place an
+export into a dedicated support sandbox.
+
+## Pause and resume recording
+
+```sh
+node ace periscope:pause
+node ace periscope:resume
+```
+
+Pause writes a shared store flag; resume removes it. The state therefore reaches every process using
+the same durable store and remains in effect across restarts.
+
+Workers cache the flag for `recording.pausedFlagTtlMs`, which defaults to five seconds. Pause and
+resume can take up to that interval to affect every process. Existing buffered work may still flush;
+the flag controls subsequent recording decisions rather than deleting stored entries.
+
+Use `PERISCOPE_ENABLED=false` when recording must be disabled before the application boots. Use
+pause/resume for an already-running shared deployment.
+
+## Common failures
+
+| Failure                                   | Resolution                                                                                             |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Command rejects `storage.driver "memory"` | Switch to `sqlite-local`, `database`, or a durable custom store.                                       |
+| Doctor reports missing queries            | Enable `debug: true` on the observed Lucid connection, or rerun doctor with `--fix`.                   |
+| Export reports no entries                 | Copy the batch ID from the batch timeline and confirm the selected `applicationName` and store.        |
+| Import rejects the document               | Confirm it is an unmodified supported `periscope.batch` export; inspect the format and version fields. |
+| Pause appears delayed                     | Wait for `recording.pausedFlagTtlMs`, or lower that setting if the extra store reads are acceptable.   |
+
+See [Operations](/adonisjs-periscope/guides/operations) for retention, shared-store scope, diagnostics,
+and temporary production recording.

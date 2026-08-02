@@ -2,6 +2,7 @@
 import { cn } from "@/lib/cn";
 import type { HTMLAttributes } from "astro/types";
 import type { Breadcrumb } from "@cloudflare/nimbus-docs/types";
+import { withBasePath } from "@/lib/site-url";
 
 interface Props extends HTMLAttributes<"nav"> {
   items: Breadcrumb[];
@@ -30,7 +31,7 @@ const tailItems = shouldCollapse ? items.slice(items.length - tailCount) : [];
           {(!shouldCollapse && i === items.length - 1) || !crumb.href ? (
             <span class="text-foreground truncate max-w-[12rem]">{crumb.label}</span>
           ) : (
-            <a href={crumb.href} class="hover:text-foreground transition-colors truncate max-w-[12rem]">
+            <a href={withBasePath(crumb.href)} class="hover:text-foreground transition-colors truncate max-w-[12rem]">
               {crumb.label}
             </a>
           )}
@@ -51,7 +52,7 @@ const tailItems = shouldCollapse ? items.slice(items.length - tailCount) : [];
               {collapsedItems.map((crumb) => (
                 crumb.href ? (
                   <a
-                    href={crumb.href}
+                    href={withBasePath(crumb.href)}
                     class="block truncate rounded-md px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
                   >
                     {crumb.label}
@@ -73,7 +74,7 @@ const tailItems = shouldCollapse ? items.slice(items.length - tailCount) : [];
           {i === tailItems.length - 1 || !crumb.href ? (
             <span class="text-foreground truncate max-w-[12rem]">{crumb.label}</span>
           ) : (
-            <a href={crumb.href} class="hover:text-foreground transition-colors truncate max-w-[12rem]">
+            <a href={withBasePath(crumb.href)} class="hover:text-foreground transition-colors truncate max-w-[12rem]">
               {crumb.label}
             </a>
           )}

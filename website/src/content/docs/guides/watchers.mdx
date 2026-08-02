@@ -1,6 +1,6 @@
 ---
-title: Watchers and commands
-description: Understand recorded signals, extension hooks, operational commands, and common failures.
+title: Watchers and troubleshooting
+description: Understand recorded signals, capture behavior, extension hooks, and common failures.
 sidebar:
   order: 2
 ---
@@ -74,25 +74,12 @@ matching, scoped cleanup, and a Japa plugin backed by the configured recorder. U
 late-settling request batches without arbitrary sleeps. See
 [Testing](/adonisjs-periscope/guides/testing) for setup, signatures, and examples.
 
-## Commands
+## Operational commands
 
-```sh
-node ace periscope:doctor [--fix]
-node ace periscope:clear [--application=billing-api]
-node ace periscope:prune --hours=24 [--keep-exceptions] [--application=billing-api]
-node ace periscope:export --batch=<batch-id> [--out=report.json]
-node ace periscope:import --file=<path|-> [--application=billing-api]
-node ace periscope:pause
-node ace periscope:resume
-```
-
-The commands start the application, use the configured store, and keep their own work out of the
-recorded timeline. `periscope:doctor` diagnoses wiring drift and `--fix` conservatively enables
-Lucid query debug where safe. `--application` scopes clears and prunes to one application in a
-shared store. `periscope:export` writes versioned `periscope.batch` JSON to stdout or `--out`;
-`periscope:import` reads that format from a file or stdin (`--file=-`) into durable storage. Pause
-state is shared through the store and remains set until resumed. Automatic retention makes
-scheduled prune invocations unnecessary for most applications.
+Periscope ships Ace commands for installation diagnosis, scoped clearing and pruning, shared
+pause/resume state, and portable batch import/export. See the
+[CLI command reference](/adonisjs-periscope/reference/commands) for every flag, failure mode, and
+storage requirement.
 
 ## FAQ
 

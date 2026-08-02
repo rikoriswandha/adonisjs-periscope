@@ -1,0 +1,228 @@
+---
+title: Configuration
+description: Every config/periscope.ts option, default, merge rule, and production safety control.
+sidebar:
+  order: 1
+---
+
+Periscope reads `config/periscope.ts` during application boot. Wrap the object with `defineConfig`
+for type checking, default resolution, and strict validation:
+
+```ts
+import { defineConfig } from '@rikology/adonisjs-periscope/periscope_config'
+
+export default defineConfig({
+  applicationName: 'billing-api',
+})
+```
+
+Unknown keys and invalid values fail boot with a `PeriscopeConfigError` that reports every detected
+problem. Nested objects merge over the defaults. Arrays replace their defaults rather than extending
+them.
+
+## Runtime switches
+
+| Option            | Type       | Default                   | Behavior                                                                                                               |
+| ----------------- | ---------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `enabled`         | `boolean`  | `true`                    | Master switch before environment and runtime overrides.                                                                |
+| `applicationName` | `string`   | `'default'`               | Stable label stamped onto every entry. Required to distinguish applications sharing one store; maximum 191 characters. |
+| `enabledIn`       | `string[]` | `['development', 'test']` | Allowed `NODE_ENV` values. An empty array is rejected; use `enabled: false` instead.                                   |
+
+`PERISCOPE_ENABLED` has final precedence. `1` and `true` force recording on; `0` and `false` force it
+off. Matching ignores case and surrounding whitespace. Any other value is ignored and normal config
+resolution applies.
+
+When recording is disabled, the provider installs no watcher, logger, process, model, or dashboard
+hooks.
+
+## Storage
+
+```ts
+storage: {
+  driver: 'sqlite-local',
+  maxEntries: 10_000,
+  retention: {
+    hours: 48,
+    keepExceptions: true,
+    perType: {
+      query: { hours: 12 },
+      mail: { hours: 168 },
+    },
+  },
+}
+```
+
+| Option                             | Type                                                   | Default          | Behavior                                                         |
+| ---------------------------------- | ------------------------------------------------------ | ---------------- | ---------------------------------------------------------------- |
+| `storage.driver`                   | `'sqlite-local' \| 'database' \| 'memory' \| 'custom'` | `'sqlite-local'` | Selects the persistence implementation.                          |
+| `storage.connection`               | `string`                                               | Lucid default    | Connection name used only by the `database` driver.              |
+| `storage.factory`                  | `PeriscopeStoreFactory`                                | none             | Required with `custom`; rejected for shipped drivers.            |
+| `storage.maxEntries`               | positive integer                                       | `10_000`         | Hard entry ceiling. The oldest entries are trimmed after writes. |
+| `storage.retention`                | object                                                 | disabled         | Enables age-based pruning after boot and every 15 minutes.       |
+| `storage.retention.hours`          | positive integer                                       | required         | Default retention window for every entry type.                   |
+| `storage.retention.keepExceptions` | `boolean`                                              | `false`          | Keeps exception entries regardless of age.                       |
+| `storage.retention.perType`        | entry-type map                                         | `{}`             | Overrides the retention window for selected entry types.         |
+
+Driver selection:
+
+- `sqlite-local` stores a dedicated SQLite database under `tmp/` and requires no Lucid setup.
+- `database` uses the application's Lucid connection and requires the shipped migration.
+- `memory` is process-local and disappears on exit. Maintenance commands reject it because Ace runs
+  in a separate process.
+- `custom` calls `storage.factory({ app, config })`. See [Authoring adapters](/adonisjs-periscope/reference/adapters#custom-store).
+
+For shared databases, assign a unique `applicationName` to every application. See
+[Operations](/adonisjs-periscope/guides/operations#shared-store-application-scope) for deployment and
+pruning guidance.
+
+## Recording
+
+| Option                        | Type                   | Default                        | Behavior                                                                                                                                     |
+| ----------------------------- | ---------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `recording.caps`              | entry-type map         | `{ default: 100, query: 200 }` | Maximum accepted entries of each type within one batch. `0` disables storage for that type without subscribing or unsubscribing its watcher. |
+| `recording.sampleRate`        | number from `0` to `1` | `1`                            | Retention decision made once when a batch opens.                                                                                             |
+| `recording.keepAlways`        | `(batch) => boolean`   | `() => false`                  | Retains a sampled-out batch after inspecting its completed entry metadata.                                                                   |
+| `recording.ambientRotationMs` | positive integer       | `10_000`                       | Flush interval for work outside request, command, queue, schedule, or test scopes.                                                           |
+| `recording.pausedFlagTtlMs`   | positive integer       | `5_000`                        | Cache window for the shared pause flag. Lower values make pause/resume propagate faster at the cost of more reads.                           |
+| `recording.lateEntryGraceMs`  | non-negative integer   | `2_000`                        | Window in which a finished batch accepts late asynchronous entries. `0` drops late entries.                                                  |
+
+Caps limit a noisy batch; `storage.maxEntries` limits the whole store. Sampling drops or keeps the
+entire batch, preserving request correlation:
+
+```ts
+recording: {
+  sampleRate: 0.1,
+  caps: { default: 50, query: 100, mail: 5 },
+  keepAlways: (batch) =>
+    batch.hasEntryOfType('exception') ||
+    batch.hasTag('important') ||
+    batch.hasEntryWhere((entry) => Number(entry.content.durationMs) > 1_000),
+}
+```
+
+Monitored tags also retain sampled-out batches. Use exact tags; tag matching is not substring-based.
+
+## Redaction
+
+| Option                 | Type                | Default                         | Behavior                                                                                    |
+| ---------------------- | ------------------- | ------------------------------- | ------------------------------------------------------------------------------------------- |
+| `redact.keys`          | `string[]`          | `DEFAULT_REDACT_KEYS`           | Scrubs matching keys at any depth. Matching ignores case, underscores, hyphens, and spaces. |
+| `redact.headers`       | `string[]`          | `DEFAULT_REDACT_HEADERS`        | Scrubs matching HTTP header names.                                                          |
+| `redact.valuePatterns` | `RegExp[] \| false` | `DEFAULT_REDACT_VALUE_PATTERNS` | Scrubs secret-shaped substrings in captured strings. `false` disables value scanning only.  |
+| `redact.replacement`   | `string`            | `'[REDACTED]'`                  | Replacement value written to storage.                                                       |
+
+Redaction arrays replace the shipped defaults. Spread the exported constants to extend them:
+
+```ts
+import {
+  DEFAULT_REDACT_HEADERS,
+  DEFAULT_REDACT_KEYS,
+  DEFAULT_REDACT_VALUE_PATTERNS,
+  REDACT_EMAIL_PATTERN,
+  defineConfig,
+} from '@rikology/adonisjs-periscope/periscope_config'
+
+export default defineConfig({
+  redact: {
+    keys: [...DEFAULT_REDACT_KEYS, 'internal_reference'],
+    headers: [...DEFAULT_REDACT_HEADERS, 'x-internal-token'],
+    valuePatterns: [...DEFAULT_REDACT_VALUE_PATTERNS, REDACT_EMAIL_PATTERN],
+  },
+})
+```
+
+Filter hooks run before redaction and therefore see raw values. Tag hooks run after redaction.
+Exports do not run a second redaction pass; review exported files as sensitive artifacts.
+
+## Hooks
+
+```ts
+hooks: {
+  filter: [(entry) => entry.type !== 'log'],
+  tag: [
+    (entry) =>
+      entry.type === 'request' ? ['application-traffic'] : [],
+  ],
+}
+```
+
+| Option         | Type           | Default | Behavior                                                         |
+| -------------- | -------------- | ------- | ---------------------------------------------------------------- |
+| `hooks.filter` | `FilterHook[]` | `[]`    | Returning `false` drops an entry before buffering and redaction. |
+| `hooks.tag`    | `TagHook[]`    | `[]`    | Returned tags are appended after redaction and de-duplicated.    |
+
+Hook failures are safeguarded so diagnostic customization cannot break application work.
+
+## Watchers
+
+Every watcher accepts `enabled`. A disabled watcher subscribes to nothing. Core framework watchers
+are enabled by default; infrastructure integrations and capture of application-owned payloads are
+opt-in.
+
+| Watcher        | Default | Additional options and defaults                                                                                                                                |
+| -------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `request`      | on      | `slowMs: 1_000`, `captureResponse: true`, `captureInertia: true`, `responseSizeLimitKb: 64`, `captureSession: true`, `captureStatic: false`, `ignorePaths: []` |
+| `query`        | on      | `slowMs: 100`, `hideBindings: false`                                                                                                                           |
+| `exception`    | on      | `captureCodeFrame: 'dev'`, `captureProcessErrors: true`; code-frame modes are `dev`, `always`, and `never`                                                     |
+| `log`          | on      | `level: 'warn'`; accepted levels are `trace`, `debug`, `info`, `warn`, `error`, and `fatal`                                                                    |
+| `event`        | on      | `ignore: []`                                                                                                                                                   |
+| `command`      | on      | `ignore: []`, `captureOutput: true`                                                                                                                            |
+| `mail`         | on      | no additional options                                                                                                                                          |
+| `cache`        | on      | `captureValues: false`                                                                                                                                         |
+| `model`        | on      | `captureDirty: false`                                                                                                                                          |
+| `gate`         | on      | `ignoreAbilities: []`                                                                                                                                          |
+| `dump`         | on      | no additional options                                                                                                                                          |
+| `view`         | on      | `captureDataKeys: true`                                                                                                                                        |
+| `http_client`  | on      | `slowMs: 1_000`                                                                                                                                                |
+| `health_check` | on      | no additional options                                                                                                                                          |
+| `vine`         | on      | no additional options                                                                                                                                          |
+| `i18n`         | on      | no additional options                                                                                                                                          |
+| `transmit`     | off     | `capturePayload: false`                                                                                                                                        |
+| `job_schedule` | off     | `adapters: []`, `schedulers: []`, `capturePayload: false`                                                                                                      |
+| `redis`        | off     | `captureArguments: false`                                                                                                                                      |
+| `session`      | off     | `captureValues: false`                                                                                                                                         |
+| `limiter`      | off     | no additional options                                                                                                                                          |
+| `lock`         | off     | `contentionMs: 50`                                                                                                                                             |
+| `drive`        | off     | no additional options                                                                                                                                          |
+| `ally`         | off     | no additional options                                                                                                                                          |
+| `notification` | off     | `adapters: []`, `capturePayload: false`                                                                                                                        |
+| `socket`       | off     | `adapters: []`, `capturePayload: false`                                                                                                                        |
+| `custom`       | empty   | Array of `PeriscopeWatcherFactory` functions, registered after shipped watchers.                                                                               |
+
+Globs in `request.ignorePaths` and `event.ignore` use `*` for any run of characters. The log watcher
+cannot recover messages already filtered by Pino, so its effective floor is the stricter of the
+application logger level and `watchers.log.level`.
+
+See [Watchers and commands](/adonisjs-periscope/guides/watchers) for the signal catalogue and
+[Authoring adapters](/adonisjs-periscope/reference/adapters) for queue, scheduler, notification,
+socket, custom watcher, store, and fanout contracts.
+
+## Dashboard
+
+| Option                        | Type                                   | Default              | Behavior                                                                                 |
+| ----------------------------- | -------------------------------------- | -------------------- | ---------------------------------------------------------------------------------------- |
+| `dashboard.path`              | absolute path                          | `'/periscope'`       | Mount point for the SPA, JSON API, SSE stream, and assets. Trailing slashes are removed. |
+| `dashboard.authorize`         | `(ctx) => boolean \| Promise<boolean>` | allow non-production | Evaluated for every dashboard request. Returning `false` produces `403`.                 |
+| `dashboard.nPlusOneThreshold` | positive integer                       | `5`                  | Equal query shapes in one batch required for an N+1 candidate.                           |
+| `dashboard.sseMaxClients`     | positive integer                       | `5`                  | Maximum concurrent live-stream clients per process.                                      |
+| `dashboard.fanout`            | `FlushFanoutFactory`                   | in-process           | Optional cross-process pub/sub bridge for live updates.                                  |
+
+Changing `dashboard.path` does not weaken the production gate. For deliberate production exposure,
+replace `dashboard.authorize` with an application-specific policy and follow the
+[dashboard security checklist](/adonisjs-periscope/guides/dashboard#dashboard-security).
+
+The default fanout reaches only clients connected to the worker that recorded an entry. Durable
+storage still makes entries visible to polling clients on other workers. See
+[Multi-process live updates](/adonisjs-periscope/guides/operations#multi-process-live-updates).
+
+## Validation and merge rules
+
+- Unknown keys are errors, including misspelled watcher and entry-type names.
+- Nested objects merge over defaults.
+- Arrays replace defaults and are copied during resolution.
+- `recording.caps` precedence is an explicit entry type, then the supplied `default`, then the
+  built-in type default.
+- `storage.retention.perType` accepts only known entry types and requires a positive `hours` value.
+- `storage.factory` is required only for `driver: 'custom'`.
+- `dashboard.path` must start with `/`.
+- Integer limits reject negative, fractional, infinite, and unsafe values.
