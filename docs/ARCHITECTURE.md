@@ -145,6 +145,8 @@ with scoped counts, exception groups, clears, and prunes.
   JSON request and each SSE connection. A denied or disabled request reveals no asset or API
   content.
 
+See the [HTTP API reference](./API.md) for the endpoint schemas and stability contract.
+
 The dashboard (`packages/dashboard`) is a client-only HashRouter React SPA built with Vite. It
 talks exclusively to the JSON/SSE API, uses COSS primitives in `src/components/ui` as the
 component source of truth, and renders recorded mail HTML only after sanitization inside an

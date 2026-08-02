@@ -127,6 +127,41 @@ jobs:
       - name: Integration tests (playground, booted app)
         run: npm -w playground run test
 
+  smoke:
+    name: Smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+
+      # Keep install scripts enabled: this job specifically verifies better-sqlite3's
+      # native binding on both supported non-Linux platforms.
+      - name: Install
+        shell: bash
+        run: npm ci
+
+      - name: Unit tests (packages/periscope)
+        shell: bash
+        run: npm -w @rikology/adonisjs-periscope run test
+
+      - name: Build periscope
+        shell: bash
+        run: npm -w @rikology/adonisjs-periscope run build
+
+      - name: Verify published tarball contents
+        shell: bash
+        run: npm run pack:test
+
   compatibility:
     # Prove the oldest supported and latest AdonisJS Core and Lucid releases still satisfy the
     # watcher contracts. The Cartesian matrix catches incompatibilities hidden by the repository
@@ -181,6 +216,9 @@ jobs:
 
       - name: Build package + dashboard
         run: npm run build
+
+      - name: Check dashboard bundle-size budgets
+        run: npm run size:check
 
       # Inspect the artifact npm would publish, not merely the build directory. The script packs
       # from the package workspace and verifies every export target, the configure stubs, and the

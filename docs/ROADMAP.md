@@ -105,6 +105,21 @@ config stub and README document every new block.
 
 ## 6. DX and ecosystem
 
+**Status: shipped.** `@rikology/adonisjs-periscope/testing` ships `flushAndWait`, `findEntries`,
+`assertRecorded` / `assertNotRecorded`, application-scoped `clearRecorded`, and a Japa
+`periscopePlugin` over the same primitives (docs/TESTING.md; the playground suite consumes it).
+The doctor is a first-class `node ace periscope:doctor` command sharing one check engine with the
+Assembler hook, extended with provider-order, exception-wrapper, and Shield/CSRF checks plus a
+conservative `--fix` for Lucid `debug: true`. The batch-export v1 envelope is published
+(`parseBatchExport`, `BATCH_EXPORT_FORMAT`/`BATCH_EXPORT_VERSION`, docs/BATCH_EXPORT.md) with a
+`node ace periscope:import` counterpart that keeps uuids/batch ids, assigns fresh sequences, and
+skips or rejects already-imported entries. `/api/*` is declared experimental with a full
+hand-verified reference in docs/API.md and a stated graduation gate for Tuyau/MCP clients. The
+release workflow requires a green CI run for the exact SHA, CI enforces dashboard gzip bundle
+budgets (scripts/check-bundle-size.mjs) and runs a Windows/macOS smoke job. New docs:
+docs/OPERATIONS.md runbook, docs/ADAPTERS.md authoring guide, docs/TESTING.md, expanded
+docs/UPGRADING.md, and a slimmer README linking the docs index.
+
 | #   | Item                                                                                                                                                                                                                                                                                                                                                          | Evidence                                                                                                 | Rating  |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------- |
 | 21  | `@rikology/adonisjs-periscope/testing` export. Consumers can only assert via raw recorder/store internals — the playground hand-rolls polling and settling windows. Ship `flushAndWait`, `findEntries`, `assertRecorded` / `assertNotRecorded`, application-scoped cleanup; optional Japa plugin over the same primitives. Biggest adopter-retention feature. | `playground/tests/functional/periscope_watchers.spec.ts:35-123`, `packages/periscope/package.json:49-53` | H / M   |
@@ -118,7 +133,8 @@ config stub and README document every new block.
 
 1. ~~Quick fixes (items 1-4, 20)~~ — shipped.
 2. ~~Bucketed stats API (5) + per-route table + level filter (6)~~ — shipped.
-3. Testing export (21) + doctor command (22) — converts evaluators into adopters.
+3. ~~Testing export (21) + doctor command (22)~~ — shipped, alongside the rest of §6 (batch
+   export schema + import, API stability contract, CI/release hardening, docs split).
 4. ~~SSE efficiency (18) + per-type retention (11) + tag scoping (12)~~ — shipped.
 5. ~~Vine + scheduler watchers~~ — shipped, alongside the rest of §5 (limiter/lock, drive/ally/i18n, notification/socket seams, static-request capture).
 6. ~~Waterfall (14) + exception triage (15)~~ — shipped, alongside compare (16), live tail (17) and pins/notes (19).

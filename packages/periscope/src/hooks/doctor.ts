@@ -5,7 +5,7 @@
  * file that was distributed with this source code.
  */
 
-import { readFile, readdir, stat } from 'node:fs/promises'
+import { readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -13,19 +13,37 @@ import { DASHBOARD_ROUTE_MANIFEST } from '../http/route_manifest.ts'
 
 const CONFIG_EXTENSIONS = ['.ts', '.js', '.mts', '.mjs', '.cts', '.cjs'] as const
 const REQUEST_MIDDLEWARE_PATH = '@rikology/adonisjs-periscope/middleware/request_watcher'
+const PERISCOPE_PROVIDER_PATH = '@rikology/adonisjs-periscope/provider'
+const APP_PROVIDER_PATH = '@adonisjs/core/providers/app_provider'
+const EARLY_WATCHED_PROVIDERS = [
+  '@adonisjs/lucid/database_provider',
+  '@adonisjs/lucid/providers/database_provider',
+] as const
 const DEFAULT_MIGRATIONS_PATH = 'database/migrations'
 let configImportVersion = 0
 
-type DoctorStatus = 'PASS' | 'WARN' | 'FAIL'
+export type DoctorStatus = 'PASS' | 'WARN' | 'FAIL'
 
-type DoctorCheck = {
+export type DoctorCheck = {
   name: string
   status: DoctorStatus
   details: string
 }
 
-type DoctorLogger = {
+export type DoctorLogger = {
   log: (message: string) => unknown
+}
+
+export type RunDoctorChecksOptions = {
+  appRoot: string
+  routes?: unknown
+  logger: DoctorLogger
+}
+
+export type DoctorFixResult = {
+  changed: string[]
+  skipped: string[]
+  warning?: string
 }
 
 type DoctorParent = {
@@ -477,6 +495,91 @@ function matchingDelimiter(source: string, start: number, open: string, close: s
   return -1
 }
 
+async function readScript(
+  appRoot: string,
+  relativeStem: string
+): Promise<
+  { found: true; path: string; source: string } | { found: false; reason: 'missing' | 'unreadable' }
+> {
+  for (const extension of CONFIG_EXTENSIONS) {
+    const path = join(appRoot, `${relativeStem}${extension}`)
+    try {
+      return { found: true, path, source: await readFile(path, 'utf8') }
+    } catch (error) {
+      if (
+        isRecord(error) &&
+        typeof error.code === 'string' &&
+        (error.code === 'ENOENT' || error.code === 'ENOTDIR')
+      ) {
+        continue
+      }
+      return { found: false, reason: 'unreadable' }
+    }
+  }
+  return { found: false, reason: 'missing' }
+}
+
+function propertyContainer(
+  source: string,
+  property: string,
+  open: '[' | '{',
+  close: ']' | '}'
+): { start: number; end: number } | undefined {
+  const inspected = maskComments(source)
+  const escapedProperty = property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const matches = [
+    ...inspected.matchAll(
+      new RegExp(`(?:^|[,{\n])\\s*(?:${escapedProperty}|['"]${escapedProperty}['"])\\s*:`, 'g')
+    ),
+  ]
+  if (matches.length !== 1) return
+  const colon = inspected.indexOf(':', matches[0]!.index)
+  const start = inspected.indexOf(open, colon + 1)
+  if (start === -1 || inspected.slice(colon + 1, start).trim() !== '') return
+  const end = matchingDelimiter(inspected, start, open, close)
+  return end === -1 ? undefined : { start, end }
+}
+
+function directPropertyPositions(
+  source: string,
+  container: { start: number; end: number },
+  property: string
+): number[] {
+  const inspected = maskComments(source)
+  const escapedProperty = property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const positions: number[] = []
+  let braceDepth = 0
+  let squareDepth = 0
+  let roundDepth = 0
+  let quote: "'" | '"' | '`' | undefined
+
+  for (let index = container.start + 1; index < container.end; index++) {
+    const char = inspected[index]!
+    if (quote) {
+      if (char === '\\') index++
+      else if (char === quote) quote = undefined
+      continue
+    }
+    if (char === "'" || char === '"' || char === '`') quote = char
+    else if (char === '{') braceDepth++
+    else if (char === '}') braceDepth--
+    else if (char === '[') squareDepth++
+    else if (char === ']') squareDepth--
+    else if (char === '(') roundDepth++
+    else if (char === ')') roundDepth--
+
+    if (braceDepth !== 0 || squareDepth !== 0 || roundDepth !== 0) continue
+    const candidate = inspected
+      .slice(index)
+      .match(new RegExp(`^(?:\\s|,)*(?:${escapedProperty}|['"]${escapedProperty}['"])\\s*:`))
+    if (candidate) {
+      positions.push(index + candidate[0].lastIndexOf(':'))
+      index += candidate[0].length - 1
+    }
+  }
+  return positions
+}
+
 function firstArrayElement(source: string): string | undefined {
   const open = source.indexOf('[')
   if (open === -1) {
@@ -594,6 +697,188 @@ async function middlewareCheck(appRoot: string): Promise<DoctorCheck> {
   }
 }
 
+async function providerCheck(appRoot: string): Promise<DoctorCheck> {
+  const adonisrc = await readScript(appRoot, 'adonisrc')
+  if (!adonisrc.found) {
+    return {
+      name: 'Provider',
+      status: 'WARN',
+      details: adonisrc.reason === 'missing' ? 'adonisrc is missing' : 'adonisrc could not be read',
+    }
+  }
+
+  const providers = propertyContainer(adonisrc.source, 'providers', '[', ']')
+  if (!providers) {
+    return {
+      name: 'Provider',
+      status: 'WARN',
+      details: 'adonisrc providers could not be inspected',
+    }
+  }
+
+  const source = maskComments(adonisrc.source).slice(providers.start, providers.end + 1)
+  const periscopeAt = source.indexOf(PERISCOPE_PROVIDER_PATH)
+  if (periscopeAt === -1) {
+    return {
+      name: 'Provider',
+      status: 'FAIL',
+      details: `${PERISCOPE_PROVIDER_PATH} is not registered`,
+    }
+  }
+
+  const appAt = source.indexOf(APP_PROVIDER_PATH)
+  if (appAt === -1) {
+    return {
+      name: 'Provider',
+      status: 'WARN',
+      details: 'core app provider could not be found; Periscope ordering is unknown',
+    }
+  }
+  if (periscopeAt < appAt) {
+    return {
+      name: 'Provider',
+      status: 'WARN',
+      details: 'Periscope must be listed after the core app provider',
+    }
+  }
+
+  const watchedBefore = EARLY_WATCHED_PROVIDERS.find((provider) => {
+    const position = source.indexOf(provider)
+    return position !== -1 && position < periscopeAt
+  })
+  if (watchedBefore) {
+    return {
+      name: 'Provider',
+      status: 'WARN',
+      details: `list Periscope before ${watchedBefore} so model watchers attach before Lucid models boot`,
+    }
+  }
+
+  const descriptorStart = source.lastIndexOf('{', periscopeAt)
+  const descriptorEnd =
+    descriptorStart === -1 ? -1 : matchingDelimiter(source, descriptorStart, '{', '}')
+  if (descriptorStart !== -1 && descriptorEnd > periscopeAt) {
+    const descriptor = source.slice(descriptorStart, descriptorEnd + 1)
+    const environment = propertyContainer(descriptor, 'environment', '[', ']')
+    if (!environment) {
+      return {
+        name: 'Provider',
+        status: 'WARN',
+        details: 'provider descriptor should enable web, console, and test environments',
+      }
+    }
+    const environments = descriptor.slice(environment.start, environment.end + 1)
+    const missing = ['web', 'console', 'test'].filter(
+      (name) => !new RegExp(`['"]${name}['"]`).test(environments)
+    )
+    if (missing.length > 0) {
+      return {
+        name: 'Provider',
+        status: 'WARN',
+        details: `provider environment is missing: ${missing.join(', ')}`,
+      }
+    }
+  } else {
+    return {
+      name: 'Provider',
+      status: 'WARN',
+      details: 'use a provider descriptor enabling web, console, and test environments',
+    }
+  }
+
+  return {
+    name: 'Provider',
+    status: 'PASS',
+    details: 'registered early for web, console, and test',
+  }
+}
+
+async function exceptionWrapperCheck(appRoot: string): Promise<DoctorCheck> {
+  const adonisrc = await readScript(appRoot, 'adonisrc')
+  let exceptionsDirectory = 'app/exceptions'
+  if (adonisrc.found) {
+    const inspected = maskComments(adonisrc.source)
+    const configured = /\bexceptions\s*:\s*(['"])([^'"]+)\1/.exec(inspected)
+    if (configured) exceptionsDirectory = configured[2]!
+  }
+
+  const handler = await readScript(appRoot, `${exceptionsDirectory}/handler`)
+  if (!handler.found) {
+    return {
+      name: 'Exception wrapper',
+      status: 'WARN',
+      details:
+        handler.reason === 'missing'
+          ? `${exceptionsDirectory}/handler is missing`
+          : `${exceptionsDirectory}/handler could not be read`,
+    }
+  }
+
+  return /\bwithPeriscope\b/.test(maskComments(handler.source))
+    ? {
+        name: 'Exception wrapper',
+        status: 'PASS',
+        details: 'withPeriscope wraps the application exception handler',
+      }
+    : {
+        name: 'Exception wrapper',
+        status: 'WARN',
+        details: 'withPeriscope is absent; application exceptions will not be recorded',
+      }
+}
+
+async function shieldCheck(appRoot: string): Promise<DoctorCheck> {
+  let packageSource: string
+  try {
+    packageSource = await readFile(join(appRoot, 'package.json'), 'utf8')
+  } catch {
+    return { name: 'Shield / CSRF', status: 'WARN', details: 'package.json could not be read' }
+  }
+
+  let installed = false
+  try {
+    const packageJson: unknown = JSON.parse(packageSource)
+    if (isRecord(packageJson)) {
+      installed = [
+        'dependencies',
+        'devDependencies',
+        'optionalDependencies',
+        'peerDependencies',
+      ].some((field) => {
+        const dependencies = packageJson[field]
+        return isRecord(dependencies) && '@adonisjs/shield' in dependencies
+      })
+    }
+  } catch {
+    return { name: 'Shield / CSRF', status: 'WARN', details: 'package.json is invalid' }
+  }
+  if (!installed) {
+    return { name: 'Shield / CSRF', status: 'PASS', details: '@adonisjs/shield is not installed' }
+  }
+
+  const kernel = await readScript(appRoot, 'start/kernel')
+  if (!kernel.found) {
+    return {
+      name: 'Shield / CSRF',
+      status: 'WARN',
+      details: 'Shield is installed, but start/kernel could not be inspected',
+    }
+  }
+  if (!/@adonisjs\/shield\/shield_middleware/.test(maskComments(kernel.source))) {
+    return {
+      name: 'Shield / CSRF',
+      status: 'PASS',
+      details: 'Shield is installed but its middleware is not registered',
+    }
+  }
+
+  return {
+    name: 'Shield / CSRF',
+    status: 'PASS',
+    details: 'dashboard mutations fetch /api/csrf-token and send x-csrf-token for Shield',
+  }
+}
+
 function normalizeRoutePattern(pattern: string): string {
   const segments = pattern.split('/').filter(Boolean)
   return segments.length === 0 ? '/' : `/${segments.join('/')}`
@@ -707,7 +992,172 @@ function routeCollisionCheck(periscope: PeriscopeSettings, routes: unknown): Doc
   }
 }
 
-function renderTable(checks: readonly DoctorCheck[]): string {
+/**
+ * Runs every Periscope diagnostic against a host application.
+ */
+export async function runDoctorChecks(options: RunDoctorChecksOptions): Promise<DoctorCheck[]> {
+  void options.logger
+  const [periscopeConfig, databaseConfig] = await Promise.all([
+    loadConfig(options.appRoot, 'config/periscope'),
+    loadConfig(options.appRoot, 'config/database'),
+  ])
+  const periscope = readPeriscopeSettings(periscopeConfig)
+  const database = readDatabaseSettings(databaseConfig)
+
+  const safe = async (check: Promise<DoctorCheck>, fallback: DoctorCheck): Promise<DoctorCheck> =>
+    check.catch(() => fallback)
+  const [migration, middleware, provider, exceptionWrapper, shield] = await Promise.all([
+    safe(migrationCheck(options.appRoot, periscope, database), {
+      name: 'Migration',
+      status: 'WARN',
+      details: 'migration configuration could not be inspected',
+    }),
+    safe(middlewareCheck(options.appRoot), {
+      name: 'Request middleware',
+      status: 'WARN',
+      details: 'start/kernel could not be inspected',
+    }),
+    safe(providerCheck(options.appRoot), {
+      name: 'Provider',
+      status: 'WARN',
+      details: 'adonisrc providers could not be inspected',
+    }),
+    safe(exceptionWrapperCheck(options.appRoot), {
+      name: 'Exception wrapper',
+      status: 'WARN',
+      details: 'application exception handler could not be inspected',
+    }),
+    safe(shieldCheck(options.appRoot), {
+      name: 'Shield / CSRF',
+      status: 'WARN',
+      details: 'Shield configuration could not be inspected',
+    }),
+  ])
+
+  let lucidDebug: DoctorCheck
+  try {
+    lucidDebug = lucidDebugCheck(periscope, database)
+  } catch {
+    lucidDebug = {
+      name: 'Lucid debug',
+      status: 'WARN',
+      details: 'config/database could not be inspected',
+    }
+  }
+
+  return [
+    nodeCheck(),
+    migration,
+    lucidDebug,
+    routeCollisionCheck(periscope, options.routes),
+    middleware,
+    provider,
+    exceptionWrapper,
+    shield,
+  ]
+}
+
+/**
+ * Conservatively adds `debug: true` to inline Lucid connection object literals.
+ */
+export async function fixLucidDebugConfig(appRoot: string): Promise<DoctorFixResult> {
+  const script = await readScript(appRoot, 'config/database')
+  if (!script.found) {
+    return {
+      changed: [],
+      skipped: [],
+      warning:
+        'config/database could not be read; add debug: true to each Lucid connection manually',
+    }
+  }
+  const loaded = readDatabaseSettings(await loadConfig(appRoot, 'config/database'))
+  if (!loaded.valid) {
+    return {
+      changed: [],
+      skipped: [],
+      warning: `${loaded.reason}; add debug: true to each Lucid connection manually`,
+    }
+  }
+
+  const connections = propertyContainer(script.source, 'connections', '{', '}')
+  if (!connections) {
+    return {
+      changed: [],
+      skipped: [],
+      warning: 'connections is not one unambiguous object literal; add debug: true manually',
+    }
+  }
+
+  const insertions: { at: number; text: string; name: string }[] = []
+  const skipped: string[] = []
+  const inspected = maskComments(script.source)
+  for (const name of Object.keys(loaded.connections)) {
+    const positions = directPropertyPositions(script.source, connections, name)
+    if (positions.length !== 1) {
+      return {
+        changed: [],
+        skipped,
+        warning: `connection "${name}" is ambiguous; no changes were written`,
+      }
+    }
+    const colon = positions[0]!
+    const objectStart = inspected.slice(colon + 1).search(/\S/) + colon + 1
+    if (objectStart <= colon || inspected[objectStart] !== '{') {
+      return {
+        changed: [],
+        skipped,
+        warning: `connection "${name}" is not an inline object literal; no changes were written`,
+      }
+    }
+    const objectEnd = matchingDelimiter(inspected, objectStart, '{', '}')
+    if (objectEnd === -1) {
+      return {
+        changed: [],
+        skipped,
+        warning: `connection "${name}" object is ambiguous; no changes were written`,
+      }
+    }
+    const debug = directPropertyPositions(
+      script.source,
+      { start: objectStart, end: objectEnd },
+      'debug'
+    )
+    if (debug.length > 1) {
+      return {
+        changed: [],
+        skipped,
+        warning: `connection "${name}" has ambiguous debug settings; no changes were written`,
+      }
+    }
+    if (debug.length === 1) {
+      if (loaded.connections[name]?.debug !== true) {
+        return {
+          changed: [],
+          skipped,
+          warning: `connection "${name}" already has a debug setting that is not true; set it to true manually`,
+        }
+      }
+      skipped.push(name)
+      continue
+    }
+
+    const lineStart = script.source.lastIndexOf('\n', objectStart) + 1
+    const keyIndent = /^\s*/.exec(script.source.slice(lineStart, objectStart))?.[0] ?? ''
+    const text =
+      script.source[objectStart + 1] === '\n' ? `\n${keyIndent}  debug: true,` : ' debug: true,'
+    insertions.push({ at: objectStart + 1, text, name })
+  }
+
+  if (insertions.length === 0) return { changed: [], skipped }
+  let output = script.source
+  for (const insertion of insertions.toSorted((left, right) => right.at - left.at)) {
+    output = `${output.slice(0, insertion.at)}${insertion.text}${output.slice(insertion.at)}`
+  }
+  await writeFile(script.path, output, 'utf8')
+  return { changed: insertions.map(({ name }) => name), skipped }
+}
+
+export function renderDoctorTable(checks: readonly DoctorCheck[]): string {
   const rows = [
     ['Check', 'Status', 'Details'],
     ...checks.map((check) => [check.name, check.status, check.details.replace(/\s+/g, ' ').trim()]),
@@ -721,7 +1171,7 @@ function renderTable(checks: readonly DoctorCheck[]): string {
 }
 
 function printTable(parent: DoctorParent, checks: readonly DoctorCheck[]): void {
-  const output = renderTable(checks)
+  const output = renderDoctorTable(checks)
 
   try {
     const logger = parent.ui?.logger
@@ -743,119 +1193,75 @@ function printTable(parent: DoctorParent, checks: readonly DoctorCheck[]): void 
 /**
  * Creates the development-only Periscope doctor.
  *
- * Configuration and filesystem checks run during Assembler's init phase. The route check waits
- * for Assembler's documented `routesCommitted` hook, because only that list reflects routes
- * registered by providers and imported route files. All five results are then emitted together.
+ * Filesystem checks run during Assembler's init phase. The route check waits for Assembler's
+ * documented `routesCommitted` hook, because only that list reflects routes registered by
+ * providers and imported route files.
  */
 export function periscopeDoctor(): PeriscopeDoctorHook {
   return {
     async run(parentValue: unknown, hooksValue?: unknown): Promise<void> {
       try {
-        if (!isRecord(parentValue)) {
-          return
-        }
-
+        if (!isRecord(parentValue)) return
         const parent = parentValue as DoctorParent
-        if (!isDevelopmentServer(parent)) {
-          return
-        }
+        if (!isDevelopmentServer(parent)) return
 
         const appRoot = resolveAppRoot(parent)
-        const checks: DoctorCheck[] = [nodeCheck()]
-
         if (!appRoot) {
-          checks.push(
-            { name: 'Migration', status: 'WARN', details: 'application root is unavailable' },
-            { name: 'Lucid debug', status: 'WARN', details: 'application root is unavailable' },
-            {
-              name: 'Request middleware',
-              status: 'WARN',
-              details: 'application root is unavailable',
-            }
-          )
-        } else {
-          const [periscopeConfig, databaseConfig] = await Promise.all([
-            loadConfig(appRoot, 'config/periscope'),
-            loadConfig(appRoot, 'config/database'),
+          const unavailable = 'application root is unavailable'
+          printTable(parent, [
+            nodeCheck(),
+            { name: 'Migration', status: 'WARN', details: unavailable },
+            { name: 'Lucid debug', status: 'WARN', details: unavailable },
+            { name: 'Dashboard routes', status: 'WARN', details: unavailable },
+            { name: 'Request middleware', status: 'WARN', details: unavailable },
+            { name: 'Provider', status: 'WARN', details: unavailable },
+            { name: 'Exception wrapper', status: 'WARN', details: unavailable },
+            { name: 'Shield / CSRF', status: 'WARN', details: unavailable },
           ])
-          const periscope = readPeriscopeSettings(periscopeConfig)
-          const database = readDatabaseSettings(databaseConfig)
-          const [migration, middleware] = await Promise.all([
-            migrationCheck(appRoot, periscope, database).catch((): DoctorCheck => ({
-              name: 'Migration',
-              status: 'WARN',
-              details: 'migration configuration could not be inspected',
-            })),
-            middlewareCheck(appRoot).catch((): DoctorCheck => ({
-              name: 'Request middleware',
-              status: 'WARN',
-              details: 'start/kernel could not be inspected',
-            })),
-          ])
-          let lucidDebug: DoctorCheck
-          try {
-            lucidDebug = lucidDebugCheck(periscope, database)
-          } catch {
-            lucidDebug = {
-              name: 'Lucid debug',
-              status: 'WARN',
-              details: 'config/database could not be inspected',
-            }
-          }
-          checks.push(migration, lucidDebug, middleware)
-
-          let printed = false
-          const printOnce = (routes: unknown) => {
-            if (printed) return
-            printed = true
-            printTable(parent, [
-              checks[0]!,
-              checks[1]!,
-              checks[2]!,
-              routeCollisionCheck(periscope, routes),
-              checks[3]!,
-            ])
-          }
-          /**
-           * An invalid Periscope config can prevent the application from booting far enough to
-           * commit routes. Emit the complete advisory table now instead of waiting on an event
-           * that cannot occur; the route row explains why it could not be checked.
-           */
-          if (!periscope.valid) {
-            printOnce(undefined)
-            return
-          }
-
-          if (isRecord(hooksValue) && typeof hooksValue.add === 'function') {
-            try {
-              ;(hooksValue as DoctorHooks).add('routesCommitted', async (_parent, routes) => {
-                try {
-                  printOnce(routes)
-                } catch {
-                  printOnce(undefined)
-                }
-              })
-              return
-            } catch {
-              // Render an unknown route result below when hook registration is unavailable.
-            }
-          }
-
-          printOnce(undefined)
           return
         }
 
-        printTable(parent, [
-          checks[0]!,
-          checks[1]!,
-          checks[2]!,
-          {
-            name: 'Dashboard routes',
-            status: 'WARN',
-            details: 'application root is unavailable',
-          },
-          checks[3]!,
-        ])
+        const logger =
+          parent.ui?.logger && typeof parent.ui.logger.log === 'function'
+            ? parent.ui.logger
+            : { log: (_message: string) => undefined }
+        const initialChecks = await runDoctorChecks({ appRoot, logger })
+        let printed = false
+        const printOnce = async (routes: unknown) => {
+          if (printed) return
+          printed = true
+          const checks =
+            routes === undefined
+              ? initialChecks
+              : await runDoctorChecks({ appRoot, routes, logger }).catch(() => initialChecks)
+          printTable(parent, checks)
+        }
+
+        /**
+         * An invalid Periscope config can prevent the application from booting far enough to
+         * commit routes. Emit the complete advisory table now instead of waiting on an event.
+         */
+        if (!initialChecks[3]?.details.includes('Assembler route list')) {
+          await printOnce(undefined)
+          return
+        }
+
+        if (isRecord(hooksValue) && typeof hooksValue.add === 'function') {
+          try {
+            ;(hooksValue as DoctorHooks).add('routesCommitted', async (_parent, routes) => {
+              try {
+                await printOnce(routes)
+              } catch {
+                await printOnce(undefined)
+              }
+            })
+            return
+          } catch {
+            // Render an unknown route result below when hook registration is unavailable.
+          }
+        }
+
+        await printOnce(undefined)
       } catch {
         // Doctor checks are advisory and must never abort Assembler or the host application.
       }

@@ -24,6 +24,7 @@
     "security": "npm run security:audit && npm run security:production",
     "format": "prettier --write .",
     "release": "npm run pack:test && node scripts/release.mjs",
+    "size:check": "node scripts/check-bundle-size.mjs",
     "pack:test": "node scripts/verify-pack.mjs",
     "release:dry": "node scripts/release.mjs --dry-run"
   },

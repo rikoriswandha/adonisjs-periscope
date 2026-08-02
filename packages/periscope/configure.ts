@@ -765,7 +765,7 @@ function printChecklist(
   )
 
   command.logger.log(
-    "[ ] Optional: register periscopeDoctor() from '@rikology/adonisjs-periscope/hooks' in adonisrc.ts hooks.init to check Node, migrations, Lucid debug, dashboard routes, and middleware ordering"
+    "[ ] Run node ace periscope:doctor (optional: also register periscopeDoctor() from '@rikology/adonisjs-periscope/hooks' in adonisrc.ts hooks.init for development-server checks)"
   )
 }
 

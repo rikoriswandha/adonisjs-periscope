@@ -1,0 +1,435 @@
+# HTTP API
+
+## Stability contract
+
+The `/api/*` routes below are mounted under the configured `dashboard.path` (which defaults to
+`/periscope`). They are **experimental** and ship to support the bundled dashboard. Their query,
+request, response, and event shapes may change in any minor release. Breaking changes are listed in
+[UPGRADING](./UPGRADING.md).
+
+The [versioned batch-export envelope](./BATCH_EXPORT.md) is the exception: it is a stable interchange
+format, not an experimental dashboard transport.
+
+Once these shapes stop churning, the API will be declared public and published with JSON schemas.
+That is the prerequisite for a generated Tuyau client and, later, a read-only localhost MCP server
+for AI-agent debugging. The MCP integration will remain a separate package and will preserve
+Periscope's redaction boundary.
+
+## Access control and mutation protection
+
+Every API, SSE, asset, and SPA route passes through the same middleware chain:
+
+1. The environment gate evaluates `enabledIn` and the `PERISCOPE_ENABLED` override. A disabled
+   installation returns `404` without calling the application authorization policy.
+2. `dashboard.authorize(ctx)` runs for every request and every SSE connection. A false result returns
+   `403`. The default policy permits non-production applications and denies production applications.
+3. Unsafe methods (`POST`, `PUT`, `PATCH`, and `DELETE`) must send
+   `X-Periscope-Request: dashboard`. If `Sec-Fetch-Site` is present, it must equal `same-origin`.
+   Failure returns `403`.
+
+The whole authorized chain runs inside `recorder.mute`, so dashboard access does not record itself.
+These checks do not replace authentication: applications that expose the dashboard beyond a trusted
+local environment must implement `dashboard.authorize` accordingly.
+
+When AdonisJS Shield's CSRF guard is installed, the bundled dashboard first calls
+`GET /api/csrf-token`. The response is `{ "token": string | null }` with `Cache-Control: no-store`;
+the token is `null` when Shield did not attach `request.csrfToken`. The dashboard sends a non-null
+token as `X-CSRF-Token` on mutations, alongside `X-Periscope-Request`. Shield performs the actual
+token validation. Periscope's mutation middleware independently enforces the dashboard header and
+same-origin browser signal.
+
+## Common schemas
+
+The notation in this document describes the current JSON transport. It is not a stable JSON Schema.
+An optional property is marked with `?`; unions use `|`.
+
+```ts
+type EntryType =
+  | 'request'
+  | 'query'
+  | 'exception'
+  | 'log'
+  | 'event'
+  | 'command'
+  | 'mail'
+  | 'cache'
+  | 'model'
+  | 'gate'
+  | 'dump'
+  | 'view'
+  | 'http_client'
+  | 'schedule'
+  | 'job'
+  | 'health_check'
+  | 'broadcast'
+  | 'redis'
+  | 'session'
+  | 'validation'
+  | 'rate_limit'
+  | 'lock'
+  | 'drive'
+  | 'ally'
+  | 'i18n'
+  | 'notification'
+  | 'socket'
+
+type StoredEntryTransport = {
+  uuid: string
+  batchId: string
+  application: string
+  type: EntryType
+  familyHash: string | null
+  content: Record<string, unknown>
+  tags: string[]
+  shouldDisplayOnIndex: boolean
+  sequence: string // decimal bigint ordering key
+  createdAt: string // Date#toISOString()
+}
+
+type Paginated<T> = {
+  data: T[]
+  nextCursor: string | null
+}
+
+type ExceptionGroupTransport = {
+  familyHash: string
+  latest: StoredEntryTransport
+  count: number
+  lastSeen: string // Date#toISOString()
+  state: 'open' | 'resolved' | 'ignored'
+  stateUpdatedAt: string | null // ISO datetime
+}
+
+type EntryMetadata = {
+  uuid: string
+  pinned: boolean
+  note: string | null
+  updatedAt: string | null // ISO datetime
+}
+
+type FlushedEvent = {
+  type: EntryType
+  uuid: string
+  indexRow: {
+    uuid: string
+    batchId: string
+    application: string
+    type: EntryType
+    familyHash: string | null
+    tags: string[]
+    shouldDisplayOnIndex: true
+    sequence: string
+    createdAt: string
+  }
+}
+```
+
+`content` is watcher-specific. It is the stored, already-redacted entry payload rather than a
+route-wide fixed schema.
+
+For routes that accept `application`, omission means all applications unless the route says it uses
+the configured `applicationName`. `HEAD` is registered beside each listed `GET` route except the SSE
+stream and returns the corresponding headers without a response body.
+
+## Entry routes
+
+### `GET /api/entries`
+
+Returns `Paginated<StoredEntryTransport>`. Filters combine with AND.
+
+| Query parameter    | Type                              | Default      | Behavior                                                                                                            |
+| ------------------ | --------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `type`             | `EntryType` string                | all types    | Exact entry type. The controller forwards an unrecognized string; it does not validate the enum.                    |
+| `tag`              | string or repeated strings        | none         | Exact tag match. Repeated values require every supplied tag.                                                        |
+| `text`             | string                            | none         | Case-insensitive substring search over serialized entry content. This is the API's free-text search parameter.      |
+| `from`             | ISO datetime string               | unbounded    | Inclusive `createdAt` lower bound. An invalid value is ignored.                                                     |
+| `to`               | ISO datetime string               | unbounded    | Inclusive `createdAt` upper bound. An invalid value is ignored.                                                     |
+| `family_hash`      | string                            | none         | Exact family hash.                                                                                                  |
+| `batch_id`         | string                            | none         | Exact batch identifier.                                                                                             |
+| `application`      | string                            | all          | Exact application name.                                                                                             |
+| `level`            | string                            | none         | Trimmed, case-insensitive exact match against `content.level`; an empty value is ignored.                           |
+| `display_on_index` | `'true' \| '1' \| 'false' \| '0'` | unset        | Restricts results by dashboard-index visibility. Other values are ignored.                                          |
+| `sort`             | `'sequence'`                      | `'sequence'` | The only allowlisted sort key. Other values are ignored.                                                            |
+| `direction`        | `'asc' \| 'desc'`                 | `'desc'`     | Oldest-first or newest-first. Other values are ignored.                                                             |
+| `cursor`           | string                            | none         | Opaque `nextCursor` from a page using the same direction. Malformed cursors are treated as absent by the stores.    |
+| `limit`            | number encoded as a string        | `100`        | Converted with `Number`; non-finite/non-positive values use `100`, fractions are floored, and values cap at `1000`. |
+
+### `GET /api/entries/:uuid`
+
+Returns `{ data: StoredEntryTransport }`. An unknown `uuid` returns `404`.
+
+### `GET /api/entries/:uuid/eml`
+
+For a `mail` entry whose `content.raw` contains a usable string, returns that raw message as
+`message/rfc822` with an attachment filename derived from `content.subject`. Base64 is decoded only
+when `content.rawEncoding` is exactly `base64`. An unknown entry, a non-mail entry, or mail without a
+usable raw message returns `404`.
+
+### `PUT /api/entries/:uuid/metadata`
+
+The JSON body can contain either or both fields:
+
+| Body field | Type           | Default                    | Behavior                                                                                               |
+| ---------- | -------------- | -------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `pinned`   | boolean        | preserve the current value | Only literal `true` sets the flag when the field is present; any other present value sets it to false. |
+| `note`     | string or null | preserve the current value | Strings are limited to 2,000 characters; a present non-string value clears the note.                   |
+
+Returns `EntryMetadata`. With neither field, it returns the current/default record unchanged. When
+the result is unpinned with no note, the persisted record is removed and `updatedAt` is `null`.
+Otherwise `updatedAt` is a fresh ISO datetime. Metadata retention follows configured storage
+retention. The controller does not require that an entry with `uuid` exists.
+
+### `GET /api/entry-metadata`
+
+Takes no parameters. Returns `{ records: EntryMetadata[] }` for all stored metadata flags.
+
+### `GET /api/batches/:batchId`
+
+Returns `{ data: StoredEntryTransport[] }`. An unknown batch returns an empty `data` array.
+
+### `GET /api/batches/:batchId/export`
+
+Returns the stable, versioned `periscope.batch` JSON document described in
+[BATCH_EXPORT](./BATCH_EXPORT.md), as a download. An unknown or empty batch returns `404`.
+
+## Dashboard routes
+
+### `GET /api/csrf-token`
+
+Takes no parameters. Returns `{ token: string | null }` and `Cache-Control: no-store`. See
+[Access control and mutation protection](#access-control-and-mutation-protection).
+
+### `GET /api/counts`
+
+| Query parameter | Type   | Default          |
+| --------------- | ------ | ---------------- |
+| `application`   | string | all applications |
+
+Returns `{ data: Partial<Record<EntryType, number>> }`. Types with no stored entries may be omitted.
+
+### `GET /api/stats`
+
+This endpoint has two modes. Both accept optional `application: string`, defaulting to all
+applications, and return `Cache-Control: no-store`.
+
+With neither `bucket` nor `group_by`, it returns a bounded legacy overview. Each source list samples
+at most 500 entries:
+
+```ts
+type LegacyStatsResponse = {
+  data: {
+    requests: {
+      sampled: number
+      errorCount: number // sampled requests with status >= 500
+      p50: number | null // durationMs, nearest rank
+      p95: number | null
+    }
+    slowQueryFamilies: Array<{
+      familyHash: string
+      sql: string
+      count: number
+      avgDurationMs: number | null
+      maxDurationMs: number | null
+    }> // at most 10 families
+  }
+}
+```
+
+When either `bucket` or `group_by` is present, it returns time-bucketed store statistics:
+
+| Query parameter | Type                 | Default                                                                 |
+| --------------- | -------------------- | ----------------------------------------------------------------------- |
+| `application`   | string               | all applications                                                        |
+| `from`          | ISO datetime string  | `to - 1 hour`, or `to - (60 * bucket)` seconds when `bucket` is present |
+| `to`            | ISO datetime string  | current time                                                            |
+| `bucket`        | whole-number seconds | one bucket spanning the resolved window                                 |
+| `group_by`      | `'route'`            | no grouping                                                             |
+
+`bucket` must be between 1 and 604,800 seconds. `from` must not be after `to`, and the window may
+contain at most 500 buckets. When grouped by route, the group is `METHOD routePattern`, falling back
+to the request URL when no route pattern was matched.
+
+```ts
+type BucketedStatsResponse = {
+  data: {
+    from: string
+    to: string
+    bucketSeconds: number
+    groupBy: 'route' | null
+    buckets: Array<{
+      bucketStart: string
+      group: string | null
+      count: number
+      errorCount: number
+      p50: number | null
+      p95: number | null
+    }>
+    sampled: number
+    truncated: boolean
+  }
+}
+```
+
+Buckets are ordered by start ascending and then group; empty cells are omitted. `truncated` indicates
+that the store's sampling ceiling dropped the oldest part of the window.
+
+### `GET /api/status`
+
+Takes no parameters. Returns:
+
+```ts
+type StatusResponse = {
+  enabled: boolean
+  paused: boolean
+  path: string
+  applicationName: string
+  applications: Array<{
+    name: string
+    entries: number
+    latestAt: string | null
+  }>
+  nPlusOneThreshold: number
+  store: {
+    pendingBatches: number
+    droppedBatches: number
+    failedBatches: number
+    retriedBatches: number
+  } | null
+}
+```
+
+The configured application is included with zero entries when the store has no row for it. `store`
+is `null` when the active driver does not expose diagnostics.
+
+### `PUT /api/flags/:name`
+
+Accepted names are `paused` and `dump-open:<id>`, where `<id>` is 1–128 ASCII letters, digits,
+underscores, or hyphens. Other names return `404`.
+
+An optional `value` body field is converted with `String`; omission stores `'1'`. A `dump-open:` flag
+expires after 30 seconds. Returns `204 No Content`.
+
+### `DELETE /api/flags/:name`
+
+Accepts the same names as the PUT route, deletes the flag if present, and returns `204 No Content`.
+Other names return `404`.
+
+### `POST /api/clear`
+
+| Query parameter | Type   | Default          |
+| --------------- | ------ | ---------------- |
+| `application`   | string | all applications |
+
+Clears stored entries in scope and returns `204 No Content`.
+
+## Exception-group routes
+
+### `GET /api/exception-groups`
+
+| Query parameter | Type                       | Default                      |
+| --------------- | -------------------------- | ---------------------------- |
+| `tag`           | string                     | none                         |
+| `application`   | string                     | configured `applicationName` |
+| `cursor`        | string                     | none                         |
+| `limit`         | number encoded as a string | `100`, capped at `1000`      |
+
+`tag` is an exact occurrence-tag filter. Pagination uses the same non-finite/non-positive fallback
+and flooring rules as the entries list. Returns `Paginated<ExceptionGroupTransport>`, ordered by the
+newest occurrence in each family. A resolved group automatically appears open when a newer
+occurrence exists; ignored groups remain ignored.
+
+### `PUT /api/exception-groups/:familyHash/state`
+
+| Body field    | Type                                | Default                      |
+| ------------- | ----------------------------------- | ---------------------------- |
+| `state`       | `'open' \| 'resolved' \| 'ignored'` | required                     |
+| `application` | string                              | configured `applicationName` |
+
+Returns `{ familyHash: string, state: 'open' | 'resolved' | 'ignored', stateUpdatedAt: string | null }`.
+Setting `open` removes persisted state and returns a null timestamp; the other states store and
+return a fresh ISO timestamp. An invalid or missing state returns `400`.
+
+## Monitored-tag routes
+
+The maximum accepted path-tag length is the storage tag-index maximum (191 characters).
+
+### `GET /api/monitored-tags`
+
+| Query parameter | Type   | Default                      |
+| --------------- | ------ | ---------------------------- |
+| `application`   | string | configured `applicationName` |
+
+Returns `{ data: string[] }`, sorted lexicographically.
+
+### `PUT /api/monitored-tags/:tag`
+
+Starts monitoring the path tag for the optional `application` query string, which defaults to the
+configured `applicationName`. Returns `204 No Content`. Empty tags and tags longer than 191
+characters return `400`.
+
+### `DELETE /api/monitored-tags/:tag`
+
+Stops monitoring the path tag for the optional `application` query string, which defaults to the
+configured `applicationName`. Returns `204 No Content`. Empty tags and tags longer than 191
+characters return `400`.
+
+## Live stream
+
+### `GET /api/stream`
+
+This is an SSE response (`text/event-stream; charset=utf-8`), not JSON.
+
+| Input                  | Type   | Default | Behavior                                                                                          |
+| ---------------------- | ------ | ------- | ------------------------------------------------------------------------------------------------- |
+| `application` query    | string | all     | Sends and replays only events for that application.                                               |
+| `Last-Event-ID` header | string | none    | Replays index-visible entries whose sequence is greater than this value, oldest first, up to 200. |
+| `lastEventId` query    | string | none    | Replay fallback used only when the header is absent.                                              |
+
+The connection begins with `: connected`; idle connections receive `: keepalive` every 15 seconds.
+Each live or replayed entry is one event frame:
+
+```text
+event: flush
+id: <indexRow.sequence>
+data: <JSON-encoded FlushedEvent>
+
+```
+
+The `id` is the decimal sequence string. A reconnecting client sends it as `Last-Event-ID`; events
+that arrive while replay is being read are queued and emitted after replay, preserving monotonic
+order. Replay is limited to entries with `shouldDisplayOnIndex: true`.
+
+Concurrent clients are capped by `dashboard.sseMaxClients` (default `5`) per worker. Excess clients
+receive `429` with `Retry-After: 5` and `{ "error": "Too many active Periscope stream clients" }`.
+Failure to subscribe to fan-out returns `503` with
+`{ "error": "Periscope live stream is unavailable" }`. Without a custom `dashboard.fanout`, only
+flushes from the worker serving the connection are live.
+
+## Unknown API paths and errors
+
+The explicit `/api` and `/api/*` catch-alls precede the SPA fallback. For `HEAD`, `OPTIONS`, `GET`,
+`POST`, `PUT`, `PATCH`, and `DELETE`, an unknown API path therefore produces a `404` response rather
+than the dashboard HTML; clients requesting JSON receive the framework's JSON 404 representation.
+The common middleware still runs first, so a disabled installation returns `404`, denied
+`dashboard.authorize` returns `403`, and an unprotected unsafe request can return `403` before the
+catch-all handler.
+
+Periscope returns controller validation errors as `{ "error": string }` with `400` for:
+
+- invalid stats `bucket`, `group_by`, date bounds, order, or a window exceeding 500 buckets;
+- an exception-group state other than `open`, `resolved`, or `ignored`;
+- a metadata note longer than 2,000 characters or a missing UUID path value; and
+- an empty or overlong monitored tag.
+
+Entry-list parsing is deliberately tolerant rather than validator-backed: malformed dates and
+unsupported ordering/display values are ignored, while nonsensical page limits fall back to the
+store default. Authentication and mutation-protection failures use bare framework `403` responses;
+the environment gate and resource misses use bare framework `404` responses. Shield CSRF failures
+are produced by Shield's middleware and follow the host application's configured Shield error
+representation.
+
+## Dashboard-serving routes
+
+These non-API rows complete the same authorized route group: `GET|HEAD /assets/*` serves built
+assets, `GET|HEAD /` serves the dashboard root, and `GET|HEAD *` is the SPA fallback. They are not
+part of the JSON API.

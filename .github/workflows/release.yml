@@ -24,11 +24,39 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  actions: read
   contents: write
   id-token: write
 
 jobs:
+  ci-gate:
+    name: Require green CI for this commit
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Verify exact commit passed CI
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          successful_runs="$(gh run list \
+            --workflow ci.yml \
+            --commit "$GITHUB_SHA" \
+            --status success \
+            --limit 1 \
+            --json databaseId \
+            --jq 'length')"
+          if [ "$successful_runs" -eq 0 ]; then
+            echo "::error::Release blocked: commit $GITHUB_SHA does not have a successful completed CI workflow run. Wait for CI to finish or push a fix, then retry the release."
+            exit 1
+          fi
+
   release:
+    needs: ci-gate
     name: Publish package
     runs-on: ubuntu-24.04
     environment: npm

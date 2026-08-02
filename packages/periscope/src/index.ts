@@ -18,6 +18,14 @@ export { configure } from '../configure.ts'
 export { stubsRoot } from '../stubs/main.ts'
 
 export { dump } from './dump.ts'
+export {
+  BATCH_EXPORT_FORMAT,
+  BATCH_EXPORT_VERSION,
+  parseBatchExport,
+  serializeBatchExport,
+} from './batch_export.ts'
+export type { BatchExportV1 } from './batch_export.ts'
+export type { StoredEntryTransport } from './http/serialize.ts'
 export { IncomingEntry } from './entry.ts'
 export { createInProcessFanout } from './fanout.ts'
 export { safeguard, safeguardAsync, setInternalLogger } from './safeguard.ts'

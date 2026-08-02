@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { test } from '@japa/runner'
 import type { FileSystem } from '@japa/file-system'
 
-import { periscopeDoctor } from '../../src/hooks/doctor.ts'
+import { fixLucidDebugConfig, periscopeDoctor, runDoctorChecks } from '../../src/hooks/doctor.ts'
 
 type RouteCommit = (parent: unknown, routes: unknown) => void | Promise<void>
 
@@ -75,8 +75,38 @@ const HEALTHY_DASHBOARD_ROUTES = [
   { domain: 'root', methods: ['GET', 'HEAD'], pattern: '/scope/*' },
 ] as const
 
+async function createIntegrationFixture(fs: FileSystem, withWrapper = true) {
+  await fs.mkdir('app/exceptions')
+  await Promise.all([
+    fs.create('package.json', JSON.stringify({ dependencies: {} })),
+    fs.create(
+      'adonisrc.ts',
+      `export default {
+  providers: [
+    () => import('@adonisjs/core/providers/app_provider'),
+    {
+      file: () => import('@rikology/adonisjs-periscope/provider'),
+      environment: ['web', 'console', 'test'],
+    },
+    () => import('@adonisjs/lucid/database_provider'),
+  ],
+}
+`
+    ),
+    fs.create(
+      'app/exceptions/handler.ts',
+      withWrapper
+        ? `import { withPeriscope } from '@rikology/adonisjs-periscope/exception_reporter'
+export default withPeriscope(class Handler {})
+`
+        : 'export default class Handler {}\\n'
+    ),
+  ])
+}
+
 async function createHealthyFixture(fs: FileSystem) {
   await Promise.all([fs.mkdir('config'), fs.mkdir('start'), fs.mkdir('database/custom_migrations')])
+  await createIntegrationFixture(fs)
   await Promise.all([
     fs.create(
       'config/periscope.ts',
@@ -129,7 +159,7 @@ test.group('Periscope doctor', () => {
 
     assert.lengthOf(doctor.output, 1)
     assert.include(doctor.output[0], 'Periscope doctor')
-    assert.equal(doctor.output[0].match(/\bPASS\b/g)?.length, 5)
+    assert.equal(doctor.output[0].match(/\bPASS\b/g)?.length, 8)
     assert.include(doctor.output[0], 'Periscope migration found for "primary"')
     assert.include(doctor.output[0], 'first in server.use')
     assert.include(doctor.output[0], 'no collisions under /scope')
@@ -140,6 +170,7 @@ test.group('Periscope doctor', () => {
     fs,
   }) => {
     await Promise.all([fs.mkdir('config'), fs.mkdir('start')])
+    await createIntegrationFixture(fs)
     await Promise.all([
       fs.create(
         'config/periscope.ts',
@@ -193,9 +224,86 @@ server.use([
     assert.isUndefined(doctor.routeCommit())
 
     assert.lengthOf(doctor.output, 1)
-    assert.equal(doctor.output[0].match(/\bWARN\b/g)?.length, 4)
+    assert.equal(doctor.output[0].match(/\bWARN\b/g)?.length, 7)
     assert.include(doctor.output[0], 'config/periscope could not be loaded')
     assert.include(doctor.output[0], 'start/kernel is missing')
+  })
+
+  test('checks provider registration and exception wrapper integration', async ({ assert, fs }) => {
+    await createHealthyFixture(fs)
+    const appRoot = fileURLToPath(fs.baseUrl)
+    const logger = { log: (_message: string) => undefined }
+
+    const healthy = await runDoctorChecks({ appRoot, logger })
+    assert.deepInclude(
+      healthy.find(({ name }) => name === 'Provider'),
+      { status: 'PASS' }
+    )
+    assert.deepInclude(
+      healthy.find(({ name }) => name === 'Exception wrapper'),
+      { status: 'PASS' }
+    )
+
+    await Promise.all([
+      fs.create(
+        'adonisrc.ts',
+        `export default { providers: [() => import('@adonisjs/core/providers/app_provider')] }\n`
+      ),
+      fs.create('app/exceptions/handler.ts', 'export default class Handler {}\\n'),
+    ])
+    const incomplete = await runDoctorChecks({ appRoot, logger })
+    assert.deepInclude(
+      incomplete.find(({ name }) => name === 'Provider'),
+      { status: 'FAIL' }
+    )
+    assert.deepInclude(
+      incomplete.find(({ name }) => name === 'Exception wrapper'),
+      { status: 'WARN' }
+    )
+  })
+
+  test('fixes missing Lucid debug settings and is idempotent', async ({ assert, fs }) => {
+    await fs.mkdir('config')
+    await fs.create(
+      'config/database.ts',
+      `export default {
+  connection: 'primary',
+  connections: {
+    primary: {
+      client: 'sqlite3',
+    },
+  },
+}
+`
+    )
+    const appRoot = fileURLToPath(fs.baseUrl)
+
+    const first = await fixLucidDebugConfig(appRoot)
+    assert.deepEqual(first.changed, ['primary'])
+    const fixed = await fs.contents('config/database.ts')
+    assert.include(fixed, 'primary: {\n      debug: true,')
+
+    const second = await fixLucidDebugConfig(appRoot)
+    assert.deepEqual(second, { changed: [], skipped: ['primary'] })
+    assert.strictEqual(await fs.contents('config/database.ts'), fixed)
+  })
+
+  test('refuses an ambiguous Lucid connection codemod', async ({ assert, fs }) => {
+    await fs.mkdir('config')
+    const source = `export default {
+  connection: 'primary',
+  connections: {
+    primary: {},
+    primary: {},
+  },
+}
+`
+    await fs.create('config/database.ts', source)
+
+    const result = await fixLucidDebugConfig(fileURLToPath(fs.baseUrl))
+    assert.isNotEmpty(result.warning)
+    assert.deepEqual(result.changed, [])
+    assert.strictEqual(await fs.contents('config/database.ts'), source)
   })
 
   test('does nothing outside the development server', async ({ assert, fs }) => {

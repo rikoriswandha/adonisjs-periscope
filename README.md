@@ -11,6 +11,16 @@ telemetry to an external service.
 Periscope is a development and staging diagnostic tool, not an APM or a production tracing backend.
 Recorded values remain in the configured local store.
 
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md): runtime pipeline, lifecycle, storage, and design invariants
+- [HTTP API](docs/API.md): experimental dashboard JSON and SSE routes
+- [Operations](docs/OPERATIONS.md): shared stores, retention, multi-process deployment, and production posture
+- [Adapter authoring](docs/ADAPTERS.md): watcher, integration, store, and SSE fanout seams
+- [Testing](docs/TESTING.md): recorder assertions and the Japa plugin
+- [Batch export](docs/BATCH_EXPORT.md): versioned `periscope.batch` interchange schema
+- [Upgrading](docs/UPGRADING.md): release-specific migration notes
+
 ## Requirements
 
 - Node.js 24 or newer
@@ -46,6 +56,12 @@ node ace serve --hmr
 
 Generate some application traffic. New entries appear live and related work shares one batch. With
 the default `sqlite-local` driver, data is written to `tmp/periscope.sqlite`.
+
+Run the installation doctor after configuration and after wiring changes:
+
+```sh
+node ace periscope:doctor
+```
 
 ### Verify the generated wiring
 
@@ -196,80 +212,12 @@ Mail HTML is sanitized before rendering, then placed in an iframe with an empty 
 `no-referrer` policy. Remote images, scripts, forms, embedded content, event handlers, refreshes,
 and network-capable CSS are removed.
 
-## Production sampling recipe
+## Production sampling
 
-Periscope is off in production by default. If an incident requires temporary production recording,
-combine explicit enablement, strict authorization, aggressive sampling, low caps, redaction, and
-short retention:
-
-```ts
-import {
-  DEFAULT_REDACT_HEADERS,
-  DEFAULT_REDACT_KEYS,
-  DEFAULT_REDACT_VALUE_PATTERNS,
-  REDACT_EMAIL_PATTERN,
-  defineConfig,
-} from '@rikology/adonisjs-periscope/periscope_config'
-
-export default defineConfig({
-  enabledIn: ['development', 'test', 'production'],
-
-  storage: {
-    driver: 'database',
-    connection: 'periscope',
-    maxEntries: 2_000,
-    retention: { hours: 24, keepExceptions: true },
-  },
-
-  recording: {
-    sampleRate: 0.01,
-    caps: { default: 20, query: 50 },
-    keepAlways: (batch) =>
-      batch.hasEntryOfType('exception') ||
-      batch.hasEntryWhere(
-        (entry) => entry.type === 'request' && Number(entry.content.status) >= 500
-      ),
-  },
-
-  redact: {
-    keys: [...DEFAULT_REDACT_KEYS, 'tenantSecret'],
-    headers: [...DEFAULT_REDACT_HEADERS],
-    valuePatterns: [...DEFAULT_REDACT_VALUE_PATTERNS, REDACT_EMAIL_PATTERN],
-  },
-
-  watchers: {
-    request: { captureResponse: false, captureSession: false, captureStatic: false },
-    query: { hideBindings: true },
-    command: { enabled: false },
-    mail: { enabled: false },
-    cache: { captureValues: false },
-    model: { captureDirty: false },
-    gate: { enabled: false },
-    dump: { enabled: false },
-    view: { enabled: false },
-  },
-
-  dashboard: {
-    authorize: async ({ auth }) => {
-      await auth.check()
-      return auth.user?.isPeriscopeOperator === true
-    },
-  },
-})
-```
-
-Set `PERISCOPE_ENABLED=true` only for the incident window, monitor storage growth, then disable and
-clear retained data. Sampling is decided once per batch so correlated entries stay together.
-Monitored tags and `recording.keepAlways` can retain a sampled-out batch.
-
-Value-level redaction is on by default for bearer/JWT credentials, common `sk-`, `ghp_`, and
-`AKIA` keys, password assignments and URL connection credentials, and Luhn-valid payment-card
-numbers. These patterns scrub secrets even inside opaque strings such as query bindings, logs,
-mail bodies, model/gate values, and response previews. Email redaction is intentionally opt-in via
-`REDACT_EMAIL_PATTERN`; set `valuePatterns: false` only when value scanning must be disabled while
-retaining key and header redaction.
-To bound recorder CPU, individual strings over the serializer's 16 KiB default ceiling are not
-pattern-scanned; deny-listed keys are still replaced wholesale.
+Periscope remains off in production by default. If an incident requires temporary recording, use
+strict authorization, aggressive sampling, low caps, redaction, short retention, and an explicit
+enablement window. The complete recipe and shutdown checklist are in
+[docs/OPERATIONS.md](docs/OPERATIONS.md#temporary-production-recording).
 
 ## Watcher reference
 
@@ -278,34 +226,34 @@ which silently no-op when their host module is absent. The infrastructure integr
 `job_schedule`, `redis`, `session`, `transmit`, `limiter`, `lock`, `drive`, `ally`, `notification`,
 and `socket` are off by default and subscribe to nothing until explicitly enabled.
 
-| Watcher        | Source                                                       | Recorded content                                                                                                                                              |
-| -------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `request`      | Request middleware and `http:request_completed`              | Method, URL, query, route, redacted headers and payload, status, duration, memory delta, client identity summary, optional response/session, Inertia component/prop keys, disconnect state; exact `slow`, `status:<code>`, and `status:Nxx` tags |
-| `vine`         | VineJS reporter patch                                        | Validation error count, affected field names, and field/rule/message details; submitted values are never recorded                                             |
-| `limiter`      | `@adonisjs/limiter` service methods                          | Key, action, limit, remaining quota, retry delay, and store                                                                                                    |
-| `lock`         | `@adonisjs/lock` service methods                             | Lock key, acquired/denied/timeout outcome, wait duration, optional TTL, and contention signalling controlled by `contentionMs`                                |
-| `query`        | Lucid `db:query`                                             | SQL, serialized or hidden bindings, connection, model/method, duration, transaction/DDL flags, compact error                                                  |
-| `exception`    | Exception handler mixin and process observers                | Name, message, code/status, stack, parsed frames, application code frame, request summary, serialized context                                                 |
-| `log`          | AdonisJS/Pino destination                                    | Level, message, context, and source timestamp; self-generated Periscope logs are excluded                                                                     |
-| `event`        | AdonisJS emitter                                             | Event name, serialized payload, class-event identity, and listener count                                                                                      |
-| `command`      | Ace lifecycle                                                | Command, arguments, flags, main-command state, exit code, duration, bounded redacted terminal output (`captureOutput`), error                                                                 |
-| `mail`         | AdonisJS Mail lifecycle                                      | Lifecycle event, mailer, envelope, subject, optional rendered bodies/raw MIME, message ID, metadata, response/error                                           |
-| `cache`        | Bentocache events                                            | Hit, miss, set, delete, or clear; store, key, cache layer/grace state, optional value                                                                         |
-| `model`        | Lucid model lifecycle                                        | Create, update, or delete; model, primary key, optional attributes and dirty diff                                                                             |
-| `gate`         | Bouncer authorization events                                 | Ability, decision, user ID, arguments, optional user/status/message                                                                                           |
-| `dump`         | `dump()` helper                                              | Safely serialized values and the application call site                                                                                                        |
-| `drive`        | `@adonisjs/drive` service methods                            | Operation, key, disk, duration, destination/size when available, and compact errors                                                                           |
-| `ally`         | `@adonisjs/ally` service methods                             | Provider, OAuth operation, duration, compact error, and safe user summary                                                                                      |
-| `i18n`         | `@adonisjs/i18n` translation methods                         | Locale, translation identifier, and fallback state; interpolation parameters are never recorded                                                               |
-| `http_client`  | Node diagnostics channel for Undici                          | Method, URL, status, duration, redacted request/response headers, completion/error; exact `slow` (>= `slowMs`) and `failed` tags                                                              |
-| `view`         | Edge `onRender` hook                                         | Template name, render duration, and top-level data key names only—values are never read                                                                                                      |
-| `health_check` | AdonisJS core `HealthChecks.run()`                           | Overall status plus per-check name, status, duration, and bounded message; `failed` tag on unhealthy reports                                                                                 |
-| `job_schedule` | Pluggable queue adapters (BullMQ and `@adonisjs/queue` adapters included) | Scheduled job metadata plus started/completed/failed status, job name, attempts, duration, and opt-in payload/result                                                             |
-| `redis`        | `@adonisjs/redis` diagnostics channel                        | Command, argument count, duration, error, and opt-in arguments; `AUTH` arguments are always replaced                                                          |
-| `session`      | `@adonisjs/session` lifecycle events                         | Initiated, committed, or migrated state with hashed session IDs and opt-in redacted values                                                                                                    |
-| `transmit`     | `@adonisjs/transmit` broadcast hook                          | Channel, event metadata, and opt-in bounded payload summary                                                                                                                                   |
-| `notification` | Pluggable notification adapters                              | Adapter, channel, notification, scalar recipient descriptor, sent/failed outcome, duration, and opt-in payload                                                |
-| `socket`       | Pluggable socket adapters                                    | Connection lifecycle and messages, transport/channel, scalar user identity, direction, size/duration, reason, and opt-in payload                              |
+| Watcher        | Source                                                                    | Recorded content                                                                                                                                                                                                                                 |
+| -------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `request`      | Request middleware and `http:request_completed`                           | Method, URL, query, route, redacted headers and payload, status, duration, memory delta, client identity summary, optional response/session, Inertia component/prop keys, disconnect state; exact `slow`, `status:<code>`, and `status:Nxx` tags |
+| `vine`         | VineJS reporter patch                                                     | Validation error count, affected field names, and field/rule/message details; submitted values are never recorded                                                                                                                                |
+| `limiter`      | `@adonisjs/limiter` service methods                                       | Key, action, limit, remaining quota, retry delay, and store                                                                                                                                                                                      |
+| `lock`         | `@adonisjs/lock` service methods                                          | Lock key, acquired/denied/timeout outcome, wait duration, optional TTL, and contention signalling controlled by `contentionMs`                                                                                                                   |
+| `query`        | Lucid `db:query`                                                          | SQL, serialized or hidden bindings, connection, model/method, duration, transaction/DDL flags, compact error                                                                                                                                     |
+| `exception`    | Exception handler mixin and process observers                             | Name, message, code/status, stack, parsed frames, application code frame, request summary, serialized context                                                                                                                                    |
+| `log`          | AdonisJS/Pino destination                                                 | Level, message, context, and source timestamp; self-generated Periscope logs are excluded                                                                                                                                                        |
+| `event`        | AdonisJS emitter                                                          | Event name, serialized payload, class-event identity, and listener count                                                                                                                                                                         |
+| `command`      | Ace lifecycle                                                             | Command, arguments, flags, main-command state, exit code, duration, bounded redacted terminal output (`captureOutput`), error                                                                                                                    |
+| `mail`         | AdonisJS Mail lifecycle                                                   | Lifecycle event, mailer, envelope, subject, optional rendered bodies/raw MIME, message ID, metadata, response/error                                                                                                                              |
+| `cache`        | Bentocache events                                                         | Hit, miss, set, delete, or clear; store, key, cache layer/grace state, optional value                                                                                                                                                            |
+| `model`        | Lucid model lifecycle                                                     | Create, update, or delete; model, primary key, optional attributes and dirty diff                                                                                                                                                                |
+| `gate`         | Bouncer authorization events                                              | Ability, decision, user ID, arguments, optional user/status/message                                                                                                                                                                              |
+| `dump`         | `dump()` helper                                                           | Safely serialized values and the application call site                                                                                                                                                                                           |
+| `drive`        | `@adonisjs/drive` service methods                                         | Operation, key, disk, duration, destination/size when available, and compact errors                                                                                                                                                              |
+| `ally`         | `@adonisjs/ally` service methods                                          | Provider, OAuth operation, duration, compact error, and safe user summary                                                                                                                                                                        |
+| `i18n`         | `@adonisjs/i18n` translation methods                                      | Locale, translation identifier, and fallback state; interpolation parameters are never recorded                                                                                                                                                  |
+| `http_client`  | Node diagnostics channel for Undici                                       | Method, URL, status, duration, redacted request/response headers, completion/error; exact `slow` (>= `slowMs`) and `failed` tags                                                                                                                 |
+| `view`         | Edge `onRender` hook                                                      | Template name, render duration, and top-level data key names only—values are never read                                                                                                                                                          |
+| `health_check` | AdonisJS core `HealthChecks.run()`                                        | Overall status plus per-check name, status, duration, and bounded message; `failed` tag on unhealthy reports                                                                                                                                     |
+| `job_schedule` | Pluggable queue adapters (BullMQ and `@adonisjs/queue` adapters included) | Scheduled job metadata plus started/completed/failed status, job name, attempts, duration, and opt-in payload/result                                                                                                                             |
+| `redis`        | `@adonisjs/redis` diagnostics channel                                     | Command, argument count, duration, error, and opt-in arguments; `AUTH` arguments are always replaced                                                                                                                                             |
+| `session`      | `@adonisjs/session` lifecycle events                                      | Initiated, committed, or migrated state with hashed session IDs and opt-in redacted values                                                                                                                                                       |
+| `transmit`     | `@adonisjs/transmit` broadcast hook                                       | Channel, event metadata, and opt-in bounded payload summary                                                                                                                                                                                      |
+| `notification` | Pluggable notification adapters                                           | Adapter, channel, notification, scalar recipient descriptor, sent/failed outcome, duration, and opt-in payload                                                                                                                                   |
+| `socket`       | Pluggable socket adapters                                                 | Connection lifecycle and messages, transport/channel, scalar user identity, direction, size/duration, reason, and opt-in payload                                                                                                                 |
 
 Watcher-specific options in the generated config control sensitive or expensive captures. All
 application-owned values pass through bounded serialization and recursive redaction before storage.
@@ -314,146 +262,53 @@ Request recording excludes static-asset traffic by default. Set `watchers.reques
 to `true` only when asset requests are relevant to an investigation; `ignorePaths` still takes
 precedence.
 
-Queue integrations use the exported `QueueWatcherAdapter` contract. Two reference adapters ship
-with the package: `BullQueueAdapter` observes BullMQ queue events (enriching entries with job
-name, attempts, and opt-in payload via bounded best-effort job lookups), and `AdonisQueueAdapter`
-observes the experimental `@adonisjs/queue` tracing channels. Both are silent no-ops when their
-queue package is absent and never replace application workers:
+Queue and scheduled-task integrations use the exported `QueueWatcherAdapter` and
+`SchedulerWatcherAdapter` contracts. BullMQ and experimental `@adonisjs/queue` adapters ship with
+the package; third-party scheduler adapters register separately under
+`watchers.job_schedule.schedulers`.
 
-```ts
-import { defineConfig } from '@rikology/adonisjs-periscope/periscope_config'
-import { BullQueueAdapter } from '@rikology/adonisjs-periscope/watchers/bull_queue'
-
-export default defineConfig({
-  watchers: {
-    job_schedule: {
-      enabled: true,
-      adapters: [
-        new BullQueueAdapter({
-          queues: [{ name: 'mail', connection: { host: '127.0.0.1', port: 6379 } }],
-        }),
-      ],
-    },
-    redis: { enabled: true, captureArguments: false },
-    session: { enabled: true, captureValues: false },
-  },
-})
-```
-
-Scheduled-task integrations use the exported `SchedulerWatcherAdapter` contract and are registered
-in `watchers.job_schedule.schedulers`; queue adapters remain in `adapters`. A scheduler adapter
-reports `taskStarted`, `taskCompleted`, and `taskFailed` to its observer and may use `wrapTask` to
-place queries, logs, and other work inside a `schedule` batch.
-
-Notification and socket integrations follow the same seam: implement `NotificationWatcherAdapter`
-or `SocketWatcherAdapter`, then add the instance to `watchers.notification.adapters` or
-`watchers.socket.adapters` with that watcher enabled. Their observer contracts expose
-`sent`/`failed` and `connected`/`disconnected`/`message`, respectively. Each adapter's `register`
-method receives the observer plus `{ capturePayload }` and may return an idempotent cleanup
-function. Keep application payloads out of emitted events unless `capturePayload` is true; Periscope
-still applies bounded serialization and redaction before recording them.
+Notification and socket integrations use `NotificationWatcherAdapter` and `SocketWatcherAdapter`.
+All adapter-backed watchers are opt-in, default to excluding application payloads, and must remain
+best effort. Consumption examples and the complete authoring contracts are in
+[docs/ADAPTERS.md](docs/ADAPTERS.md).
 
 ## Hooks and extensibility
 
-### Filter and tag hooks
+Filter hooks can drop an entry before buffering, and tag hooks can add exact-match tags. Custom
+watcher factories receive the application, recorder, and resolved config; custom stores implement
+the portable `PeriscopeStore` boundary; `dashboard.fanout` accepts a factory for cross-process SSE
+pub/sub. All extension points are safeguarded so diagnostics cannot break host code.
 
-Hooks run before an entry enters the recorder buffer:
+See [docs/ADAPTERS.md](docs/ADAPTERS.md) for hook examples, complete adapter interfaces,
+registration points, lifecycle requirements, custom watcher and store skeletons, and a pub/sub
+fanout implementation.
 
-```ts
-export default defineConfig({
-  hooks: {
-    filter: [(entry) => entry.type !== 'request' || entry.content.routePattern !== '/health'],
-    tag: [
-      (entry) =>
-        entry.type === 'request' && typeof entry.content.routePattern === 'string'
-          ? [`route:${entry.content.routePattern}`]
-          : [],
-    ],
-  },
-})
-```
+## Testing your app with Periscope
 
-A filter returning `false` drops the entry. A tag hook returns extra exact-match tags. Hooks are
-safeguarded: an application hook failure is reported internally and cannot break the host request.
-
-### Custom watcher
-
-`Watcher` is the lifecycle contract: a stable `name`, idempotent `register()`, and optional
-idempotent `cleanup()`. Register custom watchers directly from config with `watchers.custom`; each
-factory receives the same `WatcherContext` (application, recorder, resolved config) the built-in
-factories get, registers after the built-ins, and is cleaned up first in reverse order with the
-same safeguards:
-
-```ts
-import { EntryType, IncomingEntry, type PeriscopeWatcherFactory } from '@rikology/adonisjs-periscope'
-
-const paymentWatcher: PeriscopeWatcherFactory = ({ recorder }) => {
-  let unsubscribe: (() => void) | null = null
-  return {
-    name: 'payment',
-    register() {
-      if (unsubscribe !== null) return
-      unsubscribe = subscribeToPayments((paymentId) => {
-        recorder.record(
-          IncomingEntry.make(EntryType.EVENT, {
-            name: 'payment:settled',
-            payload: { paymentId },
-            isClassEvent: false,
-          }).withTags(['domain:payments'])
-        )
-      })
-    },
-    cleanup() {
-      unsubscribe?.()
-      unsubscribe = null
-    },
-  }
-}
-
-export default defineConfig({
-  watchers: { custom: [paymentWatcher] },
-})
-```
-
-Prefer the built-in event watcher when the source is already an AdonisJS emitter event.
-
-### Custom store
-
-`PeriscopeStore` is the complete persistence boundary. A store implements entry save/find/list,
-counts, exception grouping, clear/prune, monitored tags, flags, and `close()`. `MemoryStore`,
-`SqliteLocalStore`, and `DatabaseStore` are reference implementations.
-
-Select a custom backend with the `custom` driver and a factory. The factory receives the
-application instance and the resolved config, and may be async:
-
-```ts
-export default defineConfig({
-  storage: {
-    driver: 'custom',
-    factory: async ({ app, config }) => new RedisPeriscopeStore(app, config),
-  },
-})
-```
-
-Ace maintenance commands treat custom stores as durable and operate on them like the built-in SQL
-drivers.
+The `@rikology/adonisjs-periscope/testing` subpath provides flush-and-poll assertions, entry
+matching, scoped cleanup, and a Japa plugin backed by the configured recorder. Use it to assert
+late-settling request batches without arbitrary sleeps. See
+[docs/TESTING.md](docs/TESTING.md) for setup, signatures, and examples.
 
 ## Commands
 
 ```sh
+node ace periscope:doctor [--fix]
 node ace periscope:clear [--application=billing-api]
 node ace periscope:prune --hours=24 [--keep-exceptions] [--application=billing-api]
 node ace periscope:export --batch=<batch-id> [--out=report.json]
+node ace periscope:import --file=<path|-> [--application=billing-api]
 node ace periscope:pause
 node ace periscope:resume
 ```
 
 The commands start the application, use the configured store, and keep their own work out of the
-recorded timeline. `--application` scopes clears and prunes to one application in a shared store.
-`periscope:export` writes the same versioned `periscope.batch` JSON as the dashboard export to
-stdout or `--out`. Pause state is shared through the store and remains set until resumed.
-Automatic retention (`storage.retention`) makes scheduled `periscope:prune` invocations
-unnecessary for most applications.
+recorded timeline. `periscope:doctor` diagnoses wiring drift and `--fix` conservatively enables
+Lucid query debug where safe. `--application` scopes clears and prunes to one application in a
+shared store. `periscope:export` writes versioned `periscope.batch` JSON to stdout or `--out`;
+`periscope:import` reads that format from a file or stdin (`--file=-`) into durable storage. Pause
+state is shared through the store and remains set until resumed. Automatic retention makes
+scheduled prune invocations unnecessary for most applications.
 
 ## FAQ
 
@@ -536,8 +391,9 @@ NPM_CONFIG_PROVENANCE=false npm run release
 ```
 
 Or run the **Release** GitHub Action (`workflow_dispatch`) and optionally choose patch/minor/major
-and whether to publish with provenance. With no increment selected, release-it picks the bump from
-conventional commits since the last tag.
+and whether to publish with provenance. The workflow requires a successful completed CI run for
+the exact commit SHA. With no increment selected, release-it picks the bump from conventional
+commits since the last tag.
 
 ## License
 

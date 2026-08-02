@@ -10,23 +10,13 @@ import { test } from '@japa/runner'
 import { EntryType, Flag } from '@rikology/adonisjs-periscope'
 import type { StoredEntry } from '@rikology/adonisjs-periscope'
 import recorder from '@rikology/adonisjs-periscope/services/recorder'
+import { assertNotRecorded, flushAndWait } from '@rikology/adonisjs-periscope/testing'
 
 import periscopeConfig from '#config/periscope'
 
-const POLL_INTERVAL_MS = 10
-const POLL_TIMEOUT_MS = 2_000
 const execFileAsync = promisify(execFile)
 const PLAYGROUND_ROOT = fileURLToPath(new URL('../..', import.meta.url))
 const WAVE2_USER_EMAIL = 'integration@periscope.test'
-
-/**
- * One page of everything recorded so far. Small enough to be the whole store, since every test
- * clears it first.
- */
-async function listEntries(): Promise<StoredEntry[]> {
-  const page = await recorder.store.list({ limit: 100 })
-  return page.data
-}
 
 /**
  * Request completion is emitted from Node's `on-finished` callback, after the API client has its
@@ -36,44 +26,7 @@ async function listEntries(): Promise<StoredEntry[]> {
 async function waitForEntries(
   predicate: (entries: StoredEntry[]) => boolean
 ): Promise<StoredEntry[]> {
-  const deadline = Date.now() + POLL_TIMEOUT_MS
-
-  while (Date.now() <= deadline) {
-    const entries = await listEntries()
-
-    if (predicate(entries)) {
-      return entries
-    }
-
-    await sleep(POLL_INTERVAL_MS)
-  }
-
-  throw new Error(`Periscope did not flush the expected entries within ${POLL_TIMEOUT_MS}ms`)
-}
-
-/**
- * A negative assertion has no entry to poll for, so it must keep looking for the whole bounded
- * window. Flushing on each pass makes an exception or log that fell into the ambient batch
- * observable immediately instead of letting the ten-second ambient rotation hide it from this
- * two-second test.
- */
-async function entriesAfterSettlingWindow(): Promise<StoredEntry[]> {
-  const deadline = Date.now() + POLL_TIMEOUT_MS
-
-  while (Date.now() <= deadline) {
-    await recorder.flush()
-
-    const entries = await listEntries()
-
-    if (entries.length > 0) {
-      return entries
-    }
-
-    await sleep(POLL_INTERVAL_MS)
-  }
-
-  await recorder.flush()
-  return listEntries()
+  return flushAndWait(recorder, predicate)
 }
 
 function isRequestFor(entry: StoredEntry, url: string, status: number): boolean {
@@ -274,19 +227,18 @@ test.group('periscope watchers (playground wiring)', (group) => {
     assertNoPeriscopeTraffic(assert, recorded.entries)
   })
 
-  test('the dashboard path is excluded even when it resolves to a 404', async ({
-    client,
-    assert,
-  }) => {
+  test('the dashboard path is excluded even when it resolves to a 404', async ({ client }) => {
     const response = await client.get(periscopeConfig.dashboard.path)
 
     response.assertStatus(404)
 
-    const entries = await entriesAfterSettlingWindow()
-    assert.isFalse(entries.some((entry) => entry.type === EntryType.EXCEPTION))
-    assert.isFalse(entries.some((entry) => entry.type === EntryType.LOG))
-    assert.lengthOf(entries, 0)
-    assertNoPeriscopeTraffic(assert, entries)
+    /**
+     * A negative assertion has no entry to poll for. `assertNotRecorded` holds the whole bounded
+     * window, flushing on each pass so an exception or log that fell into the ambient batch
+     * becomes observable immediately instead of letting the ten-second ambient rotation hide it
+     * from this two-second test.
+     */
+    await assertNotRecorded(recorder, {})
   })
 
   test('GET /fanout records the warn log and custom class event only once', async ({

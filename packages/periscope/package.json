@@ -41,6 +41,7 @@
     "./hooks": "./build/src/hooks/doctor.js",
     "./commands": "./build/commands/main.js",
     "./types": "./build/src/types.js",
+    "./testing": "./build/src/testing/index.js",
     "./periscope_config": "./build/src/define_config.js",
     "./storage_schema": "./build/src/storage/database_schema.js",
     "./watchers/bull_queue": "./build/src/watchers/job_schedule/bull_queue_adapter.js",
