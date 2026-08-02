@@ -23,6 +23,7 @@ type QueueJob = {
   payload?: unknown
   attempts?: unknown
   scheduleId?: unknown
+  traceContext?: unknown
 }
 
 type DispatchMessage = {
@@ -45,6 +46,8 @@ type QueueTracingChannels = {
   dispatch: TraceChannel<DispatchMessage>
   execute: TraceChannel<ExecuteMessage>
 }
+
+const CORRELATION_TRACE_KEY = 'periscope.queue_correlation_id'
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object'
@@ -86,11 +89,13 @@ function jobEvent(
   }
 
   const rawAttempts = finiteNumber(job.attempts)
+  const correlationId = asRecord(job.traceContext)?.[CORRELATION_TRACE_KEY]
   return {
     adapter,
     queue: message.queue,
     jobId: job.id,
     ...(typeof job.name === 'string' ? { name: job.name } : {}),
+    ...(typeof correlationId === 'string' ? { correlationId } : {}),
     ...(rawAttempts === undefined ? {} : { attempts: Math.max(0, Math.floor(rawAttempts)) + 1 }),
     ...(capturePayload && job.payload !== undefined ? { payload: job.payload } : {}),
   }
@@ -104,11 +109,12 @@ function scheduledAt(value: unknown): Date | undefined {
   return Number.isFinite(date.getTime()) ? date : undefined
 }
 
-function notify(callback: () => void): void {
+function notify<T>(callback: () => T): T | undefined {
   try {
-    callback()
+    return callback()
   } catch {
     // diagnostics_channel subscribers must never throw into the queue worker.
+    return undefined
   }
 }
 
@@ -140,7 +146,27 @@ export class AdonisQueueAdapter implements QueueWatcherAdapter {
 
     const dispatchHandlers: TraceHandlers<DispatchMessage> = {
       start: (message) => {
+        if (!active || !Array.isArray(message.jobs)) return
         dispatchStartedAt.set(message, Date.now())
+
+        for (const value of message.jobs) {
+          const job = asRecord(value) as QueueJob | undefined
+          const event = jobEvent(this.name, { job, queue: message.queue }, options.capturePayload)
+          if (job === undefined || event === undefined) continue
+
+          const correlation = notify(() => observer.dispatching?.(event))
+          if (correlation === undefined) continue
+
+          /**
+           * @adonisjs/queue already transports this string map for OpenTelemetry propagation.
+           * A namespaced key keeps Periscope's opaque id with the serialized job without changing
+           * application payloads or depending on a storage-driver-specific metadata column.
+           */
+          job.traceContext = {
+            ...asRecord(job.traceContext),
+            [CORRELATION_TRACE_KEY]: correlation.correlationId,
+          }
+        }
       },
       error: (message) => {
         failedDispatches.add(message)

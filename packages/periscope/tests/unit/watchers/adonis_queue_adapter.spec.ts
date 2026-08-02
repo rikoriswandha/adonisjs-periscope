@@ -17,11 +17,16 @@ test.group('AdonisQueueAdapter', () => {
     const completed: QueueJobResult[] = []
     const failed: QueueJobResult[] = []
     const scheduled: QueueJobEvent[] = []
+    const dispatching: QueueJobEvent[] = []
     const observer: QueueWatcherObserver = {
       started: (event) => started.push(event),
       completed: (event) => completed.push(event),
       failed: (event) => failed.push(event),
       scheduled: (event) => scheduled.push(event),
+      dispatching: (event) => {
+        dispatching.push(event)
+        return { correlationId: 'adonis-dispatch-correlation' }
+      },
     }
     const adapter = new AdonisQueueAdapter()
     const cleanup = await adapter.register(observer, { capturePayload: true })
@@ -55,6 +60,7 @@ test.group('AdonisQueueAdapter', () => {
           name: 'SendDigest',
           payload: { accountId: 7 },
           attempts: 0,
+          traceContext: undefined as Record<string, string> | undefined,
         },
       ],
       queue: 'mail',
@@ -62,6 +68,19 @@ test.group('AdonisQueueAdapter', () => {
     }
     await tracingChannels.dispatchChannel.tracePromise(async () => undefined, dispatch as never)
 
+    assert.deepEqual(dispatching, [
+      {
+        adapter: 'adonisjs-queue',
+        queue: 'mail',
+        jobId: 'job-2',
+        name: 'SendDigest',
+        attempts: 1,
+        payload: { accountId: 7 },
+      },
+    ])
+    assert.deepEqual(dispatch.jobs[0].traceContext, {
+      'periscope.queue_correlation_id': 'adonis-dispatch-correlation',
+    })
     assert.deepEqual(started, [
       {
         adapter: 'adonisjs-queue',

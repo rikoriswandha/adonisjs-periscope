@@ -40,28 +40,28 @@ export default class ShowcaseController {
 
     const observer = demoQueue.observer
     if (observer !== undefined) {
-      const completed = {
+      const completed = demoQueue.dispatch({
         adapter: 'playground-demo',
         queue: 'emails',
         jobId: `showcase-${Date.now()}`,
         name: 'send-welcome-email',
         payload: { to: 'showcase@periscope.test', password: 'showcase-job-secret' },
         attempts: 1,
-      }
+      })
       observer.started(completed)
-      await sleep(5)
+      await demoQueue.run(completed, () => sleep(5))
       observer.completed({ ...completed, result: { delivered: true } })
 
-      const failed = {
+      const failed = demoQueue.dispatch({
         adapter: 'playground-demo',
         queue: 'reports',
         jobId: `showcase-${Date.now()}-fail`,
         name: 'generate-report',
         payload: { reportId: 42 },
         attempts: 3,
-      }
+      })
       observer.started(failed)
-      await sleep(2)
+      await demoQueue.run(failed, () => sleep(2))
       observer.failed({ ...failed, error: new Error('report template missing') })
 
       observer.scheduled({

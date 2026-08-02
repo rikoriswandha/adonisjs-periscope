@@ -149,7 +149,9 @@ export function createPeriscopeTables(schema: PeriscopeSchemaBuilder): Periscope
   })
 
   schema.createTable(MONITORED_TAGS_TABLE, (table) => {
-    table.string('tag', TAG_INDEX_MAX_LENGTH).notNullable().primary()
+    table.string('application', 191).notNullable().defaultTo('default')
+    table.string('tag', TAG_INDEX_MAX_LENGTH).notNullable()
+    table.primary(['application', 'tag'])
   })
 
   schema.createTable(FLAGS_TABLE, (table) => {
@@ -160,6 +162,43 @@ export function createPeriscopeTables(schema: PeriscopeSchemaBuilder): Periscope
     // and swept opportunistically by read, trim, and prune maintenance.
     table.bigint('expires_at').nullable()
   })
+
+  return schema
+}
+
+/**
+ * Add the optional postgres trigram artifacts used by content search.
+ *
+ * Both statements are wrapped independently because extension installation is commonly denied on
+ * managed databases. Missing privileges leave the ordinary `ILIKE` query fully functional; only
+ * its planner acceleration is lost. The second guard also covers an unavailable operator class
+ * when the extension could not be installed.
+ */
+export function createPostgresSearchArtifacts(
+  schema: PeriscopeSchemaBuilder
+): PeriscopeSchemaBuilder {
+  schema.raw(`
+    DO $periscope$
+    BEGIN
+      CREATE EXTENSION IF NOT EXISTS pg_trgm;
+    EXCEPTION
+      WHEN insufficient_privilege THEN
+        RAISE NOTICE 'Periscope: pg_trgm extension could not be installed; content search will use planner scans';
+    END
+    $periscope$
+  `)
+
+  schema.raw(`
+    DO $periscope$
+    BEGIN
+      CREATE INDEX IF NOT EXISTS periscope_entries_content_trgm
+        ON periscope_entries USING gin (content gin_trgm_ops);
+    EXCEPTION
+      WHEN insufficient_privilege OR undefined_object THEN
+        RAISE NOTICE 'Periscope: trigram index could not be created; content search will use planner scans';
+    END
+    $periscope$
+  `)
 
   return schema
 }

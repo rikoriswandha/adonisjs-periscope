@@ -23,11 +23,11 @@ host signal -> watcher -> IncomingEntry -> Recorder -> PeriscopeStore -> JSON/SS
 
 ## Workspace layout
 
-| Path                 | Contents                                                                  |
-| -------------------- | ------------------------------------------------------------------------- |
+| Path                 | Contents                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------ |
 | `packages/periscope` | Publishable package: provider, recorder, watchers, storage, HTTP API, ace commands, stubs, tests |
-| `packages/dashboard` | Private Vite/React SPA; its build output is copied into `packages/periscope/build/dashboard` |
-| `playground`         | Booted AdonisJS v7 fixture application used by integration, security, and benchmark suites |
+| `packages/dashboard` | Private Vite/React SPA; its build output is copied into `packages/periscope/build/dashboard`     |
+| `playground`         | Booted AdonisJS v7 fixture application used by integration, security, and benchmark suites       |
 
 ## Boot and lifecycle
 
@@ -60,28 +60,28 @@ failures through the guarded internal logger and drops the signal.
 
 Signal sources by watcher:
 
-| Watcher        | Source                                                       |
-| -------------- | ------------------------------------------------------------ |
-| `request`      | Server middleware (`src/watchers/request/middleware.ts`) plus `http:request_completed` |
-| `query`        | Lucid `db:query` emitter event (requires `debug: true` on the connection) |
-| `exception`    | Exception handler mixin (`src/watchers/exception/mixin.ts`) and process-level observers |
-| `log`          | A Pino destination stream (`src/watchers/log/stream.ts`)      |
-| `event`        | The AdonisJS emitter                                          |
-| `command`      | Ace command lifecycle hooks                                   |
-| `mail`         | AdonisJS Mail lifecycle events                                |
-| `cache`        | Bentocache events                                             |
-| `model`        | Lucid model lifecycle hooks                                   |
-| `gate`         | Bouncer authorization events                                  |
-| `dump`         | The exported `dump()` helper                                  |
-| `http_client`  | Node diagnostics channel for Undici                           |
-| `view`         | Edge `onRender` renderer hook                                 |
-| `health_check` | Patched `HealthChecks.prototype.run` from `@adonisjs/core`    |
+| Watcher        | Source                                                                                                                                                                      |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `request`      | Server middleware (`src/watchers/request/middleware.ts`) plus `http:request_completed`                                                                                      |
+| `query`        | Lucid `db:query` emitter event (requires `debug: true` on the connection)                                                                                                   |
+| `exception`    | Exception handler mixin (`src/watchers/exception/mixin.ts`) and process-level observers                                                                                     |
+| `log`          | A Pino destination stream (`src/watchers/log/stream.ts`)                                                                                                                    |
+| `event`        | The AdonisJS emitter                                                                                                                                                        |
+| `command`      | Ace command lifecycle hooks                                                                                                                                                 |
+| `mail`         | AdonisJS Mail lifecycle events                                                                                                                                              |
+| `cache`        | Bentocache events                                                                                                                                                           |
+| `model`        | Lucid model lifecycle hooks                                                                                                                                                 |
+| `gate`         | Bouncer authorization events                                                                                                                                                |
+| `dump`         | The exported `dump()` helper                                                                                                                                                |
+| `http_client`  | Node diagnostics channel for Undici                                                                                                                                         |
+| `view`         | Edge `onRender` renderer hook                                                                                                                                               |
+| `health_check` | Patched `HealthChecks.prototype.run` from `@adonisjs/core`                                                                                                                  |
 | `job_schedule` | Pluggable `QueueWatcherAdapter` instances; `bull_queue_adapter.ts` observes BullMQ via `QueueEvents`, `adonis_queue_adapter.ts` observes `@adonisjs/queue` tracing channels |
-| `redis`        | `@adonisjs/redis` diagnostics channel                         |
-| `session`      | `@adonisjs/session` lifecycle events                          |
-| `transmit`     | `@adonisjs/transmit` `on('broadcast')` hook plus a patched `broadcastExcept` |
+| `redis`        | `@adonisjs/redis` diagnostics channel                                                                                                                                       |
+| `session`      | `@adonisjs/session` lifecycle events                                                                                                                                        |
+| `transmit`     | `@adonisjs/transmit` `on('broadcast')` hook plus a patched `broadcastExcept`                                                                                                |
 
-The HTTP client watcher only *observes* diagnostics events; the package itself has no outbound
+The HTTP client watcher only _observes_ diagnostics events; the package itself has no outbound
 network capability, and CI lints package source against network APIs.
 
 ## Recorder
@@ -115,11 +115,11 @@ commands run in a muted scope so Periscope never records its own work.
 (save/find/list, counts, exception grouping, clear/prune, monitored tags, flags, `close()`),
 plus a `custom` driver that delegates construction to `storage.factory`:
 
-| Store              | File                    | Notes                                                    |
-| ------------------ | ----------------------- | -------------------------------------------------------- |
-| `MemoryStore`      | `memory_store.ts`       | Bounded process-local ring buffer                        |
+| Store              | File                    | Notes                                                                                              |
+| ------------------ | ----------------------- | -------------------------------------------------------------------------------------------------- |
+| `MemoryStore`      | `memory_store.ts`       | Bounded process-local ring buffer                                                                  |
 | `SqliteLocalStore` | `sqlite_local_store.ts` | Dedicated `better-sqlite3` database, WAL mode, chunked and indexed operations; no Lucid dependency |
-| `DatabaseStore`    | `database_store.ts`     | Any supported Lucid connection using the package migration (`database_schema.ts`) |
+| `DatabaseStore`    | `database_store.ts`     | Any supported Lucid connection using the package migration (`database_schema.ts`)                  |
 
 All stores enforce `storage.maxEntries` and share ordering, pagination, tag, text-search,
 time-range, flag, clear, and prune semantics — the storage test suite runs the same contract
@@ -149,6 +149,17 @@ The dashboard (`packages/dashboard`) is a client-only HashRouter React SPA built
 talks exclusively to the JSON/SSE API, uses COSS primitives in `src/components/ui` as the
 component source of truth, and renders recorded mail HTML only after sanitization inside an
 iframe with an empty `sandbox` and a `no-referrer` policy.
+
+### Multi-process posture
+
+**The default live dashboard is per worker, not cluster-wide.** Without a pub/sub-backed
+`dashboard.fanout` adapter, an SSE client sees only flushes published by the worker that accepted
+its connection. `dashboard.sseMaxClients` is likewise enforced independently by each worker, so
+the cluster-wide connection ceiling is the configured value multiplied by the worker count.
+
+Retention coordination uses an expiring `maintenance-lease` flag as best-effort deduplication,
+not as a distributed lock. A race may let two workers prune concurrently; prune is idempotent, so
+this is harmless and preferable to coupling the portable store contract to driver-specific locks.
 
 ## Commands
 

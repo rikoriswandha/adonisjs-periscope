@@ -2,9 +2,11 @@ import type {
   DashboardStatus,
   EntryCounts,
   EntryFilters,
+  EntryMetadataRecord,
   EntryPage,
   ExceptionGroupFilters,
   ExceptionGroupPage,
+  ExceptionGroupState,
   StoredEntry,
 } from '@/types'
 
@@ -133,6 +135,22 @@ export const api = {
     }).then((response) => response.data)
   },
 
+  fetchEntryMetadata(signal?: AbortSignal): Promise<EntryMetadataRecord[]> {
+    return request<{ records: EntryMetadataRecord[] }>('entry-metadata', { signal }).then(
+      (response) => response.records
+    )
+  },
+
+  putEntryMetadata(
+    uuid: string,
+    patch: { pinned?: boolean; note?: string | null }
+  ): Promise<EntryMetadataRecord> {
+    return request<EntryMetadataRecord>(`entries/${encodeURIComponent(uuid)}/metadata`, {
+      method: 'PUT',
+      body: JSON.stringify(patch),
+    })
+  },
+
   getEntryEmlUrl(uuid: string): string {
     return endpoint(`entries/${encodeURIComponent(uuid)}/eml`).toString()
   },
@@ -167,8 +185,10 @@ export const api = {
     return request<DashboardStatus>('status', { signal })
   },
 
-  getStreamUrl(): string {
-    return endpoint('stream').toString()
+  getStreamUrl(application?: string): string {
+    const url = endpoint('stream')
+    if (application) url.searchParams.set('application', application)
+    return url.toString()
   },
 
   getMonitoredTags(signal?: AbortSignal): Promise<string[]> {
@@ -203,6 +223,24 @@ export const api = {
     const params = new URLSearchParams()
     appendFilter(params, 'application', application)
     return request<void>(`clear?${params.toString()}`, { method: 'POST' })
+  },
+
+  setExceptionGroupState(
+    familyHash: string,
+    state: ExceptionGroupState,
+    application?: string
+  ): Promise<{
+    familyHash: string
+    state: ExceptionGroupState
+    stateUpdatedAt: string | null
+  }> {
+    return request(`exception-groups/${encodeURIComponent(familyHash)}/state`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        state,
+        ...(application === undefined ? {} : { application }),
+      }),
+    })
   },
 
   getExceptionGroups(

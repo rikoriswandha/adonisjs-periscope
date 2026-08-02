@@ -29,11 +29,20 @@ test('bootstrap a Shield token and protect every mutation with dashboard-only he
   try {
     await api.clear('tenant-a')
     await api.monitorTag('slow query')
+    await api.setExceptionGroupState('family/a', 'resolved', 'tenant-a')
 
-    assert.equal(requests.length, 3)
+    assert.equal(requests.length, 4)
     assert.equal(requests[0].url, 'https://example.test/periscope/api/csrf-token')
     assert.equal(requests[1].url, 'https://example.test/periscope/api/clear?application=tenant-a')
     assert.equal(requests[2].url, 'https://example.test/periscope/api/monitored-tags/slow%20query')
+    assert.equal(
+      requests[3].url,
+      'https://example.test/periscope/api/exception-groups/family%2Fa/state'
+    )
+    assert.deepEqual(JSON.parse(String(requests[3].options.body)), {
+      state: 'resolved',
+      application: 'tenant-a',
+    })
 
     for (const request of requests.slice(1)) {
       const headers = new Headers(request.options.headers)

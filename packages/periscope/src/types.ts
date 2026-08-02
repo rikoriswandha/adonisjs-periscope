@@ -229,6 +229,38 @@ export type FlushedEvent = {
 export type FlushedListener = (event: FlushedEvent) => void | Promise<void>
 
 /**
+ * Fan-out seam between recorder flushes and live dashboard subscribers. The default adapter is
+ * an in-process listener list, which only reaches clients connected to the same worker. An
+ * application running multiple processes can supply a pub/sub-backed adapter (Redis, Transmit)
+ * so a flush on any worker reaches every worker's SSE clients.
+ */
+export interface FlushFanout {
+  /**
+   * Deliver a flush event to every subscriber, on this worker and — for pub/sub adapters — on
+   * every other worker.
+   */
+  publish(event: FlushedEvent): void | Promise<void>
+
+  /**
+   * Subscribe to fanned-out events. Returns an unsubscribe function. Must be idempotent-safe:
+   * calling the returned function twice is a no-op.
+   */
+  subscribe(listener: (event: FlushedEvent) => void): () => void
+
+  /**
+   * Release adapter resources on shutdown.
+   */
+  close?(): void | Promise<void>
+}
+
+/**
+ * Builds an application-defined fanout adapter during provider boot.
+ */
+export type FlushFanoutFactory = (
+  context: PeriscopeStoreFactoryContext
+) => FlushFanout | Promise<FlushFanout>
+
+/**
  * Filters accepted by {@link PeriscopeStore.list}. Every field is optional and they combine
  * with AND. Results are ordered on the composite `(sequence, uuid)` key — newest first unless
  * `direction` asks for the oldest.
@@ -294,6 +326,13 @@ export type EntryQuery = {
   cursor?: string
 
   /**
+   * Only entries whose `sequence` is strictly greater than this value. Drives Last-Event-ID
+   * replay on the live stream; unlike `cursor` it is a plain sequence string, not an opaque
+   * pagination token.
+   */
+  afterSequence?: string
+
+  /**
    * Page size. Drivers clamp this to a sane maximum.
    */
   limit?: number
@@ -348,6 +387,12 @@ export type ExceptionGroupQuery = {
   cursor?: string
   limit?: number
 }
+
+/**
+ * Triage state of one exception family. `open` is the absence of a persisted state; `resolved`
+ * reopens when a newer occurrence arrives; `ignored` sticks regardless of new occurrences.
+ */
+export type ExceptionGroupState = 'open' | 'resolved' | 'ignored'
 
 /**
  * Time-bucketed request aggregation accepted by {@link PeriscopeStore.requestStats}.
@@ -441,6 +486,13 @@ export type PruneOptions = {
   before: Date
 
   /**
+   * Per-type cutoffs overriding `before`. An entry whose type appears here is deleted only when
+   * it is older than its own cutoff; every other type uses `before`. `keepExceptions` still
+   * wins for `exception` entries.
+   */
+  perTypeBefore?: Partial<Record<EntryType, Date>>
+
+  /**
    * Never delete `exception` entries, however old. Backs `periscope:prune --keep-exceptions`.
    */
   keepExceptions?: boolean
@@ -460,6 +512,40 @@ export type FlagOptions = {
    * leases, which must fail closed if a tab goes away without clearing its lease.
    */
   expiresAt?: Date
+}
+
+/**
+ * One unexpired flag row, as returned by {@link PeriscopeStore.flagsWithPrefix}.
+ */
+export type StoredFlag = {
+  name: string
+  value: string
+}
+
+/**
+ * Write-path health counters a driver may expose. Served verbatim on `/api/status` so an
+ * operator can see back-pressure and loss without reading logs.
+ */
+export type StoreDiagnostics = {
+  /**
+   * Batches accepted but not yet durably written.
+   */
+  pendingBatches: number
+
+  /**
+   * Batches dropped because the pending queue was full. Monotonic since process start.
+   */
+  droppedBatches: number
+
+  /**
+   * Batches abandoned after the final retry attempt failed. Monotonic since process start.
+   */
+  failedBatches: number
+
+  /**
+   * Save attempts that failed and were retried. Monotonic since process start.
+   */
+  retriedBatches: number
 }
 
 /**
@@ -540,19 +626,20 @@ export interface PeriscopeStore {
   clear(application?: string): Promise<void>
 
   /**
-   * Tags the user asked to be monitored. Batches carrying one bypass sampling.
+   * Tags the user asked to be monitored, scoped to one application. Batches carrying one bypass
+   * sampling. Omitting `application` reads the `default` application's tags.
    */
-  monitoredTags(): Promise<string[]>
+  monitoredTags(application?: string): Promise<string[]>
 
   /**
-   * Start monitoring a tag. Monitoring an already-monitored tag is a no-op.
+   * Start monitoring a tag for one application. Monitoring an already-monitored tag is a no-op.
    */
-  monitorTag(tag: string): Promise<void>
+  monitorTag(tag: string, application?: string): Promise<void>
 
   /**
-   * Stop monitoring a tag. Unmonitoring an unmonitored tag is a no-op.
+   * Stop monitoring a tag for one application. Unmonitoring an unmonitored tag is a no-op.
    */
-  unmonitorTag(tag: string): Promise<void>
+  unmonitorTag(tag: string, application?: string): Promise<void>
 
   /**
    * Read a flag. Resolves `null` when the flag is unset or expired.
@@ -565,6 +652,12 @@ export interface PeriscopeStore {
   hasFlagWithPrefix(prefix: string): Promise<boolean>
 
   /**
+   * Every unexpired flag whose name starts with the literal prefix, in no guaranteed order.
+   * Backs entry metadata and exception triage state, which key flags by prefixed names.
+   */
+  flagsWithPrefix(prefix: string): Promise<StoredFlag[]>
+
+  /**
    * Write a flag, replacing any previous value and expiry.
    */
   setFlag(name: string, value: string, options?: FlagOptions): Promise<void>
@@ -573,6 +666,12 @@ export interface PeriscopeStore {
    * Remove a flag. Removing an absent flag is a no-op.
    */
   deleteFlag(name: string): Promise<void>
+
+  /**
+   * Write-path health counters. Optional: drivers without an asynchronous write queue may omit
+   * it, and `/api/status` reports `null`.
+   */
+  diagnostics?(): StoreDiagnostics
 
   /**
    * Release the driver's resources. Called from the provider's shutdown, after the final flush.
@@ -656,6 +755,14 @@ export type QueueJobEvent = {
   attempts?: number
   scheduledAt?: Date
   durationMs?: number
+
+  /**
+   * Opaque correlation id planted at dispatch time via
+   * {@link QueueWatcherObserver.dispatching} and echoed back by the adapter from job metadata
+   * in whichever process executes the job. When present, the dispatch, start and finish
+   * lifecycle entries share one batch even across processes.
+   */
+  correlationId?: string
 }
 
 export type QueueJobResult = QueueJobEvent & {
@@ -668,6 +775,22 @@ export interface QueueWatcherObserver {
   completed(event: QueueJobResult): void
   failed(event: QueueJobResult): void
   scheduled(event: QueueJobEvent): void
+
+  /**
+   * Called by an adapter when a job is being dispatched, before its payload is serialized.
+   * Returns a correlation id the adapter should persist in job metadata and echo back as
+   * `event.correlationId` on `started` / `completed` / `failed` — including from a different
+   * worker process. Adapters that cannot carry metadata simply never call it.
+   */
+  dispatching?(event: QueueJobEvent): { correlationId: string }
+
+  /**
+   * Called by an adapter around the job handler's execution so work recorded during the run —
+   * queries, logs, outgoing requests — is scoped into the job's batch instead of the ambient
+   * context. Adapters that cannot wrap execution simply never call it; the final lifecycle
+   * entry is then the only correlated record.
+   */
+  wrapJob?<T>(event: QueueJobEvent, run: () => Promise<T>): Promise<T>
 }
 export type QueueWatcherRegistrationOptions = {
   /**
@@ -1067,6 +1190,12 @@ export type DashboardConfig = {
    * Defaults to 5.
    */
   sseMaxClients?: number
+
+  /**
+   * Fan-out adapter factory connecting recorder flushes to live stream subscribers across
+   * processes. Defaults to an in-process adapter that only reaches clients of the same worker.
+   */
+  fanout?: FlushFanoutFactory
 }
 
 export type ResolvedDashboardConfig = {
@@ -1074,6 +1203,7 @@ export type ResolvedDashboardConfig = {
   authorize: DashboardAuthorize
   nPlusOneThreshold: number
   sseMaxClients: number
+  fanout?: FlushFanoutFactory
 }
 
 /**
@@ -1134,6 +1264,12 @@ export type PeriscopeConfig = {
     retention?: {
       hours: number
       keepExceptions?: boolean
+
+      /**
+       * Per-type retention windows overriding `hours`. Keep exceptions or mail for a week while
+       * pruning queries after a day. `keepExceptions` still wins for `exception` entries.
+       */
+      perType?: Partial<Record<EntryType, { hours: number }>>
     }
   }
 
@@ -1166,6 +1302,14 @@ export type PeriscopeConfig = {
      * Defaults to 5 000.
      */
     pausedFlagTtlMs?: number
+
+    /**
+     * How long a finished batch keeps accepting late entries — fire-and-forget work that
+     * inherited the batch's context and recorded after its final flush — before the
+     * continuation batch is flushed, in milliseconds. `0` drops late entries silently.
+     * Defaults to 2 000.
+     */
+    lateEntryGraceMs?: number
   }
 
   redact?: {
@@ -1239,6 +1383,7 @@ export type ResolvedPeriscopeConfig = {
     retention?: {
       hours: number
       keepExceptions?: boolean
+      perType: Partial<Record<EntryType, { hours: number }>>
     }
   }
   recording: {
@@ -1251,6 +1396,7 @@ export type ResolvedPeriscopeConfig = {
     keepAlways: KeepAlwaysHook
     ambientRotationMs: number
     pausedFlagTtlMs: number
+    lateEntryGraceMs: number
   }
   redact: {
     keys: string[]

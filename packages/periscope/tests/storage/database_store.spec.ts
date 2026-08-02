@@ -357,6 +357,31 @@ function registerDriverTests(connection: TestConnection): void {
       assert.deepEqual(await store.monitoredTags(), ['a'])
     })
 
+    test(`select ${connection === 'postgres' ? 'ILIKE' : 'lower LIKE'} for text search`, async ({
+      assert,
+    }) => {
+      const { database, store } = await createStore(connection)
+      const captured: QueryEvent[] = []
+      const record = (event: QueryEvent) => captured.push(event)
+
+      database.client.emitter.on('db:query', record)
+      try {
+        await store.list({ text: 'Needle' })
+      } finally {
+        database.client.emitter.off('db:query', record)
+      }
+
+      assert.lengthOf(captured, 1)
+      const sql = captured[0].sql.toLowerCase()
+      if (connection === 'postgres') {
+        assert.include(sql, "content ilike $1 escape '!'")
+        assert.notInclude(sql, 'lower(content)')
+      } else {
+        assert.include(sql, "lower(content) like ? escape '!'")
+        assert.notInclude(sql, ' ilike ')
+      }
+    })
+
     test('sweep expired flags during trim and prune maintenance', async ({ assert }) => {
       const { database, store } = await createStore(connection)
 
@@ -396,23 +421,57 @@ test('DatabaseStore bound pending write backlog drops the oldest waiting batch',
   const active = store.save([entries[0]])
   await started.promise
 
-  const queued = entries.slice(1).map((entry) =>
-    store.save([entry]).then(
-      () => 'saved' as const,
-      () => 'dropped' as const
-    )
-  )
+  const queued = entries.slice(1).map((entry) => store.save([entry]))
 
-  assert.equal(await queued[0], 'dropped')
+  await queued[0]
+  assert.deepEqual(store.diagnostics(), {
+    pendingBatches: 65,
+    droppedBatches: 1,
+    failedBatches: 0,
+    retriedBatches: 0,
+  })
   gate.resolve()
   await active
-  const outcomes = await Promise.all(queued)
+  await Promise.all(queued)
   await store.close()
 
-  assert.equal(outcomes.filter((outcome) => outcome === 'dropped').length, 1)
+  assert.deepEqual(store.diagnostics(), {
+    pendingBatches: 0,
+    droppedBatches: 1,
+    failedBatches: 0,
+    retriedBatches: 0,
+  })
   assert.equal(await countRows(database, ENTRIES_TABLE), 65)
   assert.isNull(await store.find(entries[1].uuid))
   assert.isNotNull(await store.find(entries[65].uuid))
+})
+
+test('DatabaseStore retries a failed batch twice before dropping it without rejecting', async ({
+  assert,
+}) => {
+  let attempts = 0
+  const failingDatabase = {
+    connection() {
+      return {
+        async transaction() {
+          attempts++
+          throw new Error('database unavailable')
+        },
+      }
+    },
+  } as unknown as Database
+  const store = new DatabaseStore({ db: failingDatabase })
+
+  await assert.doesNotReject(() => store.save([makeStoredEntry()]))
+  await store.close()
+
+  assert.equal(attempts, 3)
+  assert.deepEqual(store.diagnostics(), {
+    pendingBatches: 0,
+    droppedBatches: 0,
+    failedBatches: 1,
+    retriedBatches: 2,
+  })
 })
 
 if (POSTGRES_URL !== undefined) {

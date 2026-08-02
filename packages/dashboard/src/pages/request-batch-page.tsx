@@ -1,21 +1,12 @@
 import {
   ArrowLeft,
-  Box,
   Braces,
-  Bug,
   CircleAlert,
   Clock3,
-  Database,
-  DatabaseZap,
-  FileJson,
   Download,
   Globe2,
   Inbox,
-  Mail,
   Network,
-  PanelsTopLeft,
-  ShieldCheck,
-  SquareTerminal,
   UserRound,
   TriangleAlert,
 } from 'lucide-react'
@@ -39,7 +30,6 @@ import { RegistryEntryDetail } from '@/entry-type-registry'
 import type { RegisteredEntryDetailProps } from '@/entry-type-registry'
 import { api } from '@/lib/api'
 import {
-  asNumber,
   asString,
   formatBytes,
   formatDateTime,
@@ -47,6 +37,7 @@ import {
   truncate,
 } from '@/lib/format'
 import { detectNPlusOneWarnings } from '@/lib/n-plus-one'
+import { BatchWaterfall } from '@/pages/batch-waterfall'
 import type {
   CacheContent,
   CommandContent,
@@ -110,87 +101,6 @@ function entrySummary(entry: StoredEntry): string {
     default:
       return asString(entry.content.message, `${entry.type.replace('_', ' ')} entry`)
   }
-}
-
-function TimelineIcon({ type }: { type: StoredEntry['type'] }) {
-  switch (type) {
-    case 'query':
-      return <Database aria-hidden="true" />
-    case 'exception':
-      return <Bug aria-hidden="true" />
-    case 'request':
-      return <Network aria-hidden="true" />
-    case 'command':
-      return <SquareTerminal aria-hidden="true" />
-    case 'mail':
-      return <Mail aria-hidden="true" />
-    case 'cache':
-      return <DatabaseZap aria-hidden="true" />
-    case 'model':
-      return <Box aria-hidden="true" />
-    case 'gate':
-      return <ShieldCheck aria-hidden="true" />
-    case 'dump':
-      return <Braces aria-hidden="true" />
-    case 'http_client':
-      return <Globe2 aria-hidden="true" />
-    case 'view':
-      return <PanelsTopLeft aria-hidden="true" />
-    default:
-      return <FileJson aria-hidden="true" />
-  }
-}
-
-function BatchTimeline({
-  timeline,
-  onSelect,
-}: {
-  timeline: StoredEntry[]
-  onSelect: (entry: StoredEntry) => void
-}) {
-  return (
-    <Frame className="rounded-lg p-0.5">
-      <FramePanel className="overflow-hidden rounded-md p-0 shadow-none before:shadow-none">
-        <section aria-label="Batch timeline">
-          <ol className="divide-y">
-            {timeline.map((entry, index) => {
-              const duration = asNumber(entry.content.durationMs)
-              return (
-                <li key={entry.uuid}>
-                  <button
-                    className="grid w-full grid-cols-[1.75rem_minmax(0,1fr)] gap-3 px-3 py-2 text-left outline-none transition-colors hover:bg-accent/45 focus-visible:bg-accent/55 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:grid-cols-[1.75rem_7rem_minmax(0,1fr)_auto] sm:items-center"
-                    onClick={() => onSelect(entry)}
-                    type="button"
-                  >
-                    <span className="grid size-7 place-items-center rounded-md border bg-muted text-muted-foreground [&_svg]:size-4">
-                      <TimelineIcon type={entry.type} />
-                    </span>
-                    <span className="hidden font-mono text-xs text-muted-foreground sm:block">
-                      +{index.toString().padStart(2, '0')} · {entry.type.replace('_', ' ')}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-medium">
-                        {entrySummary(entry)}
-                      </span>
-                      <span className="mt-0.5 block font-mono text-2xs text-muted-foreground sm:hidden">
-                        {entry.type.replace('_', ' ')}
-                      </span>
-                    </span>
-                    <span className="col-start-2 flex items-center gap-2 sm:col-auto">
-                      {duration !== undefined && <DurationBadge value={duration} />}
-                      {entry.type === 'exception' && (
-                        <Badge variant="destructive">exception</Badge>
-                      )}
-                    </span>
-                  </button>
-                </li>
-              )
-            })}
-          </ol>
-        </section>
-      </FramePanel>
-    </Frame>
-  )
 }
 
 export function RequestEntryDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
@@ -507,7 +417,7 @@ export function RequestBatchPage() {
           </FramePanel>
         </Frame>
 
-        <BatchTimeline onSelect={setSelected} timeline={timeline} />
+        <BatchWaterfall onSelect={setSelected} summary={entrySummary} timeline={timeline} />
 
         {selected && (
           <RegistryEntryDetail
@@ -640,7 +550,7 @@ export function RequestBatchPage() {
             {nPlusOneWarnings.length === 1
               ? `One query shape ran ${nPlusOneWarnings[0].count.toLocaleString()} times in this batch.`
               : `${nPlusOneWarnings.length.toLocaleString()} query shapes crossed the warning threshold; the most repeated ran ${nPlusOneWarnings[0].count.toLocaleString()} times.`}{' '}
-            Inspect the query timeline before treating this as a defect.
+            Inspect the query waterfall before treating this as a defect.
           </AlertDescription>
         </Alert>
       )}
@@ -648,7 +558,7 @@ export function RequestBatchPage() {
       <Tabs defaultValue="timeline">
         <div className="overflow-x-auto border-b">
           <TabsList className="min-w-max" variant="underline">
-            <TabsTab value="timeline">Timeline ({timeline.length})</TabsTab>
+            <TabsTab value="timeline">Waterfall ({timeline.length})</TabsTab>
             <TabsTab value="headers">Headers</TabsTab>
             <TabsTab value="payload">Payload</TabsTab>
             <TabsTab value="response">Response</TabsTab>
@@ -657,7 +567,7 @@ export function RequestBatchPage() {
         </div>
 
         <TabsPanel className="pt-3" value="timeline">
-          <BatchTimeline onSelect={setSelected} timeline={timeline} />
+          <BatchWaterfall onSelect={setSelected} summary={entrySummary} timeline={timeline} />
         </TabsPanel>
 
         <TabsPanel className="pt-3" value="headers">

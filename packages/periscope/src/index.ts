@@ -19,6 +19,7 @@ export { stubsRoot } from '../stubs/main.ts'
 
 export { dump } from './dump.ts'
 export { IncomingEntry } from './entry.ts'
+export { createInProcessFanout } from './fanout.ts'
 export { safeguard, safeguardAsync, setInternalLogger } from './safeguard.ts'
 export type { InternalLogger } from './safeguard.ts'
 export { PeriscopeConfigError, PeriscopeError, PeriscopeStorageError } from './errors.ts'
@@ -151,11 +152,15 @@ export type {
   EntryCapsConfig,
   EntryContent,
   EntryQuery,
+  EntrySortKey,
+  ExceptionGroupState,
   ExceptionGroup,
   ExceptionGroupQuery,
   EntryTypeCounts,
   FilterHook,
   FlushedEvent,
+  FlushFanout,
+  FlushFanoutFactory,
   FlushedIndexRow,
   FlushedListener,
   FlagOptions,
@@ -178,6 +183,11 @@ export type {
   ResolvedWatchersConfig,
   StorageDriverName,
   StoredEntry,
+  StoredFlag,
+  StoreDiagnostics,
+  RequestStatsBucket,
+  RequestStatsQuery,
+  RequestStatsResult,
   TagHook,
   Watcher,
   WatchersConfig,

@@ -23,7 +23,7 @@ import { DashboardContext } from '@/dashboard-context'
 import { usePolling } from '@/hooks/use-polling'
 import { api } from '@/lib/api'
 import { globalSearchTarget } from '@/lib/global-search'
-import { liveUpdateLabel, parseFlushStreamEvent } from '@/lib/live-updates'
+import { connectLiveUpdates, liveUpdateLabel } from '@/lib/live-updates'
 import { normalizeMonitoredTags, setMonitoredTag } from '@/lib/monitored-tags'
 import type {
   DashboardStatus,
@@ -44,6 +44,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogPanel, DialogPopup, DialogTitle } from '@/components/ui/dialog'
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group'
 import { Kbd, KbdGroup } from '@/components/ui/kbd'
 import { Separator } from '@/components/ui/separator'
@@ -117,11 +118,11 @@ const navigationGroups: { label: string; items: NavigationItem[] }[] = [
 ]
 
 const titleByPath: Record<string, string> = {
-  overview: 'Overview',
-  requests: 'Requests',
-  queries: 'Queries',
-  exceptions: 'Exceptions',
-  search: 'Search',
+  'overview': 'Overview',
+  'requests': 'Requests',
+  'queries': 'Queries',
+  'exceptions': 'Exceptions',
+  'search': 'Search',
   'monitored-tags': 'Monitored tags',
   ...Object.fromEntries(
     wave2EntryTypes.map((registration) => [registration.path, registration.label])
@@ -231,7 +232,6 @@ export function AppShell() {
   const monitoredTagMutationGenerationRef = useRef(0)
   const monitoredTagMutationsRef = useRef(new Set<string>())
   const monitoredTagsRequestRef = useRef<AbortController | null>(null)
-  const shortcutHelpRef = useRef<HTMLDivElement | null>(null)
   const preservedApplicationRef = useRef<string | null>(searchParams.get('application'))
   const commitMonitoredTags = useCallback((update: (current: string[]) => string[]) => {
     const next = update(monitoredTagsRef.current)
@@ -325,7 +325,6 @@ export function AppShell() {
       }
 
       if (event.key === 'Escape') {
-        setShortcutHelpOpen(false)
         window.dispatchEvent(new Event(CLOSE_DETAIL_EVENT))
       }
     }
@@ -333,22 +332,6 @@ export function AppShell() {
     window.addEventListener('keydown', handleShortcut, true)
     return () => window.removeEventListener('keydown', handleShortcut, true)
   }, [])
-
-  useEffect(() => {
-    if (!shortcutHelpOpen) return
-
-    const closeOnOutsidePress = (event: PointerEvent) => {
-      if (
-        event.target instanceof Node &&
-        shortcutHelpRef.current &&
-        !shortcutHelpRef.current.contains(event.target)
-      ) {
-        setShortcutHelpOpen(false)
-      }
-    }
-    window.addEventListener('pointerdown', closeOnOutsidePress)
-    return () => window.removeEventListener('pointerdown', closeOnOutsidePress)
-  }, [shortcutHelpOpen])
 
   const refreshMonitoredTags = useCallback(async () => {
     if (monitoredTagMutationsRef.current.size > 0) return
@@ -436,29 +419,16 @@ export function AppShell() {
       setLiveUpdateMode('off')
       return
     }
-    if (typeof EventSource === 'undefined') {
-      setLiveUpdateMode('polling')
-      return
-    }
-
-    setLiveUpdateMode('connecting')
-    const source = new EventSource(api.getStreamUrl())
-    source.onopen = () => setLiveUpdateMode('live')
-    source.onerror = () => setLiveUpdateMode('polling')
-    const receiveFlush = (event: Event) => {
-      const parsed = parseFlushStreamEvent((event as MessageEvent<string>).data)
-      if (!parsed) return
-      if (parsed.indexRow.application !== selectedApplication) return
-      setFlushEvent(parsed)
-      setFlushRevision((value) => value + 1)
-    }
-    source.addEventListener('flush', receiveFlush)
-    return () => {
-      source.onopen = null
-      source.onerror = null
-      source.removeEventListener('flush', receiveFlush)
-      source.close()
-    }
+    const connection = connectLiveUpdates({
+      url: api.getStreamUrl(selectedApplication),
+      onModeChange: setLiveUpdateMode,
+      onFlush: (event) => {
+        if (event.indexRow.application !== selectedApplication) return
+        setFlushEvent(event)
+        setFlushRevision((value) => value + 1)
+      },
+    })
+    return () => connection.close()
   }, [selectedApplication, status?.enabled, status?.paused])
 
   const togglePaused = useCallback(
@@ -590,7 +560,9 @@ export function AppShell() {
               <PeriscopeLogo className="size-7" />
               <div className="min-w-0 group-data-[collapsible=icon]:hidden">
                 <div className="truncate text-sm font-semibold tracking-tight">Periscope</div>
-                <div className="truncate text-2xs text-muted-foreground">Local runtime recorder</div>
+                <div className="truncate text-2xs text-muted-foreground">
+                  Local runtime recorder
+                </div>
               </div>
             </div>
             <div className="px-1 group-data-[collapsible=icon]:hidden">
@@ -610,17 +582,14 @@ export function AppShell() {
                     {group.items.map((item) => {
                       const Icon = item.icon
                       const isActive =
-                        location.pathname === item.to ||
-                        location.pathname.startsWith(`${item.to}/`)
+                        location.pathname === item.to || location.pathname.startsWith(`${item.to}/`)
                       const count = item.type ? (counts[item.type] ?? 0) : null
                       return (
                         <SidebarMenuItem key={item.to}>
                           <SidebarMenuButton
                             isActive={isActive}
                             render={
-                              <NavLink
-                                to={{ pathname: item.to, search: applicationSearch }}
-                              />
+                              <NavLink to={{ pathname: item.to, search: applicationSearch }} />
                             }
                             size="sm"
                             tooltip={item.label}
@@ -737,7 +706,7 @@ export function AppShell() {
                 </Select>
               )}
 
-              <div className="relative shrink-0" ref={shortcutHelpRef}>
+              <div className="relative shrink-0">
                 <Menu>
                   <MenuTrigger
                     render={<Button aria-label="Dashboard options" size="sm" variant="ghost" />}
@@ -798,33 +767,36 @@ export function AppShell() {
                     </MenuItem>
                   </MenuPopup>
                 </Menu>
-                {shortcutHelpOpen && (
-                  <div
-                    aria-label="Keyboard shortcuts"
-                    className="absolute top-full right-0 z-50 mt-2 w-64 rounded-lg border bg-popover p-3 text-popover-foreground shadow-lg"
+                <Dialog onOpenChange={setShortcutHelpOpen} open={shortcutHelpOpen}>
+                  <DialogPopup
+                    aria-modal="true"
+                    bottomStickOnMobile={false}
+                    className="w-64 rounded-lg p-3"
                     id="keyboard-shortcut-help"
-                    role="dialog"
+                    showCloseButton={false}
                   >
-                    <p className="mb-2 text-xs font-semibold">Keyboard shortcuts</p>
-                    <dl className="space-y-1.5">
-                      {shortcutItems.map((shortcut) => (
-                        <div
-                          className="flex items-center justify-between gap-4"
-                          key={shortcut.label}
-                        >
-                          <dt className="text-xs text-muted-foreground">{shortcut.label}</dt>
-                          <dd>
-                            <KbdGroup>
-                              {shortcut.keys.map((key) => (
-                                <Kbd key={key}>{key}</Kbd>
-                              ))}
-                            </KbdGroup>
-                          </dd>
-                        </div>
-                      ))}
-                    </dl>
-                  </div>
-                )}
+                    <DialogTitle className="mb-2 text-xs">Keyboard shortcuts</DialogTitle>
+                    <DialogPanel className="p-0" scrollFade={false}>
+                      <dl className="space-y-1.5">
+                        {shortcutItems.map((shortcut) => (
+                          <div
+                            className="flex items-center justify-between gap-4"
+                            key={shortcut.label}
+                          >
+                            <dt className="text-xs text-muted-foreground">{shortcut.label}</dt>
+                            <dd>
+                              <KbdGroup>
+                                {shortcut.keys.map((key) => (
+                                  <Kbd key={key}>{key}</Kbd>
+                                ))}
+                              </KbdGroup>
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </DialogPanel>
+                  </DialogPopup>
+                </Dialog>
               </div>
 
               <AlertDialog onOpenChange={setClearDialogOpen} open={clearDialogOpen}>

@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import { IncomingEntry } from '../../entry.ts'
 import { BatchScope } from '../../recorder/context.ts'
 import { safeSerialize } from '../../recorder/serializer.ts'
@@ -27,6 +29,16 @@ function jobKey(event: QueueJobEvent): string {
 
 function durationMs(startedAt: bigint): number {
   return Number(process.hrtime.bigint() - startedAt) / 1_000_000
+}
+
+/**
+ * Rebuild a queue scope from metadata carried across a process boundary.
+ *
+ * Contexts themselves cannot cross the queue transport, so only their stable id is restored;
+ * sampling and trace state remain local to the worker that is doing the recording.
+ */
+function correlatedContext(correlationId: string): BatchContext {
+  return { ...BatchScope.createContext('queue'), batchId: correlationId }
 }
 
 /** Correlates pluggable queue lifecycle adapters without coupling Periscope to one queue package. */
@@ -76,13 +88,67 @@ export class JobScheduleWatcher implements Watcher, QueueWatcherObserver {
     void flushing.then(() => this.#flushes.delete(flushing))
   }
 
+  dispatching(event: QueueJobEvent): { correlationId: string } {
+    const correlationId = randomUUID()
+
+    safeguard('periscope.watcher.job_schedule.dispatching', () => {
+      if (!this.#active) return
+      const scheduledAt = event.scheduledAt
+      const content: ScheduleEntryContent = {
+        adapter: event.adapter,
+        queue: event.queue,
+        jobId: event.jobId,
+        ...(event.name === undefined ? {} : { name: event.name }),
+        ...(scheduledAt === undefined
+          ? {}
+          : {
+              scheduledAt: scheduledAt.toISOString(),
+              delayMs: Math.max(0, scheduledAt.getTime() - Date.now()),
+            }),
+        ...(this.#context.config.watchers.job_schedule.capturePayload && event.payload !== undefined
+          ? { payload: safeSerialize(event.payload) }
+          : {}),
+      }
+
+      /**
+       * Deliberately do not open or flush a queue context here. Dispatch runs inside the producer's
+       * request/command/ambient scope, and the correlation tag is the bridge from that parent batch
+       * to the independently persisted worker batch.
+       */
+      this.#context.recorder.record(
+        IncomingEntry.make(EntryType.SCHEDULE, content).withTags(
+          `queue:${event.queue}`,
+          `adapter:${event.adapter}`,
+          `queue-correlation:${correlationId}`
+        )
+      )
+      this.stats.schedules += 1
+    })
+
+    return { correlationId }
+  }
+
+  async wrapJob<T>(event: QueueJobEvent, run: () => Promise<T>): Promise<T> {
+    if (!this.#active || event.correlationId === undefined) return run()
+
+    const context = correlatedContext(event.correlationId)
+    try {
+      return await BatchScope.runWith(context, run)
+    } finally {
+      await this.#context.recorder.flush(context, 'final')
+    }
+  }
+
   started(event: QueueJobEvent): void {
     safeguard('periscope.watcher.job_schedule.started', () => {
       if (!this.#active) return
       const key = jobKey(event)
       this.#activeJobs.delete(key)
       this.#activeJobs.set(key, {
-        context: BatchScope.createContext('queue'),
+        context:
+          event.correlationId === undefined
+            ? BatchScope.createContext('queue')
+            : correlatedContext(event.correlationId),
         event,
         startedAt: process.hrtime.bigint(),
       })
@@ -143,7 +209,12 @@ export class JobScheduleWatcher implements Watcher, QueueWatcherObserver {
       const key = jobKey(event)
       const active = this.#activeJobs.get(key)
       this.#activeJobs.delete(key)
-      const context = active?.context ?? BatchScope.createContext('queue')
+      const context =
+        event.correlationId === undefined
+          ? (active?.context ?? BatchScope.createContext('queue'))
+          : active?.context.batchId === event.correlationId
+            ? active.context
+            : correlatedContext(event.correlationId)
       const source = active?.event ?? event
       const capturePayload = this.#context.config.watchers.job_schedule.capturePayload
       const name = source.name ?? event.name

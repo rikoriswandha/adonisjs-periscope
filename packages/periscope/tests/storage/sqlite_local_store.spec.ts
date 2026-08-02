@@ -251,6 +251,45 @@ test.group('SqliteLocalStore', () => {
     assert.equal(found?.uuid, fresh.uuid)
   })
 
+  test('upgrade unscoped monitored tags into the default application', async ({
+    assert,
+    cleanup,
+  }) => {
+    const file = createDatabaseFile()
+    cleanup(() => file.remove())
+    const legacy = openReader(file.path)
+    legacy.exec(`
+      create table ${MONITORED_TAGS_TABLE} (
+        tag varchar(191) not null primary key
+      );
+      insert into ${MONITORED_TAGS_TABLE} (tag) values ('legacy-tag');
+    `)
+    legacy.close()
+
+    const store = new SqliteLocalStore({ path: file.path })
+    cleanup(() => store.close())
+    await store.monitorTag('legacy-tag', 'other')
+
+    assert.deepEqual(await store.monitoredTags(), ['legacy-tag'])
+    assert.deepEqual(await store.monitoredTags('other'), ['legacy-tag'])
+
+    const reader = openReader(file.path)
+    try {
+      const primaryKey = (
+        reader.pragma(`table_info(${MONITORED_TAGS_TABLE})`) as {
+          name: string
+          pk: number
+        }[]
+      )
+        .filter((column) => column.pk > 0)
+        .sort((left, right) => left.pk - right.pk)
+        .map((column) => column.name)
+      assert.deepEqual(primaryKey, ['application', 'tag'])
+    } finally {
+      reader.close()
+    }
+  })
+
   test('create the directory the database file lives in', async ({ assert, cleanup }) => {
     const file = createDatabaseFile()
     cleanup(() => file.remove())
@@ -501,6 +540,64 @@ test.group('SqliteLocalStore', () => {
     await store.clear()
 
     assert.deepEqual(tagRowCounts(file.path), { total: 0, orphans: 0 })
+  })
+
+  test('bounds the pending batch queue and reports dropped writes', async ({ assert, cleanup }) => {
+    const file = createDatabaseFile()
+    const store = new SqliteLocalStore({ path: file.path })
+    cleanup(async () => {
+      await store.close()
+      file.remove()
+    })
+    const entries = Array.from({ length: 257 }, () => makeStoredEntry())
+    const saves = entries.map((entry) => store.save([entry]))
+
+    assert.deepEqual(store.diagnostics(), {
+      pendingBatches: 256,
+      droppedBatches: 1,
+      failedBatches: 0,
+      retriedBatches: 0,
+    })
+
+    const outcomes = await Promise.allSettled(saves)
+
+    assert.equal(outcomes[0].status, 'rejected')
+    assert.isTrue(outcomes.slice(1).every((outcome) => outcome.status === 'fulfilled'))
+    assert.deepEqual(store.diagnostics(), {
+      pendingBatches: 0,
+      droppedBatches: 1,
+      failedBatches: 0,
+      retriedBatches: 0,
+    })
+    assert.isNull(await store.find(entries[0].uuid))
+    assert.isNotNull(await store.find(entries[256].uuid))
+  })
+
+  test('yield between pending batches while preserving their order', async ({
+    assert,
+    cleanup,
+  }) => {
+    const file = createDatabaseFile()
+    const store = new SqliteLocalStore({ path: file.path })
+    const reader = openReader(file.path)
+    cleanup(async () => {
+      reader.close()
+      await store.close()
+      file.remove()
+    })
+    const total = reader.prepare<[], { total: number }>(
+      `select count(*) as total from ${ENTRIES_TABLE}`
+    )
+    const first = store.save([makeStoredEntry()])
+    const second = store.save([makeStoredEntry()])
+
+    const afterFirstDrain = new Promise<number>((resolve) => {
+      setImmediate(() => resolve(total.get()?.total ?? 0))
+    })
+
+    assert.equal(await afterFirstDrain, 1)
+    await Promise.all([first, second])
+    assert.equal(total.get()?.total, 2)
   })
 
   test('yield to the event loop before writing a batch', async ({ assert, cleanup }) => {

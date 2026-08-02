@@ -172,6 +172,47 @@ test.group('PeriscopeProvider', (group) => {
     await provider.shutdown()
   })
 
+  test('bridge flushed entries through the configured fanout and close it on shutdown', async ({
+    assert,
+  }) => {
+    let published = 0
+    let closed = 0
+    let factoryApp: ApplicationService | undefined
+    let factoryConfig: ResolvedPeriscopeConfig | undefined
+    const config = defineConfig({
+      storage: { driver: 'memory' },
+      dashboard: {
+        fanout: async (context) => {
+          await Promise.resolve()
+          factoryApp = context.app
+          factoryConfig = context.config
+          return {
+            publish() {
+              published += 1
+            },
+            subscribe: () => () => {},
+            close() {
+              closed += 1
+            },
+          }
+        },
+      },
+    })
+    const { app, provider } = await createProvider({ periscope: config })
+
+    await provider.boot()
+    const recorder = await app.container.make(Recorder)
+    recorder.record(IncomingEntry.make(EntryType.EVENT, { source: 'fanout' }))
+    await recorder.flush()
+
+    assert.strictEqual(factoryApp, app)
+    assert.strictEqual(factoryConfig, config)
+    assert.equal(published, 1)
+
+    await provider.shutdown()
+    assert.equal(closed, 1)
+  })
+
   test('register dashboard routes from start in web processes', async ({ assert }) => {
     const { app, provider } = await createProvider({
       periscope: inertConfig(),
@@ -323,6 +364,63 @@ test.group('PeriscopeProvider', (group) => {
     assert.isTrue(calls[0].muted)
     assert.isTrue(calls[0].keepExceptions)
     assert.approximately(calls[0].before.getTime(), now - retentionHours * 60 * 60 * 1_000, 1_000)
+
+    await provider.shutdown()
+  })
+
+  test('forward per-entry retention cutoffs from the same cycle timestamp', async ({ assert }) => {
+    const retentionHours = 24
+    const queryHours = 3
+    const { app, provider } = await createProvider({
+      periscope: defineConfig({
+        storage: {
+          driver: 'memory',
+          retention: {
+            hours: retentionHours,
+            perType: { query: { hours: queryHours } },
+          },
+        },
+      }),
+    })
+    const recorder = await app.container.make(Recorder)
+    const now = Date.now()
+    let before: Date | undefined
+    let queryBefore: Date | undefined
+    recorder.store.prune = async (options) => {
+      before = options.before
+      queryBefore = options.perTypeBefore?.query
+      return 0
+    }
+
+    await provider.ready()
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+    assert.approximately(before!.getTime(), now - retentionHours * 60 * 60 * 1_000, 1_000)
+    assert.approximately(queryBefore!.getTime(), now - queryHours * 60 * 60 * 1_000, 1_000)
+
+    await provider.shutdown()
+  })
+
+  test('skip retention while another worker holds the maintenance lease', async ({ assert }) => {
+    const { app, provider } = await createProvider({
+      periscope: defineConfig({
+        storage: { driver: 'memory', retention: { hours: 24 } },
+      }),
+    })
+    const recorder = await app.container.make(Recorder)
+    let pruneCalls = 0
+    recorder.store.prune = async () => {
+      pruneCalls += 1
+      return 0
+    }
+    await recorder.store.setFlag('maintenance-lease', 'foreign-worker', {
+      expiresAt: new Date(Date.now() + 60_000),
+    })
+
+    await provider.ready()
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+    assert.equal(pruneCalls, 0)
 
     await provider.shutdown()
   })

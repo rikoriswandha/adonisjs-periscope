@@ -114,6 +114,12 @@ test.group('HttpClientWatcher', () => {
       errorChannel.publish({ request, error: new Error('late duplicate') })
     })
 
+    /*
+     * The late finalization landed in the closed batch's continuation window. A second final
+     * flush drains that continuation immediately instead of waiting out the grace timer.
+     */
+    await recorder.flush(source)
+
     await letFlushSettle()
     const page = await store.list({ type: EntryType.HTTP_CLIENT })
 

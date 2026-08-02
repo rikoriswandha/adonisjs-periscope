@@ -501,6 +501,12 @@ test.group('Dashboard JSON API', () => {
       paused: false,
       path: '/scope',
       nPlusOneThreshold: 7,
+      store: {
+        pendingBatches: 0,
+        droppedBatches: 0,
+        failedBatches: 0,
+        retriedBatches: 0,
+      },
     })
 
     const put = createContext('/scope/api/flags/paused', 'PUT', { name: Flag.PAUSED })

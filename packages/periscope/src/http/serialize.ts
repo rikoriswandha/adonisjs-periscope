@@ -5,7 +5,7 @@
  * file that was distributed with this source code.
  */
 
-import type { ExceptionGroup, Paginated, StoredEntry } from '../types.ts'
+import type { ExceptionGroup, ExceptionGroupState, Paginated, StoredEntry } from '../types.ts'
 
 export type StoredEntryTransport = Omit<StoredEntry, 'sequence' | 'createdAt'> & {
   sequence: string
@@ -17,6 +17,8 @@ export type ExceptionGroupTransport = {
   latest: StoredEntryTransport
   count: number
   lastSeen: string
+  state: ExceptionGroupState
+  stateUpdatedAt: string | null
 }
 
 /**
@@ -46,7 +48,8 @@ export function serializeEntryPage(page: Paginated<StoredEntry>): Paginated<Stor
 }
 
 export function serializeExceptionGroupPage(
-  page: Paginated<ExceptionGroup>
+  page: Paginated<ExceptionGroup>,
+  states: ReadonlyMap<string, { state: ExceptionGroupState; stateUpdatedAt: string | null }>
 ): Paginated<ExceptionGroupTransport> {
   return {
     data: page.data.map((group) => ({
@@ -54,6 +57,7 @@ export function serializeExceptionGroupPage(
       latest: serializeEntry(group.latest),
       count: group.count,
       lastSeen: group.lastSeen.toISOString(),
+      ...(states.get(group.familyHash) ?? { state: 'open', stateUpdatedAt: null }),
     })),
     nextCursor: page.nextCursor,
   }

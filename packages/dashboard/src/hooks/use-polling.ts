@@ -3,7 +3,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDashboard } from '@/dashboard-context'
 import { walkCursorPages } from '@/hooks/walk-cursor-pages'
 import { api } from '@/lib/api'
-import { shouldPollForUpdates, streamEventMatchesFilters } from '@/lib/live-updates'
+import {
+  createCoalescedCallback,
+  shouldPollForUpdates,
+  streamEventMatchesFilters,
+} from '@/lib/live-updates'
 import type { EntryFilters, StoredEntry } from '@/types'
 
 export function usePolling(
@@ -129,18 +133,21 @@ export function useNewEntryPolling(
       if (controllerRef.current === controller) controllerRef.current = null
     }
   }, [stableFilters])
+  const liveScanScheduler = useMemo(
+    () => createCoalescedCallback(() => void scanForNewEntries().catch(() => undefined)),
+    [scanForNewEntries]
+  )
+
+  useEffect(() => () => liveScanScheduler.cancel(), [liveScanScheduler])
 
   useEffect(() => {
-    if (
-      paused ||
-      liveUpdateMode !== 'live' ||
-      !flushEvent ||
-      !streamEventMatchesFilters(flushEvent, stableFilters)
-    ) {
+    if (paused || liveUpdateMode !== 'live') {
+      liveScanScheduler.cancel()
       return
     }
-    void scanForNewEntries().catch(() => undefined)
-  }, [flushEvent, flushRevision, liveUpdateMode, paused, scanForNewEntries, stableFilters])
+    if (!flushEvent || !streamEventMatchesFilters(flushEvent, stableFilters)) return
+    liveScanScheduler.schedule()
+  }, [flushEvent, flushRevision, liveScanScheduler, liveUpdateMode, paused, stableFilters])
 
   usePolling(scanForNewEntries, {
     enabled: shouldPollForUpdates(liveUpdateMode, paused),

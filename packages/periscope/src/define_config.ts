@@ -41,6 +41,7 @@ import type {
   DashboardAuthorize,
   FilterHook,
   KeepAlwaysHook,
+  FlushFanoutFactory,
   LogLevelName,
   PeriscopeConfig,
   PeriscopeStoreFactory,
@@ -115,6 +116,7 @@ const DEFAULT_MAX_ENTRIES = 10_000
 const DEFAULT_AMBIENT_ROTATION_MS = 10_000
 const DEFAULT_PAUSED_FLAG_TTL_MS = 5_000
 const DEFAULT_SAMPLE_RATE = 1
+const DEFAULT_LATE_ENTRY_GRACE_MS = 2_000
 const DEFAULT_APPLICATION_NAME = 'default'
 const MAX_APPLICATION_NAME_LENGTH = 191
 export const DEFAULT_KEEP_ALWAYS: KeepAlwaysHook = () => false
@@ -526,6 +528,51 @@ function resolveCaps(value: unknown, issues: string[]): Record<EntryType, number
 
   return caps
 }
+/**
+ * Resolves per-entry retention overrides while rejecting misspelled entry types eagerly.
+ *
+ * Keeping the result dense at the block level (`{}` when no overrides exist) means the provider
+ * can iterate it directly on every maintenance cycle without carrying config-shape branches.
+ */
+function resolveRetentionPerType(
+  value: unknown,
+  issues: string[]
+): Partial<Record<EntryType, { hours: number }>> {
+  const resolved: Partial<Record<EntryType, { hours: number }>> = {}
+
+  if (value === undefined) {
+    return resolved
+  }
+
+  if (!isPlainObject(value)) {
+    issues.push(
+      `storage.retention.perType: must be an object mapping entry types to retention windows; got ${describe(value)}`
+    )
+    return resolved
+  }
+
+  for (const [key, raw] of Object.entries(value)) {
+    const path = `storage.retention.perType.${key}`
+
+    if (!(ENTRY_TYPES as readonly string[]).includes(key)) {
+      issues.push(`${path}: unknown entry type; accepted keys are ${ENTRY_TYPES.join(', ')}`)
+      continue
+    }
+
+    const block = readBlock({ value: raw }, 'value', ['hours'], issues, path)
+    const hours = readInteger(`${path}.hours`, block.hours, 1, issues)
+
+    if (isPlainObject(raw) && block.hours === undefined) {
+      issues.push(`${path}.hours: is required`)
+    }
+
+    if (hours !== undefined) {
+      resolved[key as EntryType] = { hours }
+    }
+  }
+
+  return resolved
+}
 
 /**
  * Reads a value constrained to a fixed set of strings, such as a capture mode or a log level.
@@ -892,7 +939,7 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
   const retention = readBlock(
     storage,
     'retention',
-    ['hours', 'keepExceptions'],
+    ['hours', 'keepExceptions', 'perType'],
     issues,
     'storage.retention'
   )
@@ -902,6 +949,7 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
     retention.keepExceptions,
     issues
   )
+  const retentionPerType = resolveRetentionPerType(retention.perType, issues)
 
   if (isPlainObject(storage.retention) && retention.hours === undefined) {
     issues.push('storage.retention.hours: is required when storage.retention is configured')
@@ -910,7 +958,14 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
   const recording = readBlock(
     input,
     'recording',
-    ['caps', 'sampleRate', 'keepAlways', 'ambientRotationMs', 'pausedFlagTtlMs'],
+    [
+      'caps',
+      'sampleRate',
+      'keepAlways',
+      'ambientRotationMs',
+      'pausedFlagTtlMs',
+      'lateEntryGraceMs',
+    ],
     issues
   )
   const caps = resolveCaps(recording.caps, issues)
@@ -930,6 +985,12 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
     'recording.pausedFlagTtlMs',
     recording.pausedFlagTtlMs,
     1,
+    issues
+  )
+  const lateEntryGraceMs = readInteger(
+    'recording.lateEntryGraceMs',
+    recording.lateEntryGraceMs,
+    0,
     issues
   )
 
@@ -953,7 +1014,7 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
   const dashboard = readBlock(
     input,
     'dashboard',
-    ['path', 'authorize', 'nPlusOneThreshold', 'sseMaxClients'],
+    ['path', 'authorize', 'nPlusOneThreshold', 'sseMaxClients', 'fanout'],
     issues
   )
   const dashboardPath = readNonEmptyString('dashboard.path', dashboard.path, issues)
@@ -969,6 +1030,7 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
     issues
   )
   const sseMaxClients = readInteger('dashboard.sseMaxClients', dashboard.sseMaxClients, 1, issues)
+  const fanout = readFunction<FlushFanoutFactory>('dashboard.fanout', dashboard.fanout, issues)
 
   if (dashboardPath !== undefined && !dashboardPath.startsWith('/')) {
     issues.push(`dashboard.path: must start with a slash; got ${describe(dashboardPath)}`)
@@ -998,6 +1060,7 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
   if (retentionHours !== undefined) {
     resolvedStorage.retention = {
       hours: retentionHours,
+      perType: retentionPerType,
       ...(retentionKeepExceptions === undefined ? {} : { keepExceptions: retentionKeepExceptions }),
     }
   }
@@ -1013,6 +1076,7 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
       keepAlways: keepAlways ?? DEFAULT_KEEP_ALWAYS,
       ambientRotationMs: ambientRotationMs ?? DEFAULT_AMBIENT_ROTATION_MS,
       pausedFlagTtlMs: pausedFlagTtlMs ?? DEFAULT_PAUSED_FLAG_TTL_MS,
+      lateEntryGraceMs: lateEntryGraceMs ?? DEFAULT_LATE_ENTRY_GRACE_MS,
     },
     redact: {
       keys: redactKeys ?? [...DEFAULT_REDACT_KEYS],
@@ -1032,6 +1096,7 @@ export function defineConfig(config: PeriscopeConfig): ResolvedPeriscopeConfig {
       authorize: dashboardAuthorize ?? DEFAULT_DASHBOARD_AUTHORIZE,
       nPlusOneThreshold: nPlusOneThreshold ?? DEFAULT_N_PLUS_ONE_THRESHOLD,
       sseMaxClients: sseMaxClients ?? DEFAULT_SSE_MAX_CLIENTS,
+      ...(fanout === undefined ? {} : { fanout }),
     },
   }
 }

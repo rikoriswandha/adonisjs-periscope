@@ -7,8 +7,10 @@
 
 import { getActiveTest, test } from '@japa/runner'
 
+import { IncomingEntry } from '../../../src/entry.ts'
 import { defineConfig } from '../../../src/define_config.ts'
 import { Recorder } from '../../../src/recorder/recorder.ts'
+import { BatchScope } from '../../../src/recorder/context.ts'
 import { MemoryStore } from '../../../src/storage/memory_store.ts'
 import { EntryType } from '../../../src/types.ts'
 import type {
@@ -38,14 +40,13 @@ async function settle() {
   await new Promise<void>((resolve) => setImmediate(resolve))
 }
 
-async function makeWatcher(capturePayload = false) {
+async function makeWatcher(capturePayload = false, store = new MemoryStore({ maxEntries: 100 })) {
   const { app, emitter } = await createApp()
   const adapter = new TestQueueAdapter()
   const config = defineConfig({
     storage: { driver: 'memory' },
     watchers: { job_schedule: { enabled: true, adapters: [adapter], capturePayload } },
   })
-  const store = new MemoryStore({ maxEntries: 100 })
   const recorder = new Recorder({ config, store })
   const watcher = new JobScheduleWatcher({ app, emitter, config, recorder, dev: true })
   await watcher.register()
@@ -57,6 +58,94 @@ async function makeWatcher(capturePayload = false) {
 }
 
 test.group('JobScheduleWatcher', () => {
+  test('records dispatch in the current batch and returns its correlation id', async ({
+    assert,
+  }) => {
+    const { adapter, recorder, store, watcher } = await makeWatcher()
+    const producerContext = BatchScope.createContext('request')
+    const event = {
+      adapter: 'test',
+      queue: 'mail',
+      jobId: 'dispatch-42',
+      name: 'SendReceipt',
+    }
+
+    const correlation = BatchScope.runWith(producerContext, () =>
+      adapter.observer!.dispatching!(event)
+    )
+    await recorder.flush(producerContext)
+
+    const page = await store.list({ type: EntryType.SCHEDULE })
+    assert.match(correlation.correlationId, /^[0-9a-f-]{36}$/)
+    assert.lengthOf(page.data, 1)
+    assert.equal(page.data[0].batchId, producerContext.batchId)
+    assert.include(page.data[0].tags, `queue-correlation:${correlation.correlationId}`)
+    assert.deepEqual(watcher.stats, { jobs: 0, schedules: 1 })
+  })
+
+  test('wraps handler recording in the correlation batch', async ({ assert }) => {
+    const { adapter, recorder, store } = await makeWatcher()
+    const correlationId = 'queue-correlation-for-wrapped-handler'
+
+    await adapter.observer!.wrapJob!(
+      {
+        adapter: 'test',
+        queue: 'mail',
+        jobId: 'wrapped-42',
+        correlationId,
+      },
+      async () => {
+        recorder.record(IncomingEntry.make(EntryType.LOG, { message: 'inside queue handler' }))
+      }
+    )
+
+    const page = await store.list({ type: EntryType.LOG })
+    assert.lengthOf(page.data, 1)
+    assert.equal(page.data[0].batchId, correlationId)
+  })
+
+  test('correlates lifecycle entries across watcher instances sharing a store', async ({
+    assert,
+  }) => {
+    const sharedStore = new MemoryStore({ maxEntries: 100 })
+    const first = await makeWatcher(false, sharedStore)
+    const second = await makeWatcher(false, sharedStore)
+    const correlationId = 'cross-process-job-correlation'
+
+    first.adapter.observer!.started({
+      adapter: 'test',
+      queue: 'mail',
+      jobId: 'worker-a-start',
+      correlationId,
+    })
+    second.adapter.observer!.completed({
+      adapter: 'test',
+      queue: 'mail',
+      jobId: 'worker-a-start',
+      correlationId,
+    })
+    second.adapter.observer!.started({
+      adapter: 'test',
+      queue: 'mail',
+      jobId: 'worker-b-start',
+      correlationId,
+    })
+    first.adapter.observer!.completed({
+      adapter: 'test',
+      queue: 'mail',
+      jobId: 'worker-b-start',
+      correlationId,
+    })
+    await settle()
+
+    const page = await sharedStore.list({ type: EntryType.JOB })
+    assert.lengthOf(page.data, 2)
+    assert.deepEqual(
+      page.data.map((entry) => entry.batchId),
+      [correlationId, correlationId]
+    )
+  })
+
   test('correlate start and completion into one persisted queue batch', async ({ assert }) => {
     const { adapter, store, watcher } = await makeWatcher(true)
     adapter.observer!.started({

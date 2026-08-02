@@ -4,7 +4,11 @@
   })
 }}}
 import { BaseSchema } from '@adonisjs/lucid/schema'
-import { createPeriscopeTables, dropPeriscopeTables } from '@rikology/adonisjs-periscope/storage_schema'
+import {
+  createPeriscopeTables,
+  createPostgresSearchArtifacts,
+  dropPeriscopeTables,
+} from '@rikology/adonisjs-periscope/storage_schema'
 
 /**
  * Periscope's four tables, for the \`database\` storage driver.
@@ -24,12 +28,20 @@ import { createPeriscopeTables, dropPeriscopeTables } from '@rikology/adonisjs-p
  * sequence\` and fails the whole INSERT, taking every other entry in that batch with it. TEXT
  * round-trips the exact bytes; the driver parses them itself either way.
  *
+ * Postgres also gets an optional trigram index for content search. Managed databases may deny
+ * extension or index creation; the helper tolerates that and leaves identical search behaviour
+ * backed by a planner scan.
+ *
  * You are free to edit this file — it is yours once generated. If you rename a table, note that
  * the driver reads the names from \`src/storage/sql.ts\` and will not follow you.
  */
 export default class extends BaseSchema {
   async up() {
     createPeriscopeTables(this.schema)
+
+    if (this.db.dialect.name === 'postgres') {
+      createPostgresSearchArtifacts(this.schema)
+    }
   }
 
   async down() {

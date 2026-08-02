@@ -59,6 +59,7 @@ class FakeStore implements PeriscopeStore {
 
   getFlagCalls = 0
   monitoredTagsCalls = 0
+  readonly monitoredTagsApplications: (string | undefined)[] = []
   saveFailure: Error | null = null
   trimFailure: Error | null = null
   getFlagFailure: Error | null = null
@@ -145,9 +146,10 @@ class FakeStore implements PeriscopeStore {
 
   async clear(): Promise<void> {}
 
-  async monitoredTags(): Promise<string[]> {
+  async monitoredTags(application?: string): Promise<string[]> {
     this.onMonitoredTags?.()
     this.monitoredTagsCalls++
+    this.monitoredTagsApplications.push(application)
 
     if (this.monitoredTagsFailure !== null) {
       throw this.monitoredTagsFailure
@@ -186,6 +188,12 @@ class FakeStore implements PeriscopeStore {
     return false
   }
 
+  async flagsWithPrefix(prefix: string): Promise<{ name: string; value: string }[]> {
+    return [...this.#flags.entries()]
+      .filter(([name]) => name.startsWith(prefix))
+      .map(([name, value]) => ({ name, value }))
+  }
+
   async setFlag(name: string, value: string): Promise<void> {
     this.#flags.set(name, value)
   }
@@ -204,6 +212,7 @@ type ConfigOverrides = {
   keepAlways?: KeepAlwaysHook
   ambientRotationMs?: number
   pausedFlagTtlMs?: number
+  lateEntryGraceMs?: number
   filter?: FilterHook[]
   tag?: TagHook[]
 
@@ -240,6 +249,7 @@ function makeConfig(overrides: ConfigOverrides = {}): ResolvedPeriscopeConfig {
       keepAlways: overrides.keepAlways ?? (() => false),
       ambientRotationMs: overrides.ambientRotationMs ?? 10_000,
       pausedFlagTtlMs: overrides.pausedFlagTtlMs ?? 5_000,
+      lateEntryGraceMs: overrides.lateEntryGraceMs ?? 2_000,
     },
     redact: {
       keys: overrides.redactKeys ?? [...DEFAULT_REDACT_KEYS],
@@ -937,7 +947,7 @@ test.group('Recorder | flush', (group) => {
       recorder.record(IncomingEntry.make(EntryType.QUERY))
     })
 
-    await recorder.flush(context)
+    await recorder.flush(context, 'intermediate')
 
     assert.deepEqual(context.truncated, {}, 'reported counts must be cleared')
     assert.equal(context.counters.query, 1, 'caps are per batch, so a flush must not reset them')
@@ -946,7 +956,7 @@ test.group('Recorder | flush', (group) => {
       recorder.record(IncomingEntry.make(EntryType.LOG))
     })
 
-    await recorder.flush(context)
+    await recorder.flush(context, 'intermediate')
 
     assert.lengthOf(store.saves[1], 1)
     assert.equal(store.saves[1][0].type, EntryType.LOG)
@@ -1084,7 +1094,7 @@ test.group('Recorder | flush', (group) => {
       recorder.record(IncomingEntry.make(EntryType.QUERY, { sql: 'select 1' }))
     })
 
-    await recorder.flush(context)
+    await recorder.flush(context, 'intermediate')
 
     assert.isUndefined(store.saves[0][0].content.truncated, 'nothing was dropped yet')
 
@@ -1151,6 +1161,112 @@ test.group('Recorder | flush', (group) => {
   })
 })
 
+test.group('Recorder | late-entry continuation', (group) => {
+  group.each.teardown(() => {
+    setInternalLogger(null)
+  })
+
+  test('flushes late entries in one continuation with the original batch identity', async ({
+    assert,
+  }) => {
+    const store = new FakeStore()
+    const recorder = new Recorder({ config: makeConfig({ lateEntryGraceMs: 20 }), store })
+    const context = BatchScope.createContext('request')
+
+    BatchScope.runWith(context, () => {
+      recorder.record(IncomingEntry.make(EntryType.REQUEST, { path: '/checkout' }))
+    })
+    await recorder.flush(context)
+
+    BatchScope.runWith(context, () => {
+      recorder.record(IncomingEntry.make(EntryType.LOG, { message: 'response callback' }))
+      recorder.record(IncomingEntry.make(EntryType.EVENT, { name: 'response.sent' }))
+    })
+
+    await waitUntil(() => store.saves.length === 2)
+
+    assert.lengthOf(store.saves, 2)
+    assert.deepEqual(
+      store.saves[1].map((entry) => entry.type),
+      [EntryType.LOG, EntryType.EVENT]
+    )
+    assert.equal(store.saves[0][0].batchId, context.batchId)
+    assert.isTrue(store.saves[1].every((entry) => entry.batchId === context.batchId))
+  })
+
+  test('suppresses a continuation when the sampled-out parent was dropped', async ({ assert }) => {
+    const store = new FakeStore()
+    const recorder = new Recorder({
+      config: makeConfig({ sampleRate: 0, lateEntryGraceMs: 20 }),
+      store,
+    })
+    const context = BatchScope.createContext('request')
+
+    BatchScope.runWith(context, () => {
+      recorder.record(IncomingEntry.make(EntryType.LOG, { message: 'sampled out' }))
+    })
+    await recorder.flush(context)
+    assert.equal(context.retention, 'dropped')
+
+    BatchScope.runWith(context, () => {
+      recorder.record(IncomingEntry.make(EntryType.LOG, { message: 'late and sampled out' }))
+    })
+    await sleep(40)
+
+    assert.isEmpty(store.saves)
+  })
+
+  test('drops late entries immediately when the grace window is disabled', async ({ assert }) => {
+    const store = new FakeStore()
+    const recorder = new Recorder({ config: makeConfig({ lateEntryGraceMs: 0 }), store })
+    const context = BatchScope.createContext('request')
+    const reports: string[] = []
+    setInternalLogger((label) => reports.push(label))
+
+    BatchScope.runWith(context, () => {
+      recorder.record(IncomingEntry.make(EntryType.REQUEST))
+    })
+    await recorder.flush(context)
+
+    BatchScope.runWith(context, () => {
+      assert.doesNotThrow(() => recorder.record(IncomingEntry.make(EntryType.LOG)))
+    })
+
+    assert.lengthOf(store.saves, 1)
+    assert.deepEqual(reports, ['periscope.recorder.late_entry'])
+  })
+
+  test('drops entries arriving after the continuation flush without throwing', async ({
+    assert,
+  }) => {
+    const store = new FakeStore()
+    const recorder = new Recorder({ config: makeConfig({ lateEntryGraceMs: 20 }), store })
+    const context = BatchScope.createContext('request')
+    const reports: string[] = []
+    setInternalLogger((label) => reports.push(label))
+
+    BatchScope.runWith(context, () => {
+      recorder.record(IncomingEntry.make(EntryType.REQUEST))
+    })
+    await recorder.flush(context)
+
+    BatchScope.runWith(context, () => {
+      recorder.record(IncomingEntry.make(EntryType.LOG, { message: 'within grace' }))
+    })
+    await waitUntil(() => store.saves.length === 2)
+
+    BatchScope.runWith(context, () => {
+      assert.doesNotThrow(() =>
+        recorder.record(IncomingEntry.make(EntryType.LOG, { message: 'too late' }))
+      )
+    })
+    await sleep(30)
+
+    assert.lengthOf(store.saves, 2)
+    assert.deepEqual(reports, ['periscope.recorder.late_entry'])
+  })
+})
+
 test.group('Recorder | sampling and flush subscriptions', (group) => {
   group.each.teardown(() => {
     setInternalLogger(null)
@@ -1184,6 +1300,7 @@ test.group('Recorder | sampling and flush subscriptions', (group) => {
 
     assert.lengthOf(store.saves, 0)
     assert.equal(store.monitoredTagsCalls, 1)
+    assert.deepEqual(store.monitoredTagsApplications, ['default'])
   })
 
   test('apply n+1 before monitored tags decide sampled-out retention', async ({ assert }) => {
@@ -1217,6 +1334,7 @@ test.group('Recorder | sampling and flush subscriptions', (group) => {
     const recorder = new Recorder({
       config: makeConfig({
         sampleRate: 0,
+        lateEntryGraceMs: 20,
         keepAlways: (batch) => {
           keepAlwaysCalls++
           return batch.hasTag('keep')
@@ -1252,7 +1370,7 @@ test.group('Recorder | sampling and flush subscriptions', (group) => {
     BatchScope.runWith(context, () => {
       recorder.record(IncomingEntry.make(EntryType.LOG, { fragment: 'late' }))
     })
-    await recorder.flush(context, 'intermediate')
+    await waitUntil(() => store.saves.length === 2)
 
     assert.equal(store.saves[1][0].content.fragment, 'late')
     assert.equal(keepAlwaysCalls, 1, 'later fragments reuse the successful decision')

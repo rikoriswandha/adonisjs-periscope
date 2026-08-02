@@ -66,6 +66,7 @@ const storeDouble: PeriscopeStore = {
   unmonitorTag: async () => {},
   getFlag: async () => null,
   hasFlagWithPrefix: async () => false,
+  flagsWithPrefix: async () => [],
   setFlag: async () => {},
   deleteFlag: async () => {},
   close: async () => {},
@@ -226,11 +227,12 @@ test.group('Types | EntryQuery', () => {
       sort: 'sequence',
       direction: 'asc',
       cursor: 'cursor-1',
+      afterSequence: '0000000000000000042',
       limit: 25,
     }
 
     assert.deepEqual(Object.keys(unfiltered), [])
-    assert.lengthOf(Object.keys(filtered), 15)
+    assert.lengthOf(Object.keys(filtered), 16)
 
     expectTypeOf<Partial<EntryQuery>>().toEqualTypeOf<EntryQuery>()
     expectTypeOf<keyof EntryQuery>().toEqualTypeOf<
@@ -248,6 +250,7 @@ test.group('Types | EntryQuery', () => {
       | 'sort'
       | 'direction'
       | 'cursor'
+      | 'afterSequence'
       | 'limit'
     >()
 
@@ -280,6 +283,7 @@ test.group('Types | PeriscopeStore', () => {
       'deleteFlag',
       'exceptionGroups',
       'find',
+      'flagsWithPrefix',
       'getFlag',
       'hasFlagWithPrefix',
       'list',
@@ -313,6 +317,8 @@ test.group('Types | PeriscopeStore', () => {
       | 'setFlag'
       | 'deleteFlag'
       | 'close'
+      | 'flagsWithPrefix'
+      | 'diagnostics'
     >()
   })
 
@@ -357,6 +363,7 @@ test.group('Types | PeriscopeStore', () => {
 
     expectTypeOf<PruneOptions>().toEqualTypeOf<{
       before: Date
+      perTypeBefore?: Partial<Record<EntryType, Date>>
       keepExceptions?: boolean
       application?: string
     }>()
@@ -368,9 +375,15 @@ test.group('Types | PeriscopeStore', () => {
     assert.isUndefined(await storeDouble.unmonitorTag('slow'))
     assert.isNull(await storeDouble.getFlag('paused'))
 
-    expectTypeOf<PeriscopeStore['monitoredTags']>().toEqualTypeOf<() => Promise<string[]>>()
-    expectTypeOf<PeriscopeStore['monitorTag']>().toEqualTypeOf<(tag: string) => Promise<void>>()
-    expectTypeOf<PeriscopeStore['unmonitorTag']>().toEqualTypeOf<(tag: string) => Promise<void>>()
+    expectTypeOf<PeriscopeStore['monitoredTags']>().toEqualTypeOf<
+      (application?: string) => Promise<string[]>
+    >()
+    expectTypeOf<PeriscopeStore['monitorTag']>().toEqualTypeOf<
+      (tag: string, application?: string) => Promise<void>
+    >()
+    expectTypeOf<PeriscopeStore['unmonitorTag']>().toEqualTypeOf<
+      (tag: string, application?: string) => Promise<void>
+    >()
     expectTypeOf<PeriscopeStore['getFlag']>().toEqualTypeOf<
       (name: string) => Promise<string | null>
     >()
@@ -519,6 +532,7 @@ test.group('Types | configuration', () => {
         keepAlways: () => false,
         ambientRotationMs: 10_000,
         pausedFlagTtlMs: 5_000,
+        lateEntryGraceMs: 2_000,
       },
       redact: { keys: [], headers: [], valuePatterns: false, replacement: '[REDACTED]' },
       hooks: { filter: [], tag: [] },
@@ -634,7 +648,11 @@ test.group('Types | configuration', () => {
       connection?: string
       factory?: PeriscopeStoreFactory
       maxEntries: number
-      retention?: { hours: number; keepExceptions?: boolean }
+      retention?: {
+        hours: number
+        keepExceptions?: boolean
+        perType: Partial<Record<EntryType, { hours: number }>>
+      }
     }>()
     expectTypeOf<StorageDriverName>().toEqualTypeOf<
       'memory' | 'sqlite-local' | 'database' | 'custom'

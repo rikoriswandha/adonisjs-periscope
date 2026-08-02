@@ -1,4 +1,14 @@
-import { ArrowDown, ArrowUpRight, CircleAlert, Inbox, RefreshCw, Route } from 'lucide-react'
+import {
+  ArrowDown,
+  ArrowUpRight,
+  Check,
+  CircleAlert,
+  EyeOff,
+  Inbox,
+  RefreshCw,
+  RotateCcw,
+  Route,
+} from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 
@@ -28,12 +38,67 @@ import { usePolling } from '@/hooks/use-polling'
 import { walkCursorPages } from '@/hooks/walk-cursor-pages'
 import { api } from '@/lib/api'
 import { isNewExceptionGroup, mergeExceptionGroups } from '@/lib/exception-groups'
+import { bucketExceptionOccurrences } from '@/lib/exception-trend'
 import { shouldPollForUpdates } from '@/lib/live-updates'
 import { formatDateTime, formatRelativeTime, truncate } from '@/lib/format'
-import type { ExceptionContent, ExceptionGroup, StoredEntry } from '@/types'
+import type { ExceptionContent, ExceptionGroup, ExceptionGroupState, StoredEntry } from '@/types'
 
 function exceptionContent(entry: StoredEntry): ExceptionContent {
   return entry.content as ExceptionContent
+}
+const TREND_WINDOW_MS = 24 * 60 * 60 * 1000
+
+type ExceptionStateFilter = 'all' | ExceptionGroupState
+
+const exceptionStateFilters: ReadonlyArray<{ label: string; value: ExceptionStateFilter }> = [
+  { label: 'All', value: 'all' },
+  { label: 'Open', value: 'open' },
+  { label: 'Resolved', value: 'resolved' },
+  { label: 'Ignored', value: 'ignored' },
+]
+
+function ExceptionTrend({ buckets }: { buckets: number[] }) {
+  const width = 88
+  const height = 24
+  const max = Math.max(1, ...buckets)
+  const points = buckets
+    .map((count, index) => {
+      const x = buckets.length === 1 ? width / 2 : (index / (buckets.length - 1)) * width
+      const y = height - 2 - (count / max) * (height - 4)
+      return `${x.toFixed(1)},${y.toFixed(1)}`
+    })
+    .join(' ')
+  const occurrenceCount = buckets.reduce((total, count) => total + count, 0)
+
+  return (
+    <svg
+      aria-label={`${occurrenceCount.toLocaleString()} occurrences in the last 24 hours`}
+      className="h-6 w-[5.5rem] text-primary"
+      role="img"
+      viewBox={`0 0 ${width} ${height}`}
+    >
+      <polyline
+        fill="none"
+        points={points}
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.75"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  )
+}
+
+function ExceptionStateBadge({ state }: { state: ExceptionGroupState }) {
+  const variant =
+    state === 'open' ? 'warning' : state === 'resolved' ? 'success' : ('secondary' as const)
+
+  return (
+    <Badge className="capitalize" size="sm" variant={variant}>
+      {state}
+    </Badge>
+  )
 }
 
 function ExceptionOccurrenceContent({ entry }: { entry: StoredEntry }) {
@@ -69,10 +134,7 @@ function ExceptionOccurrenceContent({ entry }: { entry: StoredEntry }) {
       <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
         <div>
           <dt className="text-xs text-muted-foreground">Family hash</dt>
-          <dd
-            className="mt-0.5 truncate font-mono text-xs"
-            title={entry.familyHash ?? undefined}
-          >
+          <dd className="mt-0.5 truncate font-mono text-xs" title={entry.familyHash ?? undefined}>
             {entry.familyHash ?? 'Unavailable'}
           </dd>
         </div>
@@ -132,6 +194,10 @@ export function ExceptionsPage() {
   const [occurrencesError, setOccurrencesError] = useState<Error | null>(null)
   const [occurrencesNextCursor, setOccurrencesNextCursor] = useState<string | null>(null)
   const [occurrencesLoadingMore, setOccurrencesLoadingMore] = useState(false)
+  const [stateFilter, setStateFilter] = useState<ExceptionStateFilter>('open')
+  const [triagePending, setTriagePending] = useState<Set<string>>(() => new Set())
+  const [triageError, setTriageError] = useState<Error | null>(null)
+  const [trendBucketsByFamily, setTrendBucketsByFamily] = useState<Record<string, number[]>>({})
   const groupsRef = useRef(groups)
   const pendingGroupsRef = useRef(pendingGroups)
   const requestGenerationRef = useRef(0)
@@ -193,6 +259,8 @@ export function ExceptionsPage() {
     setPendingGroups([])
     setNextCursor(null)
     setSelectedGroup(null)
+    setTriageError(null)
+    setTrendBucketsByFamily({})
     void loadInitial()
     return () => {
       requestGenerationRef.current += 1
@@ -308,9 +376,46 @@ export function ExceptionsPage() {
       })
     return () => controller.abort()
   }, [selectedApplication, selectedGroup])
+  /**
+   * Opening a family is the lazy-load boundary: trends become available row by row without
+   * turning the initial exception index into one request per family.
+   */
+  useEffect(() => {
+    if (!selectedGroup || trendBucketsByFamily[selectedGroup.familyHash]) return
+
+    const controller = new AbortController()
+    const now = Date.now()
+    api
+      .listEntries(
+        {
+          type: 'exception',
+          familyHash: selectedGroup.familyHash,
+          application: selectedApplication,
+          from: new Date(now - TREND_WINDOW_MS).toISOString(),
+          limit: 200,
+        },
+        controller.signal
+      )
+      .then((page) => {
+        if (controller.signal.aborted) return
+        setTrendBucketsByFamily((currentBuckets) => ({
+          ...currentBuckets,
+          [selectedGroup.familyHash]: bucketExceptionOccurrences(page.data, now),
+        }))
+      })
+      .catch(() => {
+        // Trend context is supplementary; occurrence details remain available when it cannot load.
+      })
+
+    return () => controller.abort()
+  }, [selectedApplication, selectedGroup, trendBucketsByFamily])
 
   const visibleGroups = scopeChanged ? [] : groups
   const visiblePendingGroups = scopeChanged ? [] : pendingGroups
+  const filteredGroups =
+    stateFilter === 'all'
+      ? visibleGroups
+      : visibleGroups.filter((group) => group.state === stateFilter)
   const pendingNewCount = visiblePendingGroups.reduce((total, group) => {
     const current = visibleGroups.find((candidate) => candidate.familyHash === group.familyHash)
     return total + Math.max(1, group.count - (current?.count ?? 0))
@@ -369,6 +474,49 @@ export function ExceptionsPage() {
     }
   }
 
+  const setGroupState = async (group: ExceptionGroup, state: ExceptionGroupState) => {
+    if (group.state === state || triagePending.has(group.familyHash)) return
+
+    const previous = {
+      state: group.state,
+      stateUpdatedAt: group.stateUpdatedAt,
+    }
+    const applyState = (items: ExceptionGroup[], next: typeof previous) =>
+      items.map((candidate) =>
+        candidate.familyHash === group.familyHash ? { ...candidate, ...next } : candidate
+      )
+    const optimistic = {
+      state,
+      stateUpdatedAt: state === 'open' ? null : new Date().toISOString(),
+    }
+
+    groupsRef.current = applyState(groupsRef.current, optimistic)
+    setGroups(groupsRef.current)
+    setTriageError(null)
+    setTriagePending((currentPending) => new Set(currentPending).add(group.familyHash))
+
+    try {
+      const result = await api.setExceptionGroupState(group.familyHash, state, selectedApplication)
+      groupsRef.current = applyState(groupsRef.current, {
+        state: result.state,
+        stateUpdatedAt: result.stateUpdatedAt,
+      })
+      setGroups(groupsRef.current)
+    } catch (cause) {
+      groupsRef.current = applyState(groupsRef.current, previous)
+      setGroups(groupsRef.current)
+      setTriageError(
+        cause instanceof Error ? cause : new Error(`Unable to mark exception as ${state}`)
+      )
+    } finally {
+      setTriagePending((currentPending) => {
+        const nextPending = new Set(currentPending)
+        nextPending.delete(group.familyHash)
+        return nextPending
+      })
+    }
+  }
+
   const acceptPending = () => {
     const accepted = pendingGroupsRef.current
     if (accepted.length === 0) return
@@ -415,146 +563,259 @@ export function ExceptionsPage() {
         </div>
       )}
 
+      <div
+        aria-label="Filter exception families by triage state"
+        className="flex flex-wrap items-center gap-1.5"
+        role="group"
+      >
+        <span className="mr-0.5 text-2xs font-medium text-muted-foreground">Triage</span>
+        {exceptionStateFilters.map((filter) => {
+          const selected = stateFilter === filter.value
+          return (
+            <Button
+              aria-pressed={selected}
+              key={filter.value}
+              onClick={() => setStateFilter(filter.value)}
+              size="xs"
+              type="button"
+              variant={selected ? 'secondary' : 'ghost'}
+            >
+              {filter.label}
+            </Button>
+          )
+        })}
+      </div>
+
       <Frame className="rounded-lg p-0.5">
         <FramePanel className="overflow-hidden rounded-md p-0 shadow-none before:shadow-none">
-        <div className="overflow-x-auto">
-          <Table className="min-w-data-table text-xs">
-            <TableCaption className="sr-only">Grouped recorded exceptions</TableCaption>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead className="h-8 px-2.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
-                  Latest exception
-                </TableHead>
-                <TableHead className="h-8 w-28 px-2.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
-                  Status
-                </TableHead>
-                <TableHead className="h-8 w-28 px-2.5 text-right text-2xs font-medium tracking-wide text-muted-foreground uppercase">
-                  Occurrences
-                </TableHead>
-                <TableHead className="h-8 w-36 px-2.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
-                  Last seen
-                </TableHead>
-                <TableHead className="h-8 w-10 px-2.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
-                  <span className="sr-only">Open details</span>
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {indexLoading &&
-                Array.from({ length: 7 }, (_, index) => (
-                  <TableRow key={index}>
-                    <TableCell className="px-2.5 py-2">
-                      <Skeleton className="h-8 w-full max-w-xl" />
-                    </TableCell>
-                    <TableCell className="px-2.5 py-2">
-                      <Skeleton className="h-5 w-14" />
-                    </TableCell>
-                    <TableCell className="px-2.5 py-2">
-                      <Skeleton className="ms-auto h-5 w-10" />
-                    </TableCell>
-                    <TableCell className="px-2.5 py-2">
-                      <Skeleton className="h-4 w-24" />
-                    </TableCell>
-                    <TableCell className="px-2.5 py-2" />
-                  </TableRow>
-                ))}
-              {!indexLoading &&
-                visibleGroups.map((group) => {
-                  const content = exceptionContent(group.latest)
-                  return (
-                    <TableRow
-                      className="cursor-pointer hover:bg-accent/45"
-                      key={group.familyHash}
-                      onClick={() => openGroup(group)}
-                    >
+          <div className="overflow-x-auto">
+            <Table className="min-w-data-table text-xs">
+              <TableCaption className="sr-only">Grouped recorded exceptions</TableCaption>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="h-8 px-2.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
+                    Latest exception
+                  </TableHead>
+                  <TableHead className="h-8 w-28 px-2.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
+                    Status
+                  </TableHead>
+                  <TableHead className="h-8 w-24 px-2.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
+                    Triage
+                  </TableHead>
+                  <TableHead className="h-8 w-48 px-2.5 text-right text-2xs font-medium tracking-wide text-muted-foreground uppercase">
+                    Occurrences · 24h trend
+                  </TableHead>
+                  <TableHead className="h-8 w-36 px-2.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
+                    Last seen
+                  </TableHead>
+                  <TableHead className="h-8 w-28 px-2.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
+                    Actions
+                  </TableHead>
+                  <TableHead className="h-8 w-10 px-2.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
+                    <span className="sr-only">Open details</span>
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {indexLoading &&
+                  Array.from({ length: 7 }, (_, index) => (
+                    <TableRow key={index}>
                       <TableCell className="px-2.5 py-2">
-                        <button
-                          className="block w-full rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                          type="button"
-                        >
-                          <span className="sr-only">
-                            Inspect {content.name}: {content.message}.{' '}
-                          </span>
-                          <span className="block max-w-2xl">
-                            <span className="block truncate text-sm font-medium">
-                              {content.message}
-                            </span>
-                            <span className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                              <span>{content.name}</span>
-                              {content.code && <span className="font-mono">{content.code}</span>}
-                            </span>
-                          </span>
-                        </button>
+                        <Skeleton className="h-8 w-full max-w-xl" />
                       </TableCell>
                       <TableCell className="px-2.5 py-2">
-                        <StatusBadge status={content.status} />
-                      </TableCell>
-                      <TableCell className="px-2.5 py-2 text-right font-mono text-sm font-semibold tabular-nums">
-                        {group.count.toLocaleString()}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap px-2.5 py-2 text-xs text-muted-foreground">
-                        {formatRelativeTime(group.lastSeen)}
+                        <Skeleton className="h-5 w-14" />
                       </TableCell>
                       <TableCell className="px-2.5 py-2">
-                        <ArrowUpRight aria-hidden="true" className="size-4 text-muted-foreground" />
+                        <Skeleton className="h-5 w-14" />
                       </TableCell>
+                      <TableCell className="px-2.5 py-2">
+                        <Skeleton className="ms-auto h-5 w-10" />
+                      </TableCell>
+                      <TableCell className="px-2.5 py-2">
+                        <Skeleton className="h-4 w-24" />
+                      </TableCell>
+                      <TableCell className="px-2.5 py-2">
+                        <Skeleton className="h-7 w-24" />
+                      </TableCell>
+                      <TableCell className="px-2.5 py-2" />
                     </TableRow>
-                  )
-                })}
-            </TableBody>
-          </Table>
-        </div>
-
-        {!indexLoading && error && visibleGroups.length === 0 && (
-          <Empty className="border-0 py-16">
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <CircleAlert aria-hidden="true" />
-              </EmptyMedia>
-              <EmptyTitle>Exception groups could not be loaded</EmptyTitle>
-              <EmptyDescription>{error.message}</EmptyDescription>
-            </EmptyHeader>
-            <Button onClick={() => void loadInitial()} variant="outline">
-              Try again
-            </Button>
-          </Empty>
-        )}
-
-        {!indexLoading && !error && visibleGroups.length === 0 && (
-          <Empty className="border-0 py-16">
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <Inbox aria-hidden="true" />
-              </EmptyMedia>
-              <EmptyTitle>
-                {tag ? 'No matching exception families' : 'No exceptions recorded'}
-              </EmptyTitle>
-              <EmptyDescription>
-                {tag
-                  ? `No exception occurrence carries the exact tag “${tag}”.`
-                  : 'Unhandled errors and reported exceptions will be grouped here by stack signature.'}
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        )}
-
-        {visibleGroups.length > 0 && (
-          <div className="flex items-center justify-between border-t bg-muted/40 px-2.5 py-1.5">
-            <span className="font-mono text-2xs tabular-nums text-muted-foreground">
-              {visibleGroups.length.toLocaleString()} groups loaded
-            </span>
-            {nextCursor && (
-              <Button
-                loading={loadingMore}
-                onClick={() => void loadMore()}
-                size="xs"
-                variant="ghost"
-              >
-                <ArrowDown aria-hidden="true" /> Load older
-              </Button>
-            )}
+                  ))}
+                {!indexLoading &&
+                  filteredGroups.map((group) => {
+                    const content = exceptionContent(group.latest)
+                    return (
+                      <TableRow
+                        className="cursor-pointer hover:bg-accent/45"
+                        key={group.familyHash}
+                        onClick={() => openGroup(group)}
+                      >
+                        <TableCell className="px-2.5 py-2">
+                          <button
+                            className="block w-full rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                            type="button"
+                          >
+                            <span className="sr-only">
+                              Inspect {content.name}: {content.message}.{' '}
+                            </span>
+                            <span className="block max-w-2xl">
+                              <span className="block truncate text-sm font-medium">
+                                {content.message}
+                              </span>
+                              <span className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                                <span>{content.name}</span>
+                                {content.code && <span className="font-mono">{content.code}</span>}
+                              </span>
+                            </span>
+                          </button>
+                        </TableCell>
+                        <TableCell className="px-2.5 py-2">
+                          <StatusBadge status={content.status} />
+                        </TableCell>
+                        <TableCell className="px-2.5 py-2">
+                          <ExceptionStateBadge state={group.state} />
+                        </TableCell>
+                        <TableCell className="px-2.5 py-2">
+                          <div className="flex items-center justify-end gap-2">
+                            {trendBucketsByFamily[group.familyHash] ? (
+                              <ExceptionTrend buckets={trendBucketsByFamily[group.familyHash]} />
+                            ) : selectedGroup?.familyHash === group.familyHash ? (
+                              <Skeleton
+                                aria-label="Loading 24-hour occurrence trend"
+                                className="h-6 w-22"
+                              />
+                            ) : null}
+                            <span className="font-mono text-sm font-semibold tabular-nums">
+                              {group.count.toLocaleString()}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap px-2.5 py-2 text-xs text-muted-foreground">
+                          {formatRelativeTime(group.lastSeen)}
+                        </TableCell>
+                        <TableCell
+                          className="px-2.5 py-2"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <div className="flex items-center gap-0.5">
+                            <Button
+                              aria-label="Resolve exception family"
+                              disabled={
+                                triagePending.has(group.familyHash) || group.state === 'resolved'
+                              }
+                              onClick={() => void setGroupState(group, 'resolved')}
+                              size="icon-xs"
+                              title="Resolve"
+                              type="button"
+                              variant="ghost"
+                            >
+                              <Check aria-hidden="true" />
+                            </Button>
+                            <Button
+                              aria-label="Ignore exception family"
+                              disabled={
+                                triagePending.has(group.familyHash) || group.state === 'ignored'
+                              }
+                              onClick={() => void setGroupState(group, 'ignored')}
+                              size="icon-xs"
+                              title="Ignore"
+                              type="button"
+                              variant="ghost"
+                            >
+                              <EyeOff aria-hidden="true" />
+                            </Button>
+                            <Button
+                              aria-label="Reopen exception family"
+                              disabled={
+                                triagePending.has(group.familyHash) || group.state === 'open'
+                              }
+                              onClick={() => void setGroupState(group, 'open')}
+                              size="icon-xs"
+                              title="Reopen"
+                              type="button"
+                              variant="ghost"
+                            >
+                              <RotateCcw aria-hidden="true" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                        <TableCell className="px-2.5 py-2">
+                          <ArrowUpRight
+                            aria-hidden="true"
+                            className="size-4 text-muted-foreground"
+                          />
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+              </TableBody>
+            </Table>
           </div>
-        )}
+
+          {!indexLoading && error && visibleGroups.length === 0 && (
+            <Empty className="border-0 py-16">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <CircleAlert aria-hidden="true" />
+                </EmptyMedia>
+                <EmptyTitle>Exception groups could not be loaded</EmptyTitle>
+                <EmptyDescription>{error.message}</EmptyDescription>
+              </EmptyHeader>
+              <Button onClick={() => void loadInitial()} variant="outline">
+                Try again
+              </Button>
+            </Empty>
+          )}
+
+          {!indexLoading && !error && visibleGroups.length === 0 && (
+            <Empty className="border-0 py-16">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Inbox aria-hidden="true" />
+                </EmptyMedia>
+                <EmptyTitle>
+                  {tag ? 'No matching exception families' : 'No exceptions recorded'}
+                </EmptyTitle>
+                <EmptyDescription>
+                  {tag
+                    ? `No exception occurrence carries the exact tag “${tag}”.`
+                    : 'Unhandled errors and reported exceptions will be grouped here by stack signature.'}
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )}
+          {!indexLoading && visibleGroups.length > 0 && filteredGroups.length === 0 && (
+            <Empty className="border-0 py-16">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Inbox aria-hidden="true" />
+                </EmptyMedia>
+                <EmptyTitle>No {stateFilter} exception families</EmptyTitle>
+                <EmptyDescription>
+                  Choose another triage state to inspect the remaining exception families.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )}
+
+          {visibleGroups.length > 0 && (
+            <div className="flex items-center justify-between border-t bg-muted/40 px-2.5 py-1.5">
+              <span className="font-mono text-2xs tabular-nums text-muted-foreground">
+                {filteredGroups.length.toLocaleString()} of {visibleGroups.length.toLocaleString()}{' '}
+                groups shown
+              </span>
+              {nextCursor && (
+                <Button
+                  loading={loadingMore}
+                  onClick={() => void loadMore()}
+                  size="xs"
+                  variant="ghost"
+                >
+                  <ArrowDown aria-hidden="true" /> Load older
+                </Button>
+              )}
+            </div>
+          )}
         </FramePanel>
       </Frame>
 
@@ -566,94 +827,114 @@ export function ExceptionsPage() {
           </Button>
         </div>
       )}
+      {triageError && (
+        <div
+          className="flex items-center justify-between rounded-lg border bg-destructive/5 px-3 py-2 text-sm text-destructive-foreground"
+          role="alert"
+        >
+          <span>
+            {triageError.message}. The exception family was returned to its previous state.
+          </span>
+          <Button onClick={() => setTriageError(null)} size="sm" variant="ghost">
+            Dismiss
+          </Button>
+        </div>
+      )}
 
       <EntryDetailScope entry={selectedOccurrence}>
         <EntryDetailDrawer
-        description={
-          selectedOccurrence ? formatDateTime(selectedOccurrence.createdAt) : 'Exception occurrence'
-        }
-        meta={
-          current && (
-            <>
-              <StatusBadge status={current.status} />
-              {current.code && <Badge variant="secondary">{current.code}</Badge>}
-            </>
-          )
-        }
-        onOpenChange={(open) => !open && setSelectedGroup(null)}
-        open={selectedGroup !== null}
-        tags={selectedOccurrence?.tags}
-        title={current ? `${current.name}: ${truncate(current.message, 100)}` : 'Exception detail'}
-      >
-        {selectedGroup && (
-          <>
-            {occurrencesLoading && <Skeleton className="h-40 w-full" />}
-            {occurrencesError && (
-              <p className="rounded-lg border bg-destructive/5 p-3 text-sm text-destructive-foreground">
-                {occurrencesError.message}
-              </p>
-            )}
-            {current && selectedOccurrence && (
+          description={
+            selectedOccurrence
+              ? formatDateTime(selectedOccurrence.createdAt)
+              : 'Exception occurrence'
+          }
+          meta={
+            current && (
               <>
-                <ExceptionOccurrenceContent entry={selectedOccurrence} />
-
-                <section className="overflow-hidden rounded-lg border">
-                  <div className="flex items-center justify-between border-b px-3 py-2">
-                    <h3 className="text-sm font-semibold">Occurrences</h3>
-                    <Badge variant="secondary">{selectedGroup.count.toLocaleString()} total</Badge>
-                  </div>
-                  <div className="divide-y">
-                    {occurrences.map((entry) => {
-                      const occurrence = exceptionContent(entry)
-                      const active = selectedOccurrence.uuid === entry.uuid
-                      return (
-                        <div
-                          className={`flex items-center gap-2 p-2 ${active ? 'bg-accent/55' : ''}`}
-                          key={entry.uuid}
-                        >
-                          <button
-                            className="min-w-0 flex-1 rounded-md px-2 py-1.5 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-                            onClick={() => setSelectedOccurrence(entry)}
-                            type="button"
-                          >
-                            <span className="block truncate text-xs font-medium">
-                              {occurrence.message}
-                            </span>
-                            <span className="mt-0.5 block text-2xs text-muted-foreground">
-                              {formatDateTime(entry.createdAt)}
-                            </span>
-                          </button>
-                          <Button
-                            aria-label="Open occurrence request batch"
-                            render={<Link to={`/requests/${encodeURIComponent(entry.batchId)}`} />}
-                            size="icon-xs"
-                            variant="ghost"
-                          >
-                            <ArrowUpRight aria-hidden="true" />
-                          </Button>
-                        </div>
-                      )
-                    })}
-                  </div>
-                  {occurrencesNextCursor && (
-                    <div className="flex justify-center border-t p-2">
-                      <Button
-                        loading={occurrencesLoadingMore}
-                        onClick={() => void loadMoreOccurrences()}
-                        size="sm"
-                        variant="ghost"
-                      >
-                        <ArrowDown aria-hidden="true" />
-                        Load older occurrences
-                      </Button>
-                    </div>
-                  )}
-                </section>
-
+                <StatusBadge status={current.status} />
+                {current.code && <Badge variant="secondary">{current.code}</Badge>}
               </>
-            )}
-          </>
-        )}
+            )
+          }
+          onOpenChange={(open) => !open && setSelectedGroup(null)}
+          open={selectedGroup !== null}
+          tags={selectedOccurrence?.tags}
+          title={
+            current ? `${current.name}: ${truncate(current.message, 100)}` : 'Exception detail'
+          }
+        >
+          {selectedGroup && (
+            <>
+              {occurrencesLoading && <Skeleton className="h-40 w-full" />}
+              {occurrencesError && (
+                <p className="rounded-lg border bg-destructive/5 p-3 text-sm text-destructive-foreground">
+                  {occurrencesError.message}
+                </p>
+              )}
+              {current && selectedOccurrence && (
+                <>
+                  <ExceptionOccurrenceContent entry={selectedOccurrence} />
+
+                  <section className="overflow-hidden rounded-lg border">
+                    <div className="flex items-center justify-between border-b px-3 py-2">
+                      <h3 className="text-sm font-semibold">Occurrences</h3>
+                      <Badge variant="secondary">
+                        {selectedGroup.count.toLocaleString()} total
+                      </Badge>
+                    </div>
+                    <div className="divide-y">
+                      {occurrences.map((entry) => {
+                        const occurrence = exceptionContent(entry)
+                        const active = selectedOccurrence.uuid === entry.uuid
+                        return (
+                          <div
+                            className={`flex items-center gap-2 p-2 ${active ? 'bg-accent/55' : ''}`}
+                            key={entry.uuid}
+                          >
+                            <button
+                              className="min-w-0 flex-1 rounded-md px-2 py-1.5 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                              onClick={() => setSelectedOccurrence(entry)}
+                              type="button"
+                            >
+                              <span className="block truncate text-xs font-medium">
+                                {occurrence.message}
+                              </span>
+                              <span className="mt-0.5 block text-2xs text-muted-foreground">
+                                {formatDateTime(entry.createdAt)}
+                              </span>
+                            </button>
+                            <Button
+                              aria-label="Open occurrence request batch"
+                              render={
+                                <Link to={`/requests/${encodeURIComponent(entry.batchId)}`} />
+                              }
+                              size="icon-xs"
+                              variant="ghost"
+                            >
+                              <ArrowUpRight aria-hidden="true" />
+                            </Button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                    {occurrencesNextCursor && (
+                      <div className="flex justify-center border-t p-2">
+                        <Button
+                          loading={occurrencesLoadingMore}
+                          onClick={() => void loadMoreOccurrences()}
+                          size="sm"
+                          variant="ghost"
+                        >
+                          <ArrowDown aria-hidden="true" />
+                          Load older occurrences
+                        </Button>
+                      </div>
+                    )}
+                  </section>
+                </>
+              )}
+            </>
+          )}
         </EntryDetailDrawer>
       </EntryDetailScope>
     </div>

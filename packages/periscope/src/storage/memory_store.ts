@@ -6,7 +6,7 @@
  */
 
 import { EntryType } from '../types.ts'
-import { encodeEntryCursor, parseEntryCursor, resolvePageSize } from './pagination.ts'
+import { encodeEntryCursor, parseCursor, parseEntryCursor, resolvePageSize } from './pagination.ts'
 import { aggregateExceptionGroups } from './exception_groups.ts'
 import { encodeJson, parseEntryQueryDate, resolveEntryQueryTags } from './sql.ts'
 import type {
@@ -22,6 +22,7 @@ import type {
   RequestStatsQuery,
   RequestStatsResult,
   StoredEntry,
+  StoreDiagnostics,
 } from '../types.ts'
 import type { EntryCursor } from './pagination.ts'
 import {
@@ -46,7 +47,7 @@ const NO_CANDIDATES: ReadonlySet<string> = new Set()
  * A flag plus its absolute expiry in epoch milliseconds, or `null` when it never expires. Stored
  * as a number rather than a `Date` because it is only ever compared against `Date.now()`.
  */
-type StoredFlag = { value: string; expiresAt: number | null }
+type FlagRecord = { value: string; expiresAt: number | null }
 
 /**
  * Options accepted by {@link MemoryStore}.
@@ -103,7 +104,8 @@ function matchesQuery(
   tags: readonly string[],
   text: string | undefined,
   from: number | undefined,
-  to: number | undefined
+  to: number | undefined,
+  afterSequence: bigint | null
 ): boolean {
   if (cursor !== null) {
     const outsidePage =
@@ -118,6 +120,10 @@ function matchesQuery(
     if (outsidePage) {
       return false
     }
+  }
+
+  if (afterSequence !== null && entry.sequence <= afterSequence) {
+    return false
   }
 
   if (query.type !== undefined && entry.type !== query.type) {
@@ -217,8 +223,8 @@ export class MemoryStore implements PeriscopeStore {
   /**
    * User intent rather than recorded data, which is why `clear` leaves both alone.
    */
-  readonly #monitoredTags = new Set<string>()
-  readonly #flags = new Map<string, StoredFlag>()
+  readonly #monitoredTags = new Map<string, Set<string>>()
+  readonly #flags = new Map<string, FlagRecord>()
 
   constructor(options: MemoryStoreOptions = {}) {
     const maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES
@@ -399,10 +405,11 @@ export class MemoryStore implements PeriscopeStore {
     const text = query.text?.toLowerCase()
     const from = parseEntryQueryDate(query.from)
     const to = parseEntryQueryDate(query.to)
+    const afterSequence = parseCursor(query.afterSequence)
     const matches: StoredEntry[] = []
 
     for (const entry of this.#candidateEntries(query, tags)) {
-      if (matchesQuery(entry, query, cursor, tags, text, from, to)) {
+      if (matchesQuery(entry, query, cursor, tags, text, from, to, afterSequence)) {
         matches.push(entry)
       }
     }
@@ -535,14 +542,10 @@ export class MemoryStore implements PeriscopeStore {
   }
 
   async prune(options: PruneOptions): Promise<number> {
-    const before = options.before.getTime()
+    const defaultBefore = options.before.getTime()
     const doomed: string[] = []
 
     for (const entry of this.#entries.values()) {
-      if (entry.createdAt.getTime() >= before) {
-        continue
-      }
-
       if (options.keepExceptions === true && entry.type === EntryType.EXCEPTION) {
         continue
       }
@@ -551,7 +554,10 @@ export class MemoryStore implements PeriscopeStore {
         continue
       }
 
-      doomed.push(entry.uuid)
+      const before = options.perTypeBefore?.[entry.type]?.getTime() ?? defaultBefore
+      if (entry.createdAt.getTime() < before) {
+        doomed.push(entry.uuid)
+      }
     }
 
     for (const uuid of doomed) {
@@ -597,16 +603,25 @@ export class MemoryStore implements PeriscopeStore {
     }
   }
 
-  async monitoredTags(): Promise<string[]> {
-    return [...this.#monitoredTags]
+  async monitoredTags(application = 'default'): Promise<string[]> {
+    return [...(this.#monitoredTags.get(application) ?? [])]
   }
 
-  async monitorTag(tag: string): Promise<void> {
-    this.#monitoredTags.add(tag)
+  async monitorTag(tag: string, application = 'default'): Promise<void> {
+    let tags = this.#monitoredTags.get(application)
+    if (tags === undefined) {
+      tags = new Set()
+      this.#monitoredTags.set(application, tags)
+    }
+
+    tags.add(tag)
   }
 
-  async unmonitorTag(tag: string): Promise<void> {
-    this.#monitoredTags.delete(tag)
+  async unmonitorTag(tag: string, application = 'default'): Promise<void> {
+    const tags = this.#monitoredTags.get(application)
+    if (tags !== undefined && tags.delete(tag) && tags.size === 0) {
+      this.#monitoredTags.delete(application)
+    }
   }
 
   async getFlag(name: string): Promise<string | null> {
@@ -646,6 +661,24 @@ export class MemoryStore implements PeriscopeStore {
     return false
   }
 
+  async flagsWithPrefix(prefix: string): Promise<{ name: string; value: string }[]> {
+    const now = Date.now()
+    const flags: { name: string; value: string }[] = []
+
+    for (const [name, flag] of this.#flags) {
+      if (flag.expiresAt !== null && flag.expiresAt <= now) {
+        this.#flags.delete(name)
+        continue
+      }
+
+      if (name.startsWith(prefix)) {
+        flags.push({ name, value: flag.value })
+      }
+    }
+
+    return flags
+  }
+
   async setFlag(name: string, value: string, options: FlagOptions = {}): Promise<void> {
     // A whole new record, so setting a flag without an expiry clears whatever expiry it had.
     this.#flags.set(name, { value, expiresAt: options.expiresAt?.getTime() ?? null })
@@ -653,6 +686,15 @@ export class MemoryStore implements PeriscopeStore {
 
   async deleteFlag(name: string): Promise<void> {
     this.#flags.delete(name)
+  }
+
+  diagnostics(): StoreDiagnostics {
+    return {
+      pendingBatches: 0,
+      droppedBatches: 0,
+      failedBatches: 0,
+      retriedBatches: 0,
+    }
   }
 
   /**

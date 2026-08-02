@@ -5,8 +5,10 @@
  * file that was distributed with this source code.
  */
 
+import { hostname } from 'node:os'
 import type { ApplicationService } from '@adonisjs/core/types'
 
+import { createInProcessFanout } from '../src/fanout.ts'
 import { Recorder } from '../src/recorder/recorder.ts'
 import { createStore } from '../src/storage/resolve.ts'
 import type { StoreContext } from '../src/storage/resolve.ts'
@@ -16,10 +18,12 @@ import { isRecordingEnabled } from '../src/define_config.ts'
 import { registerDashboardRoutes } from '../src/http/routes.ts'
 import { safeguardAsync, setInternalLogger } from '../src/safeguard.ts'
 import { WatcherRegistry } from '../src/watchers/registry.ts'
-import { WatcherName } from '../src/types.ts'
-import type { PeriscopeStore, ResolvedPeriscopeConfig } from '../src/types.ts'
+import { type EntryType, WatcherName } from '../src/types.ts'
+import type { FlushFanout, PeriscopeStore, ResolvedPeriscopeConfig } from '../src/types.ts'
 
 const RETENTION_INTERVAL_MS = 15 * 60 * 1_000
+const MAINTENANCE_LEASE = 'maintenance-lease'
+const WORKER_IDENTITY = `${process.pid}@${hostname()}`
 
 /**
  * Every top-level block the config check below insists on. Their presence is what distinguishes
@@ -76,6 +80,14 @@ export default class PeriscopeProvider {
   #retentionInitialRun: NodeJS.Timeout | undefined
   #retentionInterval: NodeJS.Timeout | undefined
   #retentionPrune: Promise<void> | null = null
+
+  /**
+   * The fanout is provider-owned because application adapters may hold sockets. Its bridge stays
+   * live through the recorder's final flush, then teardown unsubscribes and closes the adapter.
+   */
+  #fanout: FlushFanout | null = null
+  #fanoutSetup: Promise<FlushFanout> | null = null
+  #fanoutUnsubscribe: (() => void) | null = null
 
   /**
    * The watcher registry, created as soon as an enabled recorder needs its early model watcher.
@@ -157,6 +169,7 @@ export default class PeriscopeProvider {
    */
   async boot() {
     const recorder = await this.app.container.make(Recorder)
+    await this.#ensureFanout(recorder, this.#resolveConfig())
 
     if (!recorder.enabled) {
       return
@@ -196,12 +209,14 @@ export default class PeriscopeProvider {
 
     const config = this.#resolveConfig()
     const recorder = await this.app.container.make(Recorder)
+    const fanout = await this.#ensureFanout(recorder, config)
     const router = await this.app.container.make('router')
 
     registerDashboardRoutes({
       router,
       recorder,
       config,
+      fanout,
       environment: {
         nodeEnv: this.app.nodeEnvironment,
         periscopeEnabled: () => process.env.PERISCOPE_ENABLED,
@@ -209,6 +224,39 @@ export default class PeriscopeProvider {
     })
 
     this.#routesRegistered = true
+  }
+
+  /**
+   * Build one process-local fanout seam and bridge recorder flushes into it exactly once.
+   *
+   * Application factories are isolated because a broken live-dashboard adapter must never stop
+   * recording or application boot; the in-process adapter remains a useful same-worker fallback.
+   */
+  async #ensureFanout(recorder: Recorder, config: ResolvedPeriscopeConfig): Promise<FlushFanout> {
+    if (this.#fanout !== null) {
+      return this.#fanout
+    }
+
+    this.#fanoutSetup ??= (async () => {
+      let fanout = createInProcessFanout()
+
+      const factory = config.dashboard.fanout
+      if (factory !== undefined) {
+        fanout =
+          (await safeguardAsync('periscope.provider.fanout.create', () =>
+            factory({ app: this.app, config })
+          )) ?? fanout
+      }
+
+      this.#fanout = fanout
+      this.#fanoutUnsubscribe = recorder.subscribeFlushed((event) => {
+        void safeguardAsync('periscope.provider.fanout.publish', () => fanout.publish(event))
+      })
+
+      return fanout
+    })()
+
+    return this.#fanoutSetup
   }
 
   /**
@@ -226,6 +274,7 @@ export default class PeriscopeProvider {
    */
   async ready() {
     const recorder = await this.app.container.make(Recorder)
+    await this.#ensureFanout(recorder, this.#resolveConfig())
 
     /**
      * The internal reporter is not a watcher and does not patch a logger destination. Wiring it
@@ -245,6 +294,14 @@ export default class PeriscopeProvider {
     this.#startRetention(recorder)
   }
 
+  /**
+   * Run retention under a short-lived store flag shared by every application worker.
+   *
+   * This lease is deliberately best-effort rather than a distributed lock: two workers can both
+   * observe an empty flag before either writes it. That lost race only causes duplicate `prune`
+   * calls, which are harmless, while avoiding a driver-specific locking primitive in the store
+   * contract.
+   */
   #startRetention(recorder: Recorder): void {
     const retention = this.#resolveConfig().storage.retention
     if (retention === undefined || this.#retentionInterval !== undefined) {
@@ -258,15 +315,30 @@ export default class PeriscopeProvider {
         return
       }
 
-      const pruning = safeguardAsync('periscope.provider.retention.prune', async () => {
-        const before = new Date(Date.now() - retention.hours * 60 * 60 * 1_000)
-        await recorder.mute(() =>
-          recorder.store.prune({
-            before,
+      const pruning = safeguardAsync('periscope.provider.retention.prune', () =>
+        recorder.mute(async () => {
+          const lease = await recorder.store.getFlag(MAINTENANCE_LEASE)
+          if (lease !== null && lease !== WORKER_IDENTITY) {
+            return
+          }
+
+          const now = Date.now()
+          await recorder.store.setFlag(MAINTENANCE_LEASE, WORKER_IDENTITY, {
+            expiresAt: new Date(now + 2 * RETENTION_INTERVAL_MS),
+          })
+
+          const perTypeBefore: Partial<Record<EntryType, Date>> = {}
+          for (const [type, window] of Object.entries(retention.perType)) {
+            perTypeBefore[type as EntryType] = new Date(now - window.hours * 60 * 60 * 1_000)
+          }
+
+          await recorder.store.prune({
+            before: new Date(now - retention.hours * 60 * 60 * 1_000),
+            perTypeBefore,
             keepExceptions: retention.keepExceptions,
           })
-        )
-      }).then(() => {})
+        })
+      ).then(() => {})
       this.#retentionPrune = pruning
 
       void pruning.finally(() => {
@@ -365,6 +437,9 @@ export default class PeriscopeProvider {
       await this.#retentionPrune
       await safeguardAsync('periscope.provider.watchers.cleanup', () => this.#watchers?.cleanup())
       await safeguardAsync('periscope.provider.recorder.shutdown', () => this.#recorder?.shutdown())
+      await this.#fanoutSetup
+      this.#fanoutUnsubscribe?.()
+      await safeguardAsync('periscope.provider.fanout.close', () => this.#fanout?.close?.())
       await safeguardAsync('periscope.provider.store.close', () => this.#store?.close())
     } finally {
       this.#watchers = null
@@ -372,6 +447,9 @@ export default class PeriscopeProvider {
       this.#store = null
       this.#watchersSetup = null
       this.#retentionPrune = null
+      this.#fanout = null
+      this.#fanoutSetup = null
+      this.#fanoutUnsubscribe = null
 
       /**
        * Restores the standalone default reporter. A terminated application's logger may be writing

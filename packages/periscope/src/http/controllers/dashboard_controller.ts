@@ -249,6 +249,7 @@ export class DashboardController {
         latestAt: application.latestAt?.toISOString() ?? null,
       })),
       nPlusOneThreshold: this.config.dashboard.nPlusOneThreshold,
+      store: this.store.diagnostics?.() ?? null,
     }
   }
 

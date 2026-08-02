@@ -358,6 +358,45 @@ export function runStoreContractTests(driverName: string, createStore: StoreFact
       assert.lengthOf(empty.data, 0)
     })
 
+    test('filter strictly after a sequence in either direction and combine other filters', async ({
+      assert,
+    }) => {
+      const before = makeStoredEntry({ application: 'alpha', type: EntryType.QUERY })
+      const boundary = makeStoredEntry({ application: 'alpha', type: EntryType.QUERY })
+      const tiedAtBoundary = makeStoredEntry({
+        application: 'alpha',
+        type: EntryType.QUERY,
+        sequence: boundary.sequence,
+      })
+      const first = makeStoredEntry({ application: 'alpha', type: EntryType.QUERY })
+      const noise = makeStoredEntry({ application: 'beta', type: EntryType.QUERY })
+      const second = makeStoredEntry({ application: 'alpha', type: EntryType.QUERY })
+
+      await store.save([second, boundary, noise, tiedAtBoundary, before, first])
+
+      const query = {
+        afterSequence: boundary.sequence.toString(),
+        application: 'alpha',
+        type: EntryType.QUERY,
+      } as const
+      const ascending = await store.list({ ...query, direction: 'asc' })
+      const descending = await store.list({ ...query, direction: 'desc' })
+
+      assert.deepEqual(
+        ascending.data.map((entry) => entry.uuid),
+        [first.uuid, second.uuid]
+      )
+      assert.deepEqual(
+        descending.data.map((entry) => entry.uuid),
+        [second.uuid, first.uuid]
+      )
+      assert.notIncludeMembers(
+        ascending.data.map((entry) => entry.uuid),
+        [boundary.uuid, tiedAtBoundary.uuid],
+        'every entry equal to afterSequence must be excluded'
+      )
+    })
+
     test('filter string log levels case-insensitively and combine filters with AND', async ({
       assert,
     }) => {
@@ -1150,6 +1189,29 @@ export function runStoreContractTests(driverName: string, createStore: StoreFact
       assert.isNotNull(await store.find(exception.uuid))
     })
 
+    test('apply per-type cutoffs while keepExceptions still wins', async ({ assert }) => {
+      const createdAt = new Date('2026-01-15T00:00:00.000Z')
+      const request = makeStoredEntry({ type: EntryType.REQUEST, createdAt })
+      const query = makeStoredEntry({ type: EntryType.QUERY, createdAt })
+      const exception = makeStoredEntry({ type: EntryType.EXCEPTION, createdAt })
+
+      await store.save([request, query, exception])
+
+      const deleted = await store.prune({
+        before: new Date('2026-02-01T00:00:00.000Z'),
+        perTypeBefore: {
+          [EntryType.QUERY]: new Date('2026-01-01T00:00:00.000Z'),
+          [EntryType.EXCEPTION]: new Date('2026-03-01T00:00:00.000Z'),
+        },
+        keepExceptions: true,
+      })
+
+      assert.equal(deleted, 1)
+      assert.isNull(await store.find(request.uuid))
+      assert.isNotNull(await store.find(query.uuid))
+      assert.isNotNull(await store.find(exception.uuid))
+    })
+
     test('scope pruning to one application while preserving exceptions', async ({ assert }) => {
       const createdAt = new Date('2026-01-01T00:00:00.000Z')
       const alphaRequest = makeStoredEntry({ application: 'alpha', createdAt })
@@ -1455,6 +1517,25 @@ export function runStoreContractTests(driverName: string, createStore: StoreFact
       assert.deepEqual(await store.monitoredTags(), [])
     })
 
+    test('isolate monitored tags by application and default omitted applications', async ({
+      assert,
+    }) => {
+      await store.monitorTag('shared', 'alpha')
+      await store.monitorTag('alpha-only', 'alpha')
+      await store.monitorTag('shared', 'beta')
+      await store.monitorTag('default-only')
+
+      assert.sameMembers(await store.monitoredTags('alpha'), ['shared', 'alpha-only'])
+      assert.deepEqual(await store.monitoredTags('beta'), ['shared'])
+      assert.deepEqual(await store.monitoredTags(), ['default-only'])
+      assert.deepEqual(await store.monitoredTags('default'), ['default-only'])
+
+      await store.unmonitorTag('shared', 'alpha')
+
+      assert.deepEqual(await store.monitoredTags('alpha'), ['alpha-only'])
+      assert.deepEqual(await store.monitoredTags('beta'), ['shared'])
+    })
+
     /*
      * flags
      */
@@ -1519,6 +1600,29 @@ export function runStoreContractTests(driverName: string, createStore: StoreFact
       assert.isFalse(await store.hasFlagWithPrefix('dump-open:'))
     })
 
+    test('return unexpired flag values matching a literal prefix', async ({ assert }) => {
+      await store.setFlag('entry-meta:stale', 'stale', {
+        expiresAt: new Date(Date.now() - 60_000),
+      })
+      await store.setFlag('entry-meta:first', 'one')
+      await store.setFlag('entry-meta:second', 'two', {
+        expiresAt: new Date(Date.now() + 60_000),
+      })
+      await store.setFlag('entry%meta:lookalike', 'wildcard')
+      await store.setFlag('unrelated:entry-meta', 'noise')
+
+      const flags = await store.flagsWithPrefix('entry-meta:')
+
+      assert.sameDeepMembers(flags, [
+        { name: 'entry-meta:first', value: 'one' },
+        { name: 'entry-meta:second', value: 'two' },
+      ])
+      assert.deepEqual(await store.flagsWithPrefix('entry%meta:'), [
+        { name: 'entry%meta:lookalike', value: 'wildcard' },
+      ])
+      assert.deepEqual(await store.flagsWithPrefix('missing:'), [])
+    })
+
     test('delete a flag', async ({ assert }) => {
       await store.setFlag(Flag.PAUSED, 'yes')
       await store.deleteFlag(Flag.PAUSED)
@@ -1530,6 +1634,24 @@ export function runStoreContractTests(driverName: string, createStore: StoreFact
       await store.deleteFlag('never-set')
 
       assert.isNull(await store.getFlag('never-set'))
+    })
+
+    /*
+     * diagnostics
+     */
+
+    test('report the complete diagnostics shape when implemented', async ({ assert }) => {
+      if (store.diagnostics === undefined) {
+        assert.isUndefined(store.diagnostics)
+        return
+      }
+
+      assert.deepEqual(store.diagnostics(), {
+        pendingBatches: 0,
+        droppedBatches: 0,
+        failedBatches: 0,
+        retriedBatches: 0,
+      })
     })
 
     /*

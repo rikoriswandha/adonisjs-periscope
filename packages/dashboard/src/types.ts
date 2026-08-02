@@ -37,6 +37,13 @@ export type StoredEntry = {
   createdAt: string
 }
 
+export type EntryMetadataRecord = {
+  uuid: string
+  pinned: boolean
+  note: string | null
+  updatedAt: string | null
+}
+
 export type EntryPage = {
   data: StoredEntry[]
   nextCursor: string | null
@@ -85,12 +92,15 @@ export type FlushStreamEvent = {
 }
 
 export type LiveUpdateMode = 'connecting' | 'live' | 'polling' | 'off'
+export type ExceptionGroupState = 'open' | 'resolved' | 'ignored'
 
 export type ExceptionGroup = {
   familyHash: string
   latest: StoredEntry
   count: number
   lastSeen: string
+  state: ExceptionGroupState
+  stateUpdatedAt: string | null
 }
 
 export type ExceptionGroupPage = {

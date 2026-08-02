@@ -26,6 +26,8 @@ import type {
   RequestStatsQuery,
   RequestStatsResult,
   StoredEntry,
+  StoredFlag,
+  StoreDiagnostics,
 } from '../types.ts'
 import {
   encodeCursor,
@@ -103,6 +105,13 @@ const MAINTENANCE_INTERVAL_MS = 30_000
 const BUSY_TIMEOUT_MS = 100
 
 /**
+ * One batch is one recorder flush. Bounding this queue prevents a blocked SQLite writer from
+ * turning telemetry into an application-wide memory leak; the oldest telemetry is least useful
+ * when fresh batches are still arriving.
+ */
+const SAVE_BACKLOG_LIMIT = 256
+
+/**
  * The schema, created on first open.
  *
  * There are no migrations, and that is the feature: this file lives under `tmp/`, holds nothing
@@ -155,7 +164,9 @@ create index if not exists periscope_entry_tags_tag_index
   on ${TAGS_TABLE} (tag);
 
 create table if not exists ${MONITORED_TAGS_TABLE} (
-  tag varchar(${TAG_INDEX_MAX_LENGTH}) not null primary key
+  application varchar(191) not null default 'default',
+  tag varchar(${TAG_INDEX_MAX_LENGTH}) not null,
+  primary key (application, tag)
 );
 
 create table if not exists ${FLAGS_TABLE} (
@@ -397,6 +408,37 @@ function openDatabaseOnce(path: string): DatabaseHandle {
         `alter table ${ENTRIES_TABLE} add column application varchar(191) not null default 'default'`
       )
     }
+    const monitoredTagColumns = db.prepare(`pragma table_info(${MONITORED_TAGS_TABLE})`).all() as {
+      name: string
+      pk: number
+    }[]
+    const monitoredTagPrimaryKey = monitoredTagColumns
+      .filter((column) => column.pk > 0)
+      .sort((left, right) => left.pk - right.pk)
+      .map((column) => column.name)
+    if (
+      !monitoredTagColumns.some((column) => column.name === 'application') ||
+      monitoredTagPrimaryKey.join(',') !== 'application,tag'
+    ) {
+      /*
+       * Older local files keyed monitored tags by tag alone. Rebuilding this tiny intent table is
+       * the only safe way to change a SQLite primary key, and assigning those rows to `default`
+       * preserves exactly what callers of the old unscoped API observed.
+       */
+      db.exec(`
+        begin immediate;
+        alter table ${MONITORED_TAGS_TABLE} rename to ${MONITORED_TAGS_TABLE}_legacy;
+        create table ${MONITORED_TAGS_TABLE} (
+          application varchar(191) not null default 'default',
+          tag varchar(${TAG_INDEX_MAX_LENGTH}) not null,
+          primary key (application, tag)
+        );
+        insert or ignore into ${MONITORED_TAGS_TABLE} (application, tag)
+          select 'default', tag from ${MONITORED_TAGS_TABLE}_legacy;
+        drop table ${MONITORED_TAGS_TABLE}_legacy;
+        commit;
+      `)
+    }
     db.exec(APPLICATION_INDEXES)
     initializeFullTextSearch(db)
 
@@ -466,6 +508,7 @@ export class SqliteLocalStore implements PeriscopeStore {
   readonly #saveAll: (saves: readonly PendingSave[]) => number
   readonly #pruneBefore: (
     before: number,
+    perTypeBefore: PruneOptions['perTypeBefore'],
     keepExceptions: boolean,
     application: string | undefined
   ) => number
@@ -474,6 +517,7 @@ export class SqliteLocalStore implements PeriscopeStore {
   readonly #clearApplication: (application: string) => void
   readonly #pendingSaves: PendingSave[] = []
   #saveScheduled = false
+  #droppedBatches = 0
 
   /**
    * In-process entry count, so the per-flush ceiling check in {@link SqliteLocalStore.trim} costs
@@ -498,12 +542,32 @@ export class SqliteLocalStore implements PeriscopeStore {
     })
 
     this.#pruneBefore = this.#db.transaction(
-      (before: number, keepExceptions: boolean, application: string | undefined) => {
+      (
+        before: number,
+        perTypeBefore: PruneOptions['perTypeBefore'],
+        keepExceptions: boolean,
+        application: string | undefined
+      ) => {
         this.#prepare(
           `delete from ${FLAGS_TABLE} where expires_at is not null and expires_at <= ?`
         ).run(Date.now())
-        const conditions = ['created_at < ?']
-        const values: Binding[] = [before]
+        const typeCutoffs = Object.entries(perTypeBefore ?? {}).filter(
+          (pair): pair is [EntryType, Date] => pair[1] instanceof Date
+        )
+        const values: Binding[] = []
+        let cutoff = 'created_at < ?'
+
+        if (typeCutoffs.length === 0) {
+          values.push(before)
+        } else {
+          cutoff = `created_at < case type ${typeCutoffs.map(() => 'when ? then ?').join(' ')} else ? end`
+          for (const [type, date] of typeCutoffs) {
+            values.push(type, date.getTime())
+          }
+          values.push(before)
+        }
+
+        const conditions = [cutoff]
 
         if (keepExceptions) {
           conditions.push('type <> ?')
@@ -666,10 +730,36 @@ export class SqliteLocalStore implements PeriscopeStore {
   }
 
   /**
-   * Commit every save that reached the driver during the current event-loop turn. Resolving each
-   * caller separately preserves the store contract while sharing SQLite's expensive WAL commit.
+   * Commit one pending batch, then relinquish the event loop before taking the next. A flush can
+   * contain hundreds of rows; draining the whole backlog in one callback would let telemetry
+   * starve the application's own timers and I/O even though each individual SQLite call is fast.
    */
   #drainPendingSaves(): void {
+    const save = this.#pendingSaves.shift()
+    if (save === undefined) {
+      this.#saveScheduled = false
+      return
+    }
+
+    try {
+      this.#entryCount += this.#saveAll([save])
+      save.resolve()
+    } catch (error) {
+      save.reject(error)
+    }
+
+    if (this.#pendingSaves.length === 0) {
+      this.#saveScheduled = false
+    } else {
+      setImmediate(() => this.#drainPendingSaves())
+    }
+  }
+
+  /**
+   * Shutdown is the one deliberate exception to the per-batch yield: the provider has already
+   * completed its final recorder flush and must not close the handle before accepted saves land.
+   */
+  #drainPendingSavesSynchronously(): void {
     this.#saveScheduled = false
     const saves = this.#pendingSaves.splice(0)
     if (saves.length === 0) return
@@ -771,6 +861,11 @@ export class SqliteLocalStore implements PeriscopeStore {
       values.push(query.level.toLowerCase())
     }
 
+    if (query.afterSequence !== undefined) {
+      conditions.push('sequence > ?')
+      values.push(encodeSequence(BigInt(query.afterSequence)))
+    }
+
     const direction = query.direction === 'asc' ? 'asc' : 'desc'
     const cursorOperator = direction === 'asc' ? '>' : '<'
 
@@ -799,6 +894,18 @@ export class SqliteLocalStore implements PeriscopeStore {
     if (entries.length === 0) return
 
     return new Promise<void>((resolve, reject) => {
+      if (this.#pendingSaves.length >= SAVE_BACKLOG_LIMIT) {
+        const dropped = this.#pendingSaves.shift()
+        if (dropped !== undefined) {
+          this.#droppedBatches += 1
+          dropped.reject(
+            new Error(
+              `Periscope sqlite-local write backlog exceeded ${SAVE_BACKLOG_LIMIT} pending batches`
+            )
+          )
+        }
+      }
+
       this.#pendingSaves.push({ entries, resolve, reject })
       if (this.#saveScheduled) return
 
@@ -1003,6 +1110,7 @@ export class SqliteLocalStore implements PeriscopeStore {
   async prune(options: PruneOptions): Promise<number> {
     const deleted = this.#pruneBefore(
       options.before.getTime(),
+      options.perTypeBefore,
       options.keepExceptions === true,
       options.application
     )
@@ -1050,21 +1158,26 @@ export class SqliteLocalStore implements PeriscopeStore {
     }
   }
 
-  async monitoredTags(): Promise<string[]> {
+  async monitoredTags(application = 'default'): Promise<string[]> {
     // Ordered so the dashboard's list does not reshuffle itself between two identical requests.
     const rows = this.#prepare<{ tag: string }>(
-      `select tag from ${MONITORED_TAGS_TABLE} order by tag asc`
-    ).all()
+      `select tag from ${MONITORED_TAGS_TABLE} where application = ? order by tag asc`
+    ).all(application)
 
     return rows.map((row) => row.tag)
   }
 
-  async monitorTag(tag: string): Promise<void> {
-    this.#prepare(`insert or ignore into ${MONITORED_TAGS_TABLE} (tag) values (?)`).run(tag)
+  async monitorTag(tag: string, application = 'default'): Promise<void> {
+    this.#prepare(
+      `insert or ignore into ${MONITORED_TAGS_TABLE} (application, tag) values (?, ?)`
+    ).run(application, tag)
   }
 
-  async unmonitorTag(tag: string): Promise<void> {
-    this.#prepare(`delete from ${MONITORED_TAGS_TABLE} where tag = ?`).run(tag)
+  async unmonitorTag(tag: string, application = 'default'): Promise<void> {
+    this.#prepare(`delete from ${MONITORED_TAGS_TABLE} where application = ? and tag = ?`).run(
+      application,
+      tag
+    )
   }
 
   async getFlag(name: string): Promise<string | null> {
@@ -1100,6 +1213,15 @@ export class SqliteLocalStore implements PeriscopeStore {
     return row !== undefined
   }
 
+  async flagsWithPrefix(prefix: string): Promise<StoredFlag[]> {
+    const pattern = `${prefix.replaceAll('!', '!!').replaceAll('%', '!%').replaceAll('_', '!_')}%`
+
+    return this.#prepare<StoredFlag>(
+      `select name, value from ${FLAGS_TABLE}
+       where name like ? escape '!' and (expires_at is null or expires_at > ?)`
+    ).all(pattern, Date.now())
+  }
+
   async setFlag(name: string, value: string, options: FlagOptions = {}): Promise<void> {
     // Both columns are overwritten, so setting a flag without an expiry clears the one it had.
     this.#prepare(
@@ -1110,6 +1232,15 @@ export class SqliteLocalStore implements PeriscopeStore {
 
   async deleteFlag(name: string): Promise<void> {
     this.#prepare(`delete from ${FLAGS_TABLE} where name = ?`).run(name)
+  }
+
+  diagnostics(): StoreDiagnostics {
+    return {
+      pendingBatches: this.#pendingSaves.length,
+      droppedBatches: this.#droppedBatches,
+      failedBatches: 0,
+      retriedBatches: 0,
+    }
   }
 
   /**
@@ -1125,7 +1256,7 @@ export class SqliteLocalStore implements PeriscopeStore {
     if (!this.#db.open) {
       return
     }
-    this.#drainPendingSaves()
+    this.#drainPendingSavesSynchronously()
 
     this.#statements.clear()
     this.#db.close()

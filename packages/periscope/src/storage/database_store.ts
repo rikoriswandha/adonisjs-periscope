@@ -25,11 +25,11 @@
  * writes, and each recorded write would produce another write. Invariant 2 — Periscope never
  * records itself — is enforced here, by not giving the watcher anything to attach to.
  *
- * Dialect differences are handled at exactly three seams. `./sql.ts`'s codecs erase the
- * value-level ones, and its `jsonFieldText` helper owns the dialect-specific JSON extraction
- * syntax used below. Knex's `onConflict().ignore()` erases the statement-level one, compiling to
- * `on conflict do nothing` on postgres and SQLite and to `insert ignore` on MySQL. Nothing else
- * in this file branches on `dialect.name`.
+ * Dialect differences are kept at four narrow seams. `./sql.ts`'s codecs erase the value-level
+ * ones, and its `jsonFieldText` helper owns dialect-specific JSON extraction. Knex's
+ * `onConflict().ignore()` erases the insert spelling. Content search is the remaining deliberate
+ * branch: postgres uses trigram-acceleratable `ILIKE`, while other dialects case-fold explicitly
+ * before `LIKE`.
  */
 
 import { safeguard } from '../safeguard.ts'
@@ -74,7 +74,9 @@ import type {
   PruneOptions,
   RequestStatsQuery,
   RequestStatsResult,
+  StoreDiagnostics,
   StoredEntry,
+  StoredFlag,
 } from '../types.ts'
 import type { EntryCursor } from './pagination.ts'
 import type { Database } from '@adonisjs/lucid/database'
@@ -105,13 +107,12 @@ type MonitoredTagRow = { tag: string }
  * One row of the flags table. `expires_at` arrives as a string from postgres, because it is a
  * `bigint` column, and as a number from SQLite.
  */
-type FlagRow = { value: string; expires_at: number | string | null }
+type FlagRow = { name: string; value: string; expires_at: number | string | null }
 
 interface PendingDatabaseSave {
   entryRows: EntryRow[]
   tagRows: TagRow[]
   resolve(): void
-  reject(error: unknown): void
 }
 
 /**
@@ -119,6 +120,21 @@ interface PendingDatabaseSave {
  * retained request contexts when the host database is slower than incoming requests.
  */
 const DATABASE_SAVE_BACKLOG_LIMIT = 64
+
+/**
+ * Delays between failed writes. Only the first two are normally reached because a batch gets
+ * three total attempts; keeping the complete bounded schedule here makes the terminal ceiling
+ * explicit and prevents a later attempt-count change from inventing an unbounded delay.
+ */
+const DATABASE_SAVE_RETRY_DELAYS = [250, 1_000, 4_000] as const
+
+function waitForDatabaseRetry(milliseconds: number): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>()
+  const timer = setTimeout(resolve, milliseconds)
+  timer.unref()
+
+  return promise
+}
 
 /**
  * A grouped count. Postgres returns `count(*)` as a `bigint`, hence the string.
@@ -147,6 +163,10 @@ export class DatabaseStore implements PeriscopeStore {
   readonly #connection: string | undefined
   readonly #pendingSaves: PendingDatabaseSave[] = []
   #drainingSaves: Promise<void> | null = null
+  #pendingBatchCount = 0
+  #droppedBatches = 0
+  #failedBatches = 0
+  #retriedBatches = 0
 
   constructor(options: DatabaseStoreOptions) {
     this.#db = options.db
@@ -222,9 +242,10 @@ export class DatabaseStore implements PeriscopeStore {
     }
 
     if (query.text !== undefined) {
-      builder.whereRaw("lower(content) like ? escape '!'", [entryContentLikePattern(query.text)])
+      const operator = dialect === 'postgres' ? 'ilike' : 'like'
+      const content = dialect === 'postgres' ? 'content' : 'lower(content)'
+      builder.whereRaw(`${content} ${operator} ? escape '!'`, [entryContentLikePattern(query.text)])
     }
-
     const from = parseEntryQueryDate(query.from)
     if (from !== undefined) {
       builder.where('created_at', '>=', from)
@@ -235,6 +256,9 @@ export class DatabaseStore implements PeriscopeStore {
       builder.where('created_at', '<=', to)
     }
 
+    if (query.afterSequence !== undefined) {
+      builder.where('sequence', '>', encodeSequence(BigInt(query.afterSequence)))
+    }
     if (cursor !== null) {
       const sequence = encodeSequence(cursor.sequence)
       const cursorOperator = query.direction === 'asc' ? '>' : '<'
@@ -298,28 +322,32 @@ export class DatabaseStore implements PeriscopeStore {
       return
     }
 
-    return new Promise<void>((resolve, reject) => {
-      if (this.#pendingSaves.length >= DATABASE_SAVE_BACKLOG_LIMIT) {
-        const dropped = this.#pendingSaves.shift()
-        if (dropped !== undefined) {
-          const error = new Error(
-            `Periscope database write backlog exceeded ${DATABASE_SAVE_BACKLOG_LIMIT} pending batches`
-          )
-          dropped.reject(error)
-          safeguard('periscope.storage.database.backpressure', () => {
-            throw error
-          })
-        }
-      }
+    const { promise, resolve } = Promise.withResolvers<void>()
 
-      this.#pendingSaves.push({
-        entryRows: entries.map(toEntryRow),
-        tagRows: entries.flatMap(toTagRows),
-        resolve,
-        reject,
-      })
-      this.#startSaveDrain()
+    if (this.#pendingSaves.length >= DATABASE_SAVE_BACKLOG_LIMIT) {
+      const dropped = this.#pendingSaves.shift()
+      if (dropped !== undefined) {
+        const error = new Error(
+          `Periscope database write backlog exceeded ${DATABASE_SAVE_BACKLOG_LIMIT} pending batches`
+        )
+        this.#pendingBatchCount--
+        this.#droppedBatches++
+        dropped.resolve()
+        safeguard('periscope.storage.database.backpressure', () => {
+          throw error
+        })
+      }
+    }
+
+    this.#pendingBatchCount++
+    this.#pendingSaves.push({
+      entryRows: entries.map(toEntryRow),
+      tagRows: entries.flatMap(toTagRows),
+      resolve,
     })
+    this.#startSaveDrain()
+
+    return promise
   }
 
   #startSaveDrain(): void {
@@ -346,31 +374,50 @@ export class DatabaseStore implements PeriscopeStore {
         return
       }
 
-      try {
-        await this.#client().transaction(async (trx) => {
-          for (const chunk of chunked(save.entryRows, INSERT_CHUNK_SIZE)) {
-            /*
-             * Conflicts are ignored rather than merged. A repeated uuid means the same entry was
-             * written twice — for example, an intermediate flush restored entries which a later
-             * flush of that context wrote again. Keeping the identical row lets every other entry
-             * in the batch proceed.
-             */
-            await trx.knexQuery().table(ENTRIES_TABLE).insert(chunk).onConflict('uuid').ignore()
-          }
+      let finalError: unknown
 
-          for (const chunk of chunked(save.tagRows, INSERT_CHUNK_SIZE)) {
-            await trx
-              .knexQuery()
-              .table(TAGS_TABLE)
-              .insert(chunk)
-              .onConflict(['entry_uuid', 'tag'])
-              .ignore()
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await this.#client().transaction(async (trx) => {
+            for (const chunk of chunked(save.entryRows, INSERT_CHUNK_SIZE)) {
+              /*
+               * Conflicts are ignored rather than merged. A repeated uuid means the same entry
+               * was written twice — for example, an intermediate flush restored entries which a
+               * later flush of that context wrote again. Keeping the identical row lets every
+               * other entry in the batch proceed.
+               */
+              await trx.knexQuery().table(ENTRIES_TABLE).insert(chunk).onConflict('uuid').ignore()
+            }
+
+            for (const chunk of chunked(save.tagRows, INSERT_CHUNK_SIZE)) {
+              await trx
+                .knexQuery()
+                .table(TAGS_TABLE)
+                .insert(chunk)
+                .onConflict(['entry_uuid', 'tag'])
+                .ignore()
+            }
+          })
+          finalError = undefined
+          break
+        } catch (error) {
+          finalError = error
+
+          if (attempt < 2) {
+            this.#retriedBatches++
+            await waitForDatabaseRetry(DATABASE_SAVE_RETRY_DELAYS[attempt])
           }
-        })
-        save.resolve()
-      } catch (error) {
-        save.reject(error)
+        }
       }
+
+      this.#pendingBatchCount--
+      if (finalError !== undefined) {
+        this.#failedBatches++
+        safeguard('periscope.storage.database.save', () => {
+          throw finalError
+        })
+      }
+      save.resolve()
     }
   }
 
@@ -587,7 +634,6 @@ export class DatabaseStore implements PeriscopeStore {
       rows.map((row) => [`${row.family_hash}\u0000${row.sequence}`, toStoredEntry(row)])
     )
     const data: ExceptionGroup[] = []
-
     for (const group of page) {
       const latest = latestByFamily.get(`${group.family_hash}\u0000${group.latest_sequence}`)
 
@@ -611,6 +657,7 @@ export class DatabaseStore implements PeriscopeStore {
   async prune(options: PruneOptions): Promise<number> {
     const before = options.before.getTime()
     const keepExceptions = options.keepExceptions === true
+    const perTypeBefore = Object.entries(options.perTypeBefore ?? {}) as [EntryType, Date][]
 
     return this.#client().transaction(async (trx) => {
       await trx
@@ -621,7 +668,22 @@ export class DatabaseStore implements PeriscopeStore {
         .del()
 
       return this.#deleteEntries(trx, (builder) => {
-        builder.where('created_at', '<', before)
+        if (perTypeBefore.length === 0) {
+          builder.where('created_at', '<', before)
+        } else {
+          const overriddenTypes = perTypeBefore.map(([type]) => type)
+          builder.where((cutoffs) => {
+            cutoffs.where((defaultCutoff) => {
+              defaultCutoff.whereNotIn('type', overriddenTypes).where('created_at', '<', before)
+            })
+
+            for (const [type, cutoff] of perTypeBefore) {
+              cutoffs.orWhere((typeCutoff) => {
+                typeCutoff.where('type', type).where('created_at', '<', cutoff.getTime())
+              })
+            }
+          })
+        }
 
         if (keepExceptions) {
           builder.whereNot('type', EntryType.EXCEPTION)
@@ -722,29 +784,35 @@ export class DatabaseStore implements PeriscopeStore {
     })
   }
 
-  async monitoredTags(): Promise<string[]> {
+  async monitoredTags(application = 'default'): Promise<string[]> {
     // Ordered so two calls against the same data return the same array; the dashboard renders it.
     const rows = await this.#client()
       .query<MonitoredTagRow>()
       .from(MONITORED_TAGS_TABLE)
       .select('tag')
+      .where('application', application)
       .orderBy('tag', 'asc')
 
     return rows.map((row) => row.tag)
   }
 
-  async monitorTag(tag: string): Promise<void> {
+  async monitorTag(tag: string, application = 'default'): Promise<void> {
     // Monitoring an already-monitored tag is a no-op, which is precisely `on conflict do nothing`.
     await this.#client()
       .knexQuery()
       .table(MONITORED_TAGS_TABLE)
-      .insert({ tag })
-      .onConflict('tag')
+      .insert({ application, tag })
+      .onConflict(['application', 'tag'])
       .ignore()
   }
 
-  async unmonitorTag(tag: string): Promise<void> {
-    await this.#client().query().from(MONITORED_TAGS_TABLE).where('tag', tag).del()
+  async unmonitorTag(tag: string, application = 'default'): Promise<void> {
+    await this.#client()
+      .query()
+      .from(MONITORED_TAGS_TABLE)
+      .where('application', application)
+      .where('tag', tag)
+      .del()
   }
 
   async getFlag(name: string): Promise<string | null> {
@@ -787,6 +855,23 @@ export class DatabaseStore implements PeriscopeStore {
     return row !== null && row !== undefined
   }
 
+  async flagsWithPrefix(prefix: string): Promise<StoredFlag[]> {
+    /*
+     * `!` makes `%`, `_`, and backslash-containing prefixes literal across every dialect:
+     * backslash has no escape role in this expression, avoiding its incompatible string rules.
+     */
+    const pattern = `${prefix.replaceAll('!', '!!').replaceAll('%', '!%').replaceAll('_', '!_')}%`
+    const rows = await this.#client()
+      .query<FlagRow>()
+      .from(FLAGS_TABLE)
+      .select('name', 'value')
+      .whereRaw("name like ? escape '!'", [pattern])
+      .whereRaw('(expires_at is null or expires_at > ?)', [Date.now()])
+      .orderBy('name', 'asc')
+
+    return rows.map(({ name, value }) => ({ name, value }))
+  }
+
   async setFlag(name: string, value: string, options: FlagOptions = {}): Promise<void> {
     const expiresAt = options.expiresAt === undefined ? null : options.expiresAt.getTime()
 
@@ -805,6 +890,15 @@ export class DatabaseStore implements PeriscopeStore {
 
   async deleteFlag(name: string): Promise<void> {
     await this.#client().query().from(FLAGS_TABLE).where('name', name).del()
+  }
+
+  diagnostics(): StoreDiagnostics {
+    return {
+      pendingBatches: this.#pendingBatchCount,
+      droppedBatches: this.#droppedBatches,
+      failedBatches: this.#failedBatches,
+      retriedBatches: this.#retriedBatches,
+    }
   }
 
   /**

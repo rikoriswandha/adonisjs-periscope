@@ -33,6 +33,28 @@ const storage = new AsyncLocalStorage<BatchContext>()
 let sampleRate = 1
 
 /**
+ * Lifecycle state is kept beside the public context shape because contexts are deliberately
+ * plain objects handed to watchers. A `WeakMap` makes closure observable across every retained
+ * async reference without adding recorder-private fields to that public contract.
+ */
+type BatchLifecycle =
+  { phase: 'open' } | { phase: 'closed'; continuation?: BatchContext } | { phase: 'finished' }
+
+const lifecycles = new WeakMap<BatchContext, BatchLifecycle>()
+const continuationParents = new WeakMap<BatchContext, BatchContext>()
+
+function lifecycleOf(context: BatchContext): BatchLifecycle {
+  let lifecycle = lifecycles.get(context)
+
+  if (lifecycle === undefined) {
+    lifecycle = { phase: 'open' }
+    lifecycles.set(context, lifecycle)
+  }
+
+  return lifecycle
+}
+
+/**
  * Entry point to the active batch.
  *
  * Everything Periscope records is attributed to exactly one {@link BatchContext}. Scopes are
@@ -64,7 +86,7 @@ export class BatchScope {
    */
   static createContext(kind: BatchKind): BatchContext {
     const traceId = activeTraceId()
-    return {
+    const context: BatchContext = {
       batchId: randomUUID(),
       kind,
       startedAt: process.hrtime.bigint(),
@@ -76,6 +98,9 @@ export class BatchScope {
       truncated: {},
       muted: false,
     }
+
+    lifecycles.set(context, { phase: 'open' })
+    return context
   }
 
   /**
@@ -97,6 +122,96 @@ export class BatchScope {
    */
   static runWith<T>(context: BatchContext, fn: () => T): T {
     return storage.run(context, fn)
+  }
+
+  /**
+   * Close a context after its final flush has settled.
+   *
+   * The recorder moves anything accepted behind the saved snapshot into the continuation before
+   * returning to the host, so closing at this boundary preserves in-flight arrivals without
+   * letting later async references append to a buffer no lifecycle hook owns. A continuation
+   * itself is terminal: closing it also expires its parent's grace window.
+   *
+   * Returns `true` only for the first close of an original context, allowing the recorder to arm
+   * exactly one grace timer.
+   */
+  static close(context: BatchContext): boolean {
+    const lifecycle = lifecycleOf(context)
+
+    if (lifecycle.phase !== 'open') {
+      return false
+    }
+
+    const parent = continuationParents.get(context)
+    if (parent !== undefined) {
+      lifecycles.set(parent, { phase: 'finished' })
+      lifecycles.set(context, { phase: 'finished' })
+      return false
+    }
+
+    lifecycles.set(context, { phase: 'closed' })
+    return true
+  }
+
+  /**
+   * Resolve the buffer a record should target.
+   *
+   * Open batches record directly. A closed batch lazily receives one fresh continuation with
+   * the parent's identity and sticky sampling decision, while a context whose grace window has
+   * elapsed cannot be recorded into again.
+   */
+  static recordingContext(context: BatchContext): BatchContext | null {
+    const lifecycle = lifecycleOf(context)
+
+    if (lifecycle.phase === 'open') {
+      return context
+    }
+
+    if (lifecycle.phase === 'finished') {
+      return null
+    }
+
+    if (lifecycle.continuation === undefined) {
+      const continuation: BatchContext = {
+        batchId: context.batchId,
+        kind: context.kind,
+        startedAt: process.hrtime.bigint(),
+        ...(context.traceId === undefined ? {} : { traceId: context.traceId }),
+        sampled: context.sampled,
+        retention: context.retention,
+        buffer: [],
+        counters: {},
+        truncated: {},
+        muted: false,
+      }
+
+      lifecycle.continuation = continuation
+      lifecycles.set(continuation, { phase: 'open' })
+      continuationParents.set(continuation, context)
+    }
+
+    return lifecycle.continuation
+  }
+
+  /**
+   * Expire an original context's grace window and return its continuation, when one was needed.
+   * `null` marks an expired window that never received an entry; `undefined` means the supplied
+   * context was not an open continuation window. Both objects become terminal before persistence
+   * starts so arrivals racing the continuation save are dropped rather than stranded behind its
+   * snapshot.
+   */
+  static finishContinuation(context: BatchContext): BatchContext | null | undefined {
+    const lifecycle = lifecycleOf(context)
+
+    if (lifecycle.phase !== 'closed') {
+      return undefined
+    }
+
+    lifecycles.set(context, { phase: 'finished' })
+    if (lifecycle.continuation !== undefined) {
+      lifecycles.set(lifecycle.continuation, { phase: 'finished' })
+    }
+    return lifecycle.continuation ?? null
   }
 
   /**

@@ -1,4 +1,8 @@
-import type { QueueWatcherAdapter, QueueWatcherObserver } from '@rikology/adonisjs-periscope'
+import type {
+  QueueJobEvent,
+  QueueWatcherAdapter,
+  QueueWatcherObserver,
+} from '@rikology/adonisjs-periscope'
 
 /**
  * A queue adapter for the playground fixture. Real applications plug BullMQ (or any queue) in via
@@ -9,8 +13,19 @@ import type { QueueWatcherAdapter, QueueWatcherObserver } from '@rikology/adonis
 export const demoQueue: {
   observer: QueueWatcherObserver | undefined
   adapter: QueueWatcherAdapter
+  dispatch(event: QueueJobEvent): QueueJobEvent
+  run<T>(event: QueueJobEvent, handler: () => Promise<T>): Promise<T>
 } = {
   observer: undefined,
+
+  dispatch(event) {
+    const correlation = demoQueue.observer?.dispatching?.(event)
+    return correlation === undefined ? event : { ...event, ...correlation }
+  },
+
+  run(event, handler) {
+    return demoQueue.observer?.wrapJob?.(event, handler) ?? handler()
+  },
 
   adapter: {
     name: 'playground-demo',

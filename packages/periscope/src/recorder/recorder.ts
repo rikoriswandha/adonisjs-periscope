@@ -5,7 +5,7 @@
  * file that was distributed with this source code.
  */
 
-import { clearInterval, setInterval } from 'node:timers'
+import { clearInterval, clearTimeout, setInterval, setTimeout } from 'node:timers'
 
 import { IncomingEntry } from '../entry.ts'
 import { safeguard, safeguardAsync } from '../safeguard.ts'
@@ -252,6 +252,15 @@ export class Recorder {
    */
   readonly #contextFlushes = new WeakMap<BatchContext, Promise<void>>()
   readonly #inFlightFlushes = new Set<Promise<void>>()
+
+  /**
+   * Closing a final batch arms its sole grace timer. Entries live only for that bounded window,
+   * and the map is iterable so shutdown can flush them before storage closes. The counter makes
+   * intentional post-grace loss observable through the internal safeguard reporter without
+   * exposing mutable diagnostics on the hot path.
+   */
+  readonly #lateEntryTimers = new Map<BatchContext, NodeJS.Timeout>()
+  #lateEntriesDropped = 0
   #trimRequested = false
   #trimmingStore: Promise<void> | null = null
 
@@ -349,7 +358,7 @@ export class Recorder {
 
     const refresh = (async (): Promise<ReadonlySet<string> | null> => {
       const tags = await safeguardAsync('periscope.recorder.monitored_tags', () =>
-        BatchScope.mute(() => this.store.monitoredTags())
+        BatchScope.mute(() => this.store.monitoredTags(this.#config.applicationName))
       )
 
       if (tags === undefined) {
@@ -435,13 +444,24 @@ export class Recorder {
    */
   record(entry: IncomingEntry): void {
     safeguard('periscope.recorder.record', () => {
-      const context = BatchScope.current() ?? this.#ambient.current()
+      const activeContext = BatchScope.current() ?? this.#ambient.current()
 
-      if (context.muted) {
+      if (activeContext.muted) {
         return
       }
 
       if (!this.enabled || this.paused) {
+        return
+      }
+
+      const context = BatchScope.recordingContext(activeContext)
+      if (context === null) {
+        this.#lateEntriesDropped++
+        safeguard('periscope.recorder.late_entry', () => {
+          throw new Error(
+            `Dropped entry after batch ${activeContext.batchId} late-entry window closed`
+          )
+        })
         return
       }
 
@@ -488,7 +508,57 @@ export class Recorder {
         await previous
       }
 
-      await safeguardAsync('periscope.recorder.flush', () => this.#flushContext(context, mode))
+      if (mode === 'final') {
+        const continuation = BatchScope.finishContinuation(context)
+        if (continuation !== undefined) {
+          const timer = this.#lateEntryTimers.get(context)
+          if (timer !== undefined) {
+            clearTimeout(timer)
+            this.#lateEntryTimers.delete(context)
+          }
+          if (continuation !== null) {
+            await safeguardAsync('periscope.recorder.flush', () =>
+              this.#flushContext(continuation, 'final')
+            )
+          }
+          return
+        }
+      }
+
+      const flushed =
+        (await safeguardAsync(
+          'periscope.recorder.flush',
+          async () => {
+            await this.#flushContext(context, mode)
+            return true
+          },
+          false
+        )) === true
+
+      if (!flushed) {
+        return
+      }
+
+      if (mode === 'final' && BatchScope.close(context)) {
+        /**
+         * A sampled-in entry may arrive while its save is in flight. It was accepted before the
+         * lifecycle boundary but sits behind the saved snapshot, so move it into the same
+         * continuation that will collect post-boundary arrivals rather than abandoning it.
+         */
+        if (context.buffer.length > 0 || Object.keys(context.truncated).length > 0) {
+          const continuation = BatchScope.recordingContext(context)!
+          continuation.buffer.push(...context.buffer)
+          context.buffer.splice(0)
+          continuation.truncated = context.truncated
+          context.truncated = {}
+
+          for (const entry of continuation.buffer) {
+            continuation.counters[entry.type] = (continuation.counters[entry.type] ?? 0) + 1
+          }
+        }
+
+        this.#armLateEntryWindow(context)
+      }
     })()
 
     this.#contextFlushes.set(context, pending)
@@ -501,6 +571,49 @@ export class Recorder {
     })
 
     return pending
+  }
+
+  /**
+   * Start the one continuation window owned by a newly closed batch.
+   *
+   * The timer is unref'd so observability can never keep the host process alive. Expiry makes
+   * both contexts terminal before flushing the continuation, preventing a second save race from
+   * creating an unowned third fragment.
+   */
+  #armLateEntryWindow(context: BatchContext): void {
+    const graceMs = this.#config.recording.lateEntryGraceMs
+    if (graceMs <= 0) {
+      BatchScope.finishContinuation(context)
+      return
+    }
+
+    const timer = setTimeout(() => {
+      this.#lateEntryTimers.delete(context)
+      const continuation = BatchScope.finishContinuation(context)
+      if (continuation !== undefined && continuation !== null) {
+        void this.flush(continuation)
+      }
+    }, graceMs)
+    timer.unref()
+    this.#lateEntryTimers.set(context, timer)
+  }
+
+  /**
+   * Settle every still-open continuation during shutdown.
+   *
+   * Unref'd grace timers intentionally do not keep the process alive, but the provider closes
+   * storage only after recorder shutdown. Flushing pending continuations here preserves that
+   * ordering and prevents a timer from writing into an already-closed driver.
+   */
+  #flushLateEntries(): void {
+    for (const [context, timer] of this.#lateEntryTimers) {
+      clearTimeout(timer)
+      this.#lateEntryTimers.delete(context)
+      const continuation = BatchScope.finishContinuation(context)
+      if (continuation !== undefined && continuation !== null) {
+        void this.flush(continuation)
+      }
+    }
   }
 
   async #flushContext(context: BatchContext, mode: FlushMode): Promise<void> {
@@ -726,13 +839,8 @@ export class Recorder {
     this.#pausedTimer = setInterval(() => {
       void this.#refreshPaused()
     }, this.#config.recording.pausedFlagTtlMs)
-    this.#pausedTimer.unref()
-
-    /**
-     * Seed the cache at lifecycle start rather than waiting one whole window. `#refreshPaused`
-     * memoises the in-flight read, so even a very short interval cannot overlap this initial one.
-     */
     void this.#refreshPaused()
+    this.#pausedTimer.unref()
     this.#ambient.start()
   }
 
@@ -760,6 +868,11 @@ export class Recorder {
         }
 
         await this.#ambient.stop()
+        this.#flushLateEntries()
+
+        while (this.#inFlightFlushes.size > 0) {
+          await Promise.all(this.#inFlightFlushes)
+        }
       })
     }
 

@@ -20,6 +20,12 @@ export const DASHBOARD_ROUTE_MANIFEST = [
   { id: 'entriesIndex', pattern: '/api/entries', methods: ['GET', 'HEAD'] },
   { id: 'entriesShow', pattern: '/api/entries/:uuid', methods: ['GET', 'HEAD'] },
   { id: 'entriesEml', pattern: '/api/entries/:uuid/eml', methods: ['GET', 'HEAD'] },
+  {
+    id: 'entriesSetMetadata',
+    pattern: '/api/entries/:uuid/metadata',
+    methods: ['PUT'],
+  },
+  { id: 'entryMetadataIndex', pattern: '/api/entry-metadata', methods: ['GET', 'HEAD'] },
   { id: 'entriesBatch', pattern: '/api/batches/:batchId', methods: ['GET', 'HEAD'] },
   {
     id: 'entriesExportBatch',
@@ -34,6 +40,11 @@ export const DASHBOARD_ROUTE_MANIFEST = [
   { id: 'dashboardDeleteFlag', pattern: '/api/flags/:name', methods: ['DELETE'] },
   { id: 'dashboardClear', pattern: '/api/clear', methods: ['POST'] },
   { id: 'exceptionGroupsIndex', pattern: '/api/exception-groups', methods: ['GET', 'HEAD'] },
+  {
+    id: 'exceptionGroupsSetState',
+    pattern: '/api/exception-groups/:familyHash/state',
+    methods: ['PUT'],
+  },
   { id: 'stream', pattern: '/api/stream', methods: ['GET'] },
   { id: 'monitoredTagsIndex', pattern: '/api/monitored-tags', methods: ['GET', 'HEAD'] },
   { id: 'monitoredTagsSet', pattern: '/api/monitored-tags/:tag', methods: ['PUT'] },

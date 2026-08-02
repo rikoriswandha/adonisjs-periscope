@@ -9,6 +9,7 @@ import type { HttpContext } from '@adonisjs/core/http'
 
 import { TAG_INDEX_MAX_LENGTH } from '../../storage/sql.ts'
 import type { PeriscopeStore } from '../../types.ts'
+import { firstQueryString } from '../query.ts'
 
 function tagFrom(context: HttpContext): string | null {
   const tag = context.params.tag
@@ -24,10 +25,15 @@ function tagFrom(context: HttpContext): string | null {
 }
 
 export class MonitoredTagsController {
-  constructor(private readonly store: PeriscopeStore) {}
+  constructor(
+    private readonly store: PeriscopeStore,
+    private readonly applicationName: string = 'default'
+  ) {}
 
-  async index() {
-    const tags = await this.store.monitoredTags()
+  async index(context?: HttpContext) {
+    const application =
+      (context && firstQueryString(context.request.qs().application)) ?? this.applicationName
+    const tags = await this.store.monitoredTags(application)
     return { data: tags.sort((left, right) => left.localeCompare(right)) }
   }
 
@@ -35,7 +41,8 @@ export class MonitoredTagsController {
     const tag = tagFrom(context)
     if (tag === null) return
 
-    await this.store.monitorTag(tag)
+    const application = firstQueryString(context.request.qs().application) ?? this.applicationName
+    await this.store.monitorTag(tag, application)
     context.response.noContent()
   }
 
@@ -43,7 +50,8 @@ export class MonitoredTagsController {
     const tag = tagFrom(context)
     if (tag === null) return
 
-    await this.store.unmonitorTag(tag)
+    const application = firstQueryString(context.request.qs().application) ?? this.applicationName
+    await this.store.unmonitorTag(tag, application)
     context.response.noContent()
   }
 }

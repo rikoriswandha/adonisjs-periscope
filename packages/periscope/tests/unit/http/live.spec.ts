@@ -19,7 +19,14 @@ import { registerDashboardRoutes } from '../../../src/http/routes.ts'
 import { Recorder } from '../../../src/recorder/recorder.ts'
 import { MemoryStore } from '../../../src/storage/memory_store.ts'
 import { EntryType } from '../../../src/types.ts'
-import type { FlushedEvent, FlushedListener, ResolvedPeriscopeConfig } from '../../../src/types.ts'
+import type {
+  EntryQuery,
+  FlushedEvent,
+  Paginated,
+  PeriscopeStore,
+  ResolvedPeriscopeConfig,
+  StoredEntry,
+} from '../../../src/types.ts'
 
 function createRecorder(config: ResolvedPeriscopeConfig) {
   const store = new MemoryStore()
@@ -41,9 +48,9 @@ function createContext(
 class FlushedSource {
   subscriptions = 0
   unsubscriptions = 0
-  #listener?: FlushedListener
+  #listener?: (event: FlushedEvent) => void
 
-  subscribeFlushed(listener: FlushedListener): () => void {
+  subscribe(listener: (event: FlushedEvent) => void): () => void {
     this.subscriptions += 1
     this.#listener = listener
     let active = true
@@ -56,8 +63,56 @@ class FlushedSource {
     }
   }
 
-  emit(event: FlushedEvent): void {
+  publish(event: FlushedEvent): void {
     this.#listener?.(event)
+  }
+}
+
+class ListStoreStub {
+  queries: (EntryQuery | undefined)[] = []
+
+  constructor(private readonly rows: StoredEntry[] = []) {}
+
+  async list(query?: EntryQuery): Promise<Paginated<StoredEntry>> {
+    this.queries.push(query)
+    return { data: this.rows, nextCursor: null }
+  }
+
+  asStore(): PeriscopeStore {
+    return this as unknown as PeriscopeStore
+  }
+}
+
+function makeFlushedEvent(sequence: string, application: string): FlushedEvent {
+  return {
+    type: EntryType.LOG,
+    uuid: `entry-${sequence}`,
+    indexRow: {
+      uuid: `entry-${sequence}`,
+      batchId: 'batch-1',
+      application,
+      type: EntryType.LOG,
+      familyHash: null,
+      tags: [],
+      shouldDisplayOnIndex: true,
+      sequence,
+      createdAt: `2026-07-27T00:00:${sequence.padStart(2, '0')}.000Z`,
+    },
+  }
+}
+
+function makeStoredEntry(sequence: bigint, application: string): StoredEntry {
+  return {
+    uuid: `entry-${sequence}`,
+    batchId: 'batch-1',
+    application,
+    type: EntryType.LOG,
+    familyHash: null,
+    content: { level: 'info', message: `entry ${sequence}` },
+    tags: [],
+    shouldDisplayOnIndex: true,
+    sequence,
+    createdAt: new Date(`2026-07-27T00:00:${sequence.toString().padStart(2, '0')}.000Z`),
   }
 }
 
@@ -96,9 +151,12 @@ test.group('Dashboard live HTTP API', () => {
 
   test('frame flushed events and keepalive comments as valid SSE', async ({ assert }) => {
     const source = new FlushedSource()
-    const controller = new StreamController(source, 25)
+    const controller = new StreamController(
+      { fanout: source, store: new MemoryStore() },
+      { keepaliveIntervalMs: 25 }
+    )
     const context = createContext('/periscope/api/stream')
-    controller.stream(context)
+    await controller.stream(context)
     const body = context.response.outgoingStream as PassThrough
 
     assert.equal(context.response.getHeaders()['content-type'], 'text/event-stream; charset=utf-8')
@@ -120,9 +178,9 @@ test.group('Dashboard live HTTP API', () => {
         createdAt: '2026-07-27T00:00:00.000Z',
       },
     }
-    source.emit(event)
+    source.publish(event)
 
-    assert.equal(body.read().toString(), `event: flush\ndata: ${JSON.stringify(event)}\n\n`)
+    assert.equal(body.read().toString(), `event: flush\nid: 42\ndata: ${JSON.stringify(event)}\n\n`)
 
     await delay(60)
     assert.include(body.read().toString(), ': keepalive\n\n')
@@ -130,18 +188,103 @@ test.group('Dashboard live HTTP API', () => {
     assert.equal(source.unsubscriptions, 1)
   })
 
-  test('honor the configured active stream cap and release capacity on disconnect', ({
+  test('filter live events by application without reading replay storage', async ({ assert }) => {
+    const source = new FlushedSource()
+    const store = new ListStoreStub()
+    const controller = new StreamController(
+      { fanout: source, store: store.asStore() },
+      { keepaliveIntervalMs: 60_000 }
+    )
+    const context = createContext('/periscope/api/stream?application=alpha')
+    await controller.stream(context)
+    const body = context.response.outgoingStream as PassThrough
+    body.read()
+
+    source.publish(makeFlushedEvent('43', 'beta'))
+    source.publish(makeFlushedEvent('44', 'alpha'))
+
+    const matching = makeFlushedEvent('44', 'alpha')
+    assert.equal(
+      body.read().toString(),
+      `event: flush\nid: 44\ndata: ${JSON.stringify(matching)}\n\n`
+    )
+    assert.deepEqual(store.queries, [])
+    closeStream(context)
+  })
+
+  test('replay ascending rows before live events and scope the replay query', async ({
     assert,
   }) => {
     const source = new FlushedSource()
-    const controller = new StreamController(source, { maxClients: 2 })
+    const store = new ListStoreStub([makeStoredEntry(11n, 'alpha'), makeStoredEntry(12n, 'alpha')])
+    const controller = new StreamController(
+      { fanout: source, store: store.asStore() },
+      { keepaliveIntervalMs: 60_000 }
+    )
+    const context = createContext('/periscope/api/stream?application=alpha')
+    context.request.request.headers['last-event-id'] = '10'
+    const streaming = controller.stream(context)
+    const body = context.response.outgoingStream as PassThrough
+    assert.equal(body.read().toString(), ': connected\n\n')
+    await streaming
+    source.publish(makeFlushedEvent('13', 'alpha'))
+
+    for (const sequence of ['11', '12', '13']) {
+      const event = makeFlushedEvent(sequence, 'alpha')
+      assert.equal(
+        body.read().toString(),
+        `event: flush\nid: ${sequence}\ndata: ${JSON.stringify(event)}\n\n`
+      )
+    }
+    assert.deepEqual(store.queries, [
+      {
+        afterSequence: '10',
+        direction: 'asc',
+        displayOnIndex: true,
+        limit: 200,
+        application: 'alpha',
+      },
+    ])
+    closeStream(context)
+  })
+
+  test('accept the lastEventId query fallback', async ({ assert }) => {
+    const source = new FlushedSource()
+    const store = new ListStoreStub()
+    const controller = new StreamController(
+      { fanout: source, store: store.asStore() },
+      { keepaliveIntervalMs: 60_000 }
+    )
+    const context = createContext('/periscope/api/stream?lastEventId=99')
+
+    await controller.stream(context)
+
+    assert.deepEqual(store.queries, [
+      {
+        afterSequence: '99',
+        direction: 'asc',
+        displayOnIndex: true,
+        limit: 200,
+      },
+    ])
+    closeStream(context)
+  })
+
+  test('honor the configured active stream cap and release capacity on disconnect', async ({
+    assert,
+  }) => {
+    const source = new FlushedSource()
+    const controller = new StreamController(
+      { fanout: source, store: new MemoryStore() },
+      { maxClients: 2 }
+    )
     const clients = Array.from({ length: 2 }, () => createContext('/periscope/api/stream'))
 
-    for (const client of clients) controller.stream(client)
+    for (const client of clients) await controller.stream(client)
     assert.equal(source.subscriptions, 1)
 
     const rejected = createContext('/periscope/api/stream')
-    controller.stream(rejected)
+    await controller.stream(rejected)
     assert.equal(rejected.response.getStatus(), 429)
     assert.equal(rejected.response.getHeaders()['retry-after'], '5')
     assert.isUndefined(rejected.response.outgoingStream)
@@ -149,7 +292,7 @@ test.group('Dashboard live HTTP API', () => {
 
     closeStream(clients[0])
     const replacement = createContext('/periscope/api/stream')
-    controller.stream(replacement)
+    await controller.stream(replacement)
     assert.instanceOf(replacement.response.outgoingStream, PassThrough)
     assert.equal(source.subscriptions, 1)
     assert.equal(source.unsubscriptions, 0)

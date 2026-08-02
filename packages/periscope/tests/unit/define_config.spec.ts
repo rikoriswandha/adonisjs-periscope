@@ -61,6 +61,7 @@ const DEFAULTS: ResolvedPeriscopeConfig = {
     keepAlways: DEFAULT_KEEP_ALWAYS,
     ambientRotationMs: 10_000,
     pausedFlagTtlMs: 5_000,
+    lateEntryGraceMs: 2_000,
   },
   redact: {
     keys: [...DEFAULT_REDACT_KEYS],
@@ -266,6 +267,23 @@ test.group('defineConfig | merging', () => {
     assert.deepEqual(config.storage.retention, {
       hours: 72,
       keepExceptions: true,
+      perType: {},
+    })
+  })
+
+  test('resolve per-entry retention windows independently', ({ assert }) => {
+    const config = defineConfig({
+      storage: {
+        retention: {
+          hours: 72,
+          perType: { query: { hours: 6 }, log: { hours: 24 } },
+        },
+      },
+    })
+
+    assert.deepEqual(config.storage.retention?.perType, {
+      query: { hours: 6 },
+      log: { hours: 24 },
     })
   })
 
@@ -355,11 +373,18 @@ test.group('defineConfig | merging', () => {
     assert.isFalse(await config.dashboard.authorize({} as never))
   })
 
+  test('pass through a dashboard fanout factory', ({ assert }) => {
+    const factory = () => ({ publish() {}, subscribe: () => () => {} })
+
+    assert.strictEqual(defineConfig({ dashboard: { fanout: factory } }).dashboard.fanout, factory)
+  })
+
   test('leave untouched blocks at their defaults', ({ assert }) => {
     const config = defineConfig({ recording: { ambientRotationMs: 2_000 } })
 
     assert.equal(config.recording.ambientRotationMs, 2_000)
     assert.equal(config.recording.pausedFlagTtlMs, 5_000)
+    assert.equal(config.recording.lateEntryGraceMs, 2_000)
     assert.deepEqual(config.redact.headers, [...DEFAULT_REDACT_HEADERS])
     assert.equal(config.storage.maxEntries, 10_000)
   })
@@ -372,6 +397,7 @@ test.group('defineConfig | merging', () => {
     assert.strictEqual(config.recording.keepAlways, keepAlways)
     assert.equal(config.recording.ambientRotationMs, 10_000)
     assert.equal(config.recording.pausedFlagTtlMs, 5_000)
+    assert.equal(config.recording.lateEntryGraceMs, 2_000)
   })
 
   test('replace redaction arrays instead of concatenating them', ({ assert }) => {
@@ -574,6 +600,21 @@ test.group('defineConfig | validation', () => {
     )
   })
 
+  test('validate every per-entry retention window', ({ assert }) => {
+    assert.include(
+      rejectionOf({
+        storage: { retention: { hours: 24, perType: { query: { hours: 0 } } } },
+      }).paths,
+      'storage.retention.perType.query.hours'
+    )
+    assert.include(
+      rejectionOf({
+        storage: { retention: { hours: 24, perType: { queries: { hours: 1 } } } },
+      }).paths,
+      'storage.retention.perType.queries'
+    )
+  })
+
   test('reject a cap that is negative', ({ assert }) => {
     assert.include(
       rejectionOf({ recording: { caps: { query: -1 } } }).paths,
@@ -613,6 +654,14 @@ test.group('defineConfig | validation', () => {
     assert.include(
       rejectionOf({ recording: { pausedFlagTtlMs: -5 } }).paths,
       'recording.pausedFlagTtlMs'
+    )
+  })
+
+  test('allow zero late-entry grace but reject negative values', ({ assert }) => {
+    assert.equal(defineConfig({ recording: { lateEntryGraceMs: 0 } }).recording.lateEntryGraceMs, 0)
+    assert.include(
+      rejectionOf({ recording: { lateEntryGraceMs: -1 } }).paths,
+      'recording.lateEntryGraceMs'
     )
   })
 
