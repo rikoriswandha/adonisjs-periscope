@@ -1,5 +1,19 @@
 # Changelog
 
+# [0.3.0](https://github.com/rikoriswandha/adonisjs-periscope/compare/v0.2.0...v0.3.0) (2026-08-02)
+
+### Bug Fixes
+
+* **dashboard:** use uuid fallback for SSE leader id in insecure contexts ([3253f1a](https://github.com/rikoriswandha/adonisjs-periscope/commit/3253f1a5f5d54fb9868023e7d70885d7b0f05ce1))
+
+### Features
+
+* DX and ecosystem wave (roadmap section 6) ([c1084c3](https://github.com/rikoriswandha/adonisjs-periscope/commit/c1084c3efe94ba36f13fc6035f463f90e767b890))
+* new watchers and integrations wave (roadmap section 5) ([45d8507](https://github.com/rikoriswandha/adonisjs-periscope/commit/45d8507d348d5730bf32c35dc4bc9933089db436))
+* **periscope:** bucketed request stats, entry level/sort filters, and manifest-driven routes ([9feb581](https://github.com/rikoriswandha/adonisjs-periscope/commit/9feb581612181d8408ca023548308d6449a031d7))
+* **playground:** seed every entry type ([88e1c02](https://github.com/rikoriswandha/adonisjs-periscope/commit/88e1c025bb524b773e3601ae2b3a75aba735cb0e))
+* storage robustness and dashboard workflow waves (roadmap 7-20) ([17ae1c6](https://github.com/rikoriswandha/adonisjs-periscope/commit/17ae1c6e3a1221a5dbedceeec329b702a423f5e9))
+
 # 0.2.0 (2026-07-29)
 
 ### Bug Fixes
