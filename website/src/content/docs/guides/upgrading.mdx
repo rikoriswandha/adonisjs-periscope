@@ -1,0 +1,67 @@
+---
+title: Upgrading
+description: Release-specific migration notes and compatibility changes.
+sidebar:
+  order: 5
+---
+
+## Upgrading to 0.3.0
+
+Version 0.3.0 adds public tooling and documentation without changing the existing recorder
+configuration shape.
+
+### Testing subpath
+
+The package now exports `@rikology/adonisjs-periscope/testing`. It contains storage-backed polling,
+assertion, cleanup helpers, and a Japa plugin. No test integration is installed automatically; see
+[Testing](/adonisjs-periscope/guides/testing) for setup and application-scoped cleanup.
+
+### Doctor and import commands
+
+Two Ace commands are new:
+
+```sh
+node ace periscope:doctor [--fix]
+node ace periscope:import --file=<path|-> [--application=<name>]
+```
+
+`periscope:doctor` boots the application, checks the generated wiring, and exits with code 1 on a
+failed check. Its `--fix` mode only adds `debug: true` to Lucid connection objects it can edit
+conservatively. The configure hook's final checklist now directs new installations to
+`node ace periscope:doctor`; run the same command once after upgrading an existing installation.
+
+`periscope:import` reads a versioned batch export from a file or from stdin when `--file=-`. The
+optional application flag overrides the application on imported entries. It requires durable
+storage.
+
+### Public batch export schema
+
+The version 1 `periscope.batch` envelope is now a documented public format. The package root exports
+`BATCH_EXPORT_FORMAT`, `BATCH_EXPORT_VERSION`, `parseBatchExport`, `BatchExportV1`, and
+`StoredEntryTransport`. See the [batch export reference](/adonisjs-periscope/reference/batch-export) before producing or consuming exports
+outside Periscope.
+
+### Experimental HTTP API
+
+The dashboard's `/api/*` routes are now explicitly declared experimental. They may change between
+minor releases while the dashboard and server evolve together. External consumers should pin the
+package version and follow the [HTTP API reference](/adonisjs-periscope/reference/http-api).
+
+### Release CI gate
+
+The manual Release workflow now requires a successful completed CI workflow for the exact commit
+SHA being published. Run or wait for CI on the intended commit before dispatching a release.
+
+## Database storage schema
+
+Existing installations must add an `application varchar(191) NOT NULL DEFAULT 'default'` column to `periscope_monitored_tags` and replace its tag-only primary key with a composite primary key on `(application, tag)`. Existing rows remain in the `default` application scope.
+
+Postgres installations may also enable `pg_trgm` and create the optional search index:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS periscope_entries_content_trgm
+  ON periscope_entries USING gin (content gin_trgm_ops);
+```
+
+The generated migration attempts both operations but tolerates managed-database privilege restrictions. Without the extension or index, content search behavior is unchanged; PostgreSQL uses `ILIKE` and the planner may fall back to a table scan.

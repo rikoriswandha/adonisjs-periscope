@@ -10,11 +10,16 @@
   "workspaces": [
     "packages/periscope",
     "packages/dashboard",
-    "playground"
+    "playground",
+    "website"
   ],
   "scripts": {
     "build": "npm -w @rikology/adonisjs-periscope run build && npm -w @periscope/dashboard run build",
     "dev": "npm -w playground run dev",
+    "docs:dev": "npm -w website run dev",
+    "docs:build": "npm -w website run build",
+    "docs:typecheck": "npm -w website run typecheck",
+    "docs:lint": "npm -w website run lint:docs",
     "test": "npm -w @rikology/adonisjs-periscope run test && npm -w @periscope/dashboard run test && npm -w @rikology/adonisjs-periscope run build && npm -w playground run test",
     "lint": "npm -w @rikology/adonisjs-periscope run lint && npm -w @periscope/dashboard run lint && npm -w playground run lint",
     "typecheck": "npm -w @rikology/adonisjs-periscope run typecheck && npm -w @periscope/dashboard run typecheck && npm -w playground run typecheck",

@@ -1,0 +1,151 @@
+---
+title: Get started
+description: Install Periscope, configure storage, and open the local dashboard.
+sidebar:
+  order: 1
+---
+
+Periscope is a Laravel Telescope-style runtime recorder and local dashboard for AdonisJS v7. It
+correlates the work an application actually performs—HTTP requests, database queries, exceptions,
+logs, events, commands, mail, cache operations, model changes, authorization checks, validation
+failures, rate limits, distributed locks, Drive operations, Ally OAuth flows, translations,
+notifications, socket traffic, dumps, outbound HTTP calls, Edge view renders, health check reports,
+queue jobs and scheduled tasks, Redis commands, sessions, and Transmit broadcasts—without sending
+telemetry to an external service.
+
+Periscope is a development and staging diagnostic tool, not an APM or a production tracing backend.
+Recorded values remain in the configured local store.
+
+## Explore the documentation
+
+- [Dashboard and security](/adonisjs-periscope/guides/dashboard): navigation, live updates, and safe access
+- [Watchers and commands](/adonisjs-periscope/guides/watchers): recorded signals, hooks, commands, and troubleshooting
+- [Operations](/adonisjs-periscope/guides/operations): shared stores, retention, and production posture
+- [Testing](/adonisjs-periscope/guides/testing): recorder assertions and the Japa plugin
+- [Architecture](/adonisjs-periscope/reference/architecture): runtime pipeline, lifecycle, storage, and invariants
+- [HTTP API](/adonisjs-periscope/reference/http-api): experimental dashboard JSON and SSE routes
+- [Adapter authoring](/adonisjs-periscope/reference/adapters): watcher, integration, store, and fanout seams
+- [Batch export](/adonisjs-periscope/reference/batch-export): versioned `periscope.batch` interchange schema
+- [Upgrading](/adonisjs-periscope/guides/upgrading): release-specific migration notes
+
+## Requirements
+
+- Node.js 24 or newer
+- AdonisJS 7
+- npm 11 or newer when contributing to this repository
+
+Optional integrations activate only when their host packages are installed: Lucid, Mail, Cache,
+Bouncer, Edge, `@adonisjs/transmit`, `@adonisjs/redis`, `@adonisjs/session`, BullMQ, and the
+experimental `@adonisjs/queue`.
+
+## Two-minute quickstart
+
+Install and configure the package:
+
+```sh
+npm install @rikology/adonisjs-periscope
+node ace add @rikology/adonisjs-periscope
+```
+
+The configure hook creates `config/periscope.ts`, registers the provider early in `adonisrc.ts`,
+adds the request watcher as the first server middleware, and installs the exception reporter mixin.
+If you select the shared database driver, also run:
+
+```sh
+node ace migration:run
+```
+
+Start the application and open `/periscope`:
+
+```sh
+node ace serve --hmr
+```
+
+Generate some application traffic. New entries appear live and related work shares one batch. With
+the default `sqlite-local` driver, data is written to `tmp/periscope.sqlite`.
+
+Run the installation doctor after configuration and after wiring changes:
+
+```sh
+node ace periscope:doctor
+```
+
+### Verify the generated wiring
+
+The request middleware must remain first so it can establish the correlation scope around all
+downstream work:
+
+```ts
+// start/kernel.ts
+server.use([
+  () => import('@rikology/adonisjs-periscope/middleware/request_watcher'),
+  // other server middleware
+])
+```
+
+The exception reporter preserves the application's existing handler and records during `report()`:
+
+```ts
+// app/exceptions/handler.ts
+import { ExceptionHandler } from '@adonisjs/core/http'
+import { withPeriscope } from '@rikology/adonisjs-periscope/exception_reporter'
+
+class HttpExceptionHandler extends ExceptionHandler {}
+
+export default withPeriscope(HttpExceptionHandler)
+```
+
+Query recording requires Lucid query events. Enable `debug: true` on the Lucid connection you want
+to observe.
+
+## Configuration
+
+`config/periscope.ts` exports `defineConfig(...)`. The generated stub documents every option and
+starts with safe local defaults:
+
+```ts
+import { defineConfig } from '@rikology/adonisjs-periscope/periscope_config'
+
+export default defineConfig({
+  applicationName: 'billing-api',
+
+  enabledIn: ['development', 'test'],
+
+  storage: {
+    driver: 'sqlite-local',
+    maxEntries: 10_000,
+  },
+
+  recording: {
+    caps: { default: 100, query: 200 },
+    sampleRate: 1,
+  },
+
+  dashboard: {
+    path: '/periscope',
+  },
+})
+```
+
+`PERISCOPE_ENABLED=true` explicitly enables recording outside `enabledIn`;
+`PERISCOPE_ENABLED=false` disables it everywhere. When disabled, the provider installs no watcher,
+logger, process, model, or dashboard hooks.
+
+### Storage drivers
+
+| Driver         | Use                             | Notes                                                                                         |
+| -------------- | ------------------------------- | --------------------------------------------------------------------------------------------- |
+| `sqlite-local` | Default local development       | Dedicated SQLite database, defaulting to `tmp/periscope.sqlite`; no Lucid dependency          |
+| `database`     | Shared or remote inspection     | Uses a Lucid connection and the package migration; configure `storage.connection` when needed |
+| `memory`       | Tests and short-lived processes | Bounded process-local ring buffer; all entries disappear at process exit                      |
+
+All drivers enforce `storage.maxEntries`. Configure `storage.retention` for automatic age-based
+pruning: when set, the provider prunes entries older than `hours` shortly after boot and every 15
+minutes thereafter (optionally sparing exceptions with `keepExceptions`). `sqlite-local` uses WAL
+mode, indexed chunked operations, and a trigram FTS5 index for text search with a transparent
+`LIKE` fallback; the database driver keeps the same storage contract across supported Lucid
+databases.
+
+Every stored entry carries `applicationName`. A shared database can therefore serve several
+applications without mixing counts, indexes, exception groups, or scoped clears. The dashboard
+application selector persists its choice in the URL.

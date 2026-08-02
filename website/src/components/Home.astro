@@ -1,0 +1,414 @@
+---
+import { withBasePath } from "@/lib/site-url";
+
+const route = withBasePath;
+---
+<section class="hero-shell">
+  <div class="hero-copy">
+    <p class="product-context">AdonisJS 7 runtime recorder</p>
+    <h1>See what your application is really doing.</h1>
+    <p class="hero-summary">
+      Periscope connects requests, queries, exceptions, jobs, mail, and application signals in one
+      local timeline—without sending telemetry anywhere else.
+    </p>
+    <div class="hero-actions">
+      <a class="primary-action" href={route("/get-started")}>Install Periscope</a>
+      <a class="secondary-action" href={route("/reference/architecture")}>Explore the architecture</a>
+    </div>
+    <div class="install-command" aria-label="Installation command">
+      <span aria-hidden="true">$</span>
+      <code>npm install @rikology/adonisjs-periscope</code>
+    </div>
+  </div>
+
+  <figure class="signal-map" aria-label="Periscope correlates application signals">
+    <div class="signal-grid" aria-hidden="true"></div>
+    <span class="signal-label signal-request">request</span>
+    <span class="signal-label signal-query">query</span>
+    <span class="signal-label signal-exception">exception</span>
+    <span class="signal-label signal-job">job</span>
+    <svg aria-hidden="true" class="signal-lines" viewBox="0 0 520 420" fill="none">
+      <path d="M90 80C170 80 175 190 245 190"></path>
+      <path d="M430 96C355 96 350 190 275 190"></path>
+      <path d="M88 338C170 338 170 230 245 230"></path>
+      <path d="M430 320C355 320 350 230 275 230"></path>
+    </svg>
+    <div class="lens">
+      <svg aria-hidden="true" viewBox="0 0 32 32" fill="none">
+        <circle cx="16" cy="16" r="12.25" stroke="currentColor" stroke-width="2"></circle>
+        <circle cx="16" cy="3.75" r="1.65" class="fill-primary"></circle>
+        <circle cx="16" cy="16" r="8.1" class="stroke-primary" stroke-width="1.5"></circle>
+        <path
+          d="M16 7.2V24.8M7.2 16H24.8"
+          stroke="currentColor"
+          stroke-width="1.25"
+          stroke-linecap="round"
+        ></path>
+      </svg>
+      <span>one batch</span>
+    </div>
+    <figcaption>Correlated locally. Ordered by capture sequence.</figcaption>
+  </figure>
+</section>
+
+<section class="docs-directory" aria-labelledby="directory-heading">
+  <div class="directory-intro">
+    <h2 id="directory-heading">Start with the path you need.</h2>
+    <p>Install in minutes, then go as deep as the investigation requires.</p>
+  </div>
+  <nav class="directory-links" aria-label="Documentation sections">
+    <a href={route("/get-started")}>
+      <span>Get started</span>
+      <small>Installation, configuration, and storage</small>
+    </a>
+    <a href={route("/guides/dashboard")}>
+      <span>Use the dashboard</span>
+      <small>Search, live updates, and security</small>
+    </a>
+    <a href={route("/guides/watchers")}>
+      <span>Record application work</span>
+      <small>Watchers, hooks, commands, and troubleshooting</small>
+    </a>
+    <a href={route("/reference/http-api")}>
+      <span>Build an integration</span>
+      <small>HTTP API, adapters, and batch exports</small>
+    </a>
+  </nav>
+</section>
+
+<style>
+  main {
+    overflow: hidden;
+  }
+
+  .hero-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1.08fr) minmax(24rem, 0.92fr);
+    gap: clamp(3rem, 7vw, 7rem);
+    align-items: center;
+    width: min(78rem, calc(100% - 3rem));
+    min-height: min(48rem, calc(100vh - 3.5rem));
+    margin: 0 auto;
+    padding-block: clamp(4.5rem, 9vw, 8rem);
+  }
+
+  .hero-copy {
+    max-width: 44rem;
+  }
+
+  .product-context {
+    width: fit-content;
+    margin: 0 0 1.5rem;
+    border: 1px solid var(--nb-border);
+    border-radius: 999px;
+    background: var(--nb-accent);
+    padding: 0.35rem 0.75rem;
+    color: var(--nb-accent-foreground);
+    font-size: 0.8125rem;
+    font-weight: 500;
+  }
+
+  h1 {
+    max-width: 11ch;
+    margin: 0;
+    color: var(--nb-foreground);
+    font-size: clamp(2.8rem, 6.3vw, 5.5rem);
+    font-weight: 600;
+    letter-spacing: -0.04em;
+    line-height: 0.98;
+    text-wrap: balance;
+  }
+
+  .hero-summary {
+    max-width: 62ch;
+    margin: 1.75rem 0 0;
+    color: var(--nb-muted-foreground);
+    font-size: clamp(1.05rem, 1.6vw, 1.25rem);
+    line-height: 1.65;
+    text-wrap: pretty;
+  }
+
+  .hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 2rem;
+  }
+
+  .hero-actions a {
+    display: inline-flex;
+    min-height: 2.75rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.5rem;
+    padding-inline: 1rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition:
+      background-color 160ms ease,
+      border-color 160ms ease,
+      color 160ms ease,
+      transform 160ms ease;
+  }
+
+  .hero-actions a:hover {
+    transform: translateY(-1px);
+  }
+
+  .primary-action {
+    border: 1px solid var(--nb-primary);
+    background: var(--nb-primary);
+    color: var(--nb-primary-foreground);
+  }
+
+  .primary-action:hover {
+    border-color: var(--nb-primary-hover);
+    background: var(--nb-primary-hover);
+  }
+
+  .secondary-action {
+    border: 1px solid var(--nb-border-strong);
+    color: var(--nb-foreground);
+  }
+
+  .secondary-action:hover {
+    border-color: var(--nb-primary);
+    color: var(--nb-primary);
+  }
+
+  .install-command {
+    display: flex;
+    width: fit-content;
+    max-width: 100%;
+    gap: 0.75rem;
+    margin-top: 2rem;
+    border-top: 1px solid var(--nb-border);
+    padding-top: 1.25rem;
+    color: var(--nb-muted-foreground);
+    font-family: var(--nb-font-mono);
+    font-size: 0.8125rem;
+  }
+
+  .install-command code {
+    overflow-wrap: anywhere;
+    color: var(--nb-foreground);
+  }
+
+  .signal-map {
+    position: relative;
+    min-height: 30rem;
+    margin: 0;
+    border: 1px solid var(--nb-border);
+    border-radius: 1rem;
+    background: var(--nb-card);
+    box-shadow: var(--nb-shadow-lg);
+    isolation: isolate;
+    overflow: hidden;
+  }
+
+  .signal-grid {
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    background-image:
+      linear-gradient(var(--nb-border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--nb-border) 1px, transparent 1px);
+    background-size: 2rem 2rem;
+    mask-image: radial-gradient(circle at center, black, transparent 78%);
+    opacity: 0.55;
+  }
+
+  .signal-lines {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    width: 100%;
+    height: 100%;
+    color: var(--nb-border-strong);
+  }
+
+  .signal-lines path {
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-dasharray: 5 7;
+  }
+
+  .lens {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    display: grid;
+    width: 8.5rem;
+    aspect-ratio: 1;
+    place-items: center;
+    border: 1px solid var(--nb-border-strong);
+    border-radius: 50%;
+    background: var(--nb-background);
+    color: var(--nb-foreground);
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 0 1rem color-mix(in oklch, var(--nb-primary) 6%, transparent);
+  }
+
+  .lens svg {
+    width: 3.5rem;
+  }
+
+  .lens span {
+    position: absolute;
+    top: calc(50% + 2.4rem);
+    color: var(--nb-muted-foreground);
+    font-family: var(--nb-font-mono);
+    font-size: 0.6875rem;
+  }
+
+  .signal-label {
+    position: absolute;
+    border: 1px solid var(--nb-border);
+    border-radius: 0.4rem;
+    background: var(--nb-background);
+    padding: 0.4rem 0.65rem;
+    color: var(--nb-foreground);
+    font-family: var(--nb-font-mono);
+    font-size: 0.75rem;
+    box-shadow: var(--nb-shadow-sm);
+  }
+
+  .signal-request {
+    top: 15%;
+    left: 7%;
+  }
+
+  .signal-query {
+    top: 18%;
+    right: 7%;
+  }
+
+  .signal-exception {
+    bottom: 15%;
+    left: 6%;
+  }
+
+  .signal-job {
+    right: 8%;
+    bottom: 18%;
+  }
+
+  .signal-map figcaption {
+    position: absolute;
+    right: 1.25rem;
+    bottom: 1rem;
+    left: 1.25rem;
+    color: var(--nb-muted-foreground);
+    font-size: 0.75rem;
+    text-align: center;
+  }
+
+  .docs-directory {
+    display: grid;
+    grid-template-columns: minmax(14rem, 0.65fr) minmax(0, 1.35fr);
+    gap: clamp(2.5rem, 8vw, 8rem);
+    width: min(78rem, calc(100% - 3rem));
+    margin: 0 auto;
+    border-top: 1px solid var(--nb-border);
+    padding-block: clamp(4rem, 8vw, 7rem);
+  }
+
+  .directory-intro h2 {
+    margin: 0;
+    color: var(--nb-foreground);
+    font-size: clamp(1.75rem, 3vw, 2.5rem);
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+    text-wrap: balance;
+  }
+
+  .directory-intro p {
+    margin: 1rem 0 0;
+    color: var(--nb-muted-foreground);
+    line-height: 1.65;
+  }
+
+  .directory-links {
+    border-top: 1px solid var(--nb-border);
+  }
+
+  .directory-links a {
+    display: grid;
+    grid-template-columns: minmax(10rem, 0.8fr) minmax(0, 1.2fr);
+    gap: 1.5rem;
+    align-items: baseline;
+    border-bottom: 1px solid var(--nb-border);
+    padding: 1.25rem 0;
+    color: var(--nb-foreground);
+    text-decoration: none;
+    transition:
+      color 160ms ease,
+      padding-left 160ms ease;
+  }
+
+  .directory-links a:hover {
+    padding-left: 0.35rem;
+    color: var(--nb-primary);
+  }
+
+  .directory-links span {
+    font-weight: 600;
+  }
+
+  .directory-links small {
+    color: var(--nb-muted-foreground);
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+
+  @media (max-width: 900px) {
+    .hero-shell {
+      grid-template-columns: 1fr;
+    }
+
+    .signal-map {
+      min-height: 25rem;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .hero-shell,
+    .docs-directory {
+      width: min(100% - 2rem, 78rem);
+    }
+
+    .hero-shell {
+      padding-block: 3.5rem;
+    }
+
+    h1 {
+      font-size: clamp(2.65rem, 14vw, 4rem);
+    }
+
+    .signal-map {
+      min-height: 22rem;
+    }
+
+    .docs-directory {
+      grid-template-columns: 1fr;
+    }
+
+    .directory-links a {
+      grid-template-columns: 1fr;
+      gap: 0.3rem;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hero-actions a,
+    .directory-links a {
+      transition: none;
+    }
+
+    .hero-actions a:hover {
+      transform: none;
+    }
+  }
+</style>

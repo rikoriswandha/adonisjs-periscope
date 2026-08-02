@@ -1,0 +1,226 @@
+---
+title: Testing
+description: Assert recorded application behavior with storage-backed helpers and the Japa plugin.
+sidebar:
+  order: 4
+---
+
+The `@rikology/adonisjs-periscope/testing` subpath provides storage-backed helpers for application
+and integration tests. They flush the recorder before reading, so assertions do not depend on the
+ambient batch rotation or an arbitrary sleep.
+
+## Resolve the recorder
+
+The provider binds `Recorder` as a container singleton. The service subpath resolves that same
+binding after the application has booted:
+
+```ts
+import recorder from '@rikology/adonisjs-periscope/services/recorder'
+```
+
+Code that already has an AdonisJS application can resolve it directly:
+
+```ts
+import { Recorder } from '@rikology/adonisjs-periscope'
+
+const recorder = await app.container.make(Recorder)
+```
+
+The provider must be registered in `adonisrc.ts`. Use a durable or memory store according to the
+scope of the test; the helpers operate through the configured `PeriscopeStore` contract.
+
+## Matchers
+
+`findEntries`, `assertRecorded`, and `assertNotRecorded` accept a `RecordedEntryMatcher`:
+
+```ts
+type RecordedEntryMatcher = {
+  type?: EntryType
+  application?: string
+  batchId?: string
+  tags?: readonly string[]
+  predicate?: (entry: StoredEntry) => boolean
+}
+```
+
+All supplied fields use AND semantics. Every requested tag must be present. The optional predicate
+runs after the storage-backed fields have narrowed the result.
+
+## Helpers
+
+### `flushAndWait`
+
+```ts
+function flushAndWait(
+  recorder: Recorder,
+  predicate?: (entries: StoredEntry[]) => boolean,
+  options?: { timeoutMs?: number; intervalMs?: number }
+): Promise<StoredEntry[]>
+```
+
+`flushAndWait` flushes, reads all stored entries, and repeats until the predicate accepts them. The
+default predicate accepts the first non-empty result. The default timeout is 2,000 ms and the
+default polling interval is 10 ms. Re-flushing on every pass makes late request completion and
+ambient entries visible as soon as they arrive.
+
+```ts
+const entries = await flushAndWait(
+  recorder,
+  (current) => current.some((entry) => entry.type === EntryType.REQUEST),
+  { timeoutMs: 3_000 }
+)
+```
+
+### `findEntries`
+
+```ts
+function findEntries(recorder: Recorder, matcher: RecordedEntryMatcher): Promise<StoredEntry[]>
+```
+
+`findEntries` pages through every matching entry rather than returning only the first storage page.
+It does not flush or wait.
+
+```ts
+const failedRequests = await findEntries(recorder, {
+  type: EntryType.REQUEST,
+  application: 'billing-api',
+  tags: ['status:5xx'],
+})
+```
+
+### `assertRecorded`
+
+```ts
+function assertRecorded(
+  recorder: Recorder,
+  matcher: RecordedEntryMatcher,
+  options?: { timeoutMs?: number; intervalMs?: number }
+): Promise<StoredEntry[]>
+```
+
+`assertRecorded` waits until at least one matching entry has settled in storage and returns every
+match from the successful poll.
+
+```ts
+const [exception] = await assertRecorded(recorder, {
+  type: EntryType.EXCEPTION,
+  predicate: (entry) => entry.content.name === 'PaymentDeclinedError',
+})
+```
+
+### `assertNotRecorded`
+
+```ts
+function assertNotRecorded(
+  recorder: Recorder,
+  matcher: RecordedEntryMatcher,
+  options?: { timeoutMs?: number; intervalMs?: number }
+): Promise<void>
+```
+
+A negative assertion must account for work that settles late. `assertNotRecorded` therefore holds
+the complete timeout window, re-flushing and polling throughout, and fails immediately if a match
+appears. Reduce `timeoutMs` deliberately when a shorter observation window is sufficient.
+
+```ts
+await assertNotRecorded(
+  recorder,
+  { type: EntryType.QUERY, tags: ['connection:analytics'] },
+  { timeoutMs: 500 }
+)
+```
+
+### `clearRecorded`
+
+```ts
+function clearRecorded(recorder: Recorder, application?: string): Promise<void>
+```
+
+Cleanup is muted so the store operation cannot record itself. Omit `application` to clear all
+recordings, or pass a stable application name when tests share a store:
+
+```ts
+await clearRecorded(recorder, 'billing-api')
+```
+
+Clearing recordings leaves monitored tags and flags intact because those rows represent operator
+intent rather than captured data.
+
+## Japa plugin
+
+Add `periscopePlugin` to the plugin array in an AdonisJS test bootstrap. Importing the recorder
+service is the simplest way to supply the booted singleton:
+
+```ts
+// tests/bootstrap.ts
+import app from '@adonisjs/core/services/app'
+import { pluginAdonisJS } from '@japa/plugin-adonisjs'
+import type { Config } from '@japa/runner/types'
+import recorder from '@rikology/adonisjs-periscope/services/recorder'
+import { periscopePlugin } from '@rikology/adonisjs-periscope/testing'
+
+export const plugins: Config['plugins'] = [
+  pluginAdonisJS(app),
+  periscopePlugin({
+    recorder,
+    autoClear: true,
+    application: 'billing-api',
+    timeoutMs: 2_000,
+    intervalMs: 10,
+  }),
+]
+```
+
+The plugin decorates each Japa test context with recorder-bound `periscope` helpers. `autoClear`
+runs before every test. When `application` is set, automatic cleanup and
+`periscope.clearRecorded()` default to that application; passing an argument overrides it.
+
+```ts
+import { test } from '@japa/runner'
+import { EntryType } from '@rikology/adonisjs-periscope'
+import type { PeriscopeTestContext } from '@rikology/adonisjs-periscope/testing'
+
+test('does not query the legacy application', async (context) => {
+  const { periscope } = context as typeof context & PeriscopeTestContext
+
+  await context.client.get('/invoices')
+  await periscope.assertNotRecorded({
+    type: EntryType.QUERY,
+    application: 'legacy-api',
+  })
+})
+```
+
+## Assert a correlated request batch
+
+HTTP completion can be emitted after the API client receives its response. Poll for the request
+entry, then read its batch to prove that its child work shares the same correlation ID:
+
+```ts
+import { test } from '@japa/runner'
+import { EntryType } from '@rikology/adonisjs-periscope'
+import recorder from '@rikology/adonisjs-periscope/services/recorder'
+import { flushAndWait } from '@rikology/adonisjs-periscope/testing'
+
+test('records the invoice request and its query in one batch', async ({ client, assert }) => {
+  const response = await client.post('/invoices').json({ customerId: 42 })
+  response.assertStatus(201)
+
+  const entries = await flushAndWait(recorder, (current) =>
+    current.some(
+      (entry) =>
+        entry.type === EntryType.REQUEST &&
+        entry.content.url === '/invoices' &&
+        entry.content.status === 201
+    )
+  )
+  const request = entries.find(
+    (entry) => entry.type === EntryType.REQUEST && entry.content.url === '/invoices'
+  )!
+  const batch = await recorder.store.batch(request.batchId)
+
+  assert.include(request.tags, 'status:201')
+  assert.isTrue(batch.some((entry) => entry.type === EntryType.QUERY))
+  assert.isTrue(batch.every((entry) => entry.batchId === request.batchId))
+})
+```

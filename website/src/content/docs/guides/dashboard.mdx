@@ -1,0 +1,80 @@
+---
+title: Dashboard and security
+description: Navigate the Periscope dashboard and expose it safely in controlled environments.
+sidebar:
+  order: 1
+---
+
+The dashboard lands on `#/overview`: request p50/p95 latency and error rate, a recent-duration
+chart, per-type entry counts, recent exception families, and a slow-query leaderboard, all scoped
+to the selected application. Every entry type has its own page, including logs, events, views,
+health checks, broadcasts, and a monitored-tags management screen.
+
+Search and filtering:
+
+- Free-text search over serialized entry content (`text=` on `GET <path>/api/entries`), backed by
+  FTS5 on `sqlite-local` and portable `LIKE` elsewhere. Case-insensitive and literal, including
+  `%` and `_`.
+- Multiple exact tags with AND semantics (repeated `tag=` parameters).
+- Inclusive time ranges (`from=`/`to=`, ISO datetimes) with 15m/1h/24h quick presets.
+- Server-side predicates for slow queries (`tag=slow`), request status classes
+  (`tag=status:2xx` … `tag=status:5xx`), and repeated query families (`tag=n+1`).
+
+All filters persist in the hash-route query string, so filtered views are shareable. Every entry
+is deep-linkable at `#/entries/<uuid>`, and detail drawers offer copy-link actions for entries and
+batches. Entry details render identically on index pages, global search, batch timelines, and
+direct links. Request and ambient batches export as versioned `periscope.batch` JSON; mail entries
+download as `.eml`.
+
+The header stays minimal: page title, content search, an application selector (shown only when
+the store holds more than one application), and an options menu containing pause/resume, a scoped
+clear, the persisted light/dark/system theme choice, and the shortcut reference. While recording
+is paused, a "Paused" chip appears next to the title; clicking it resumes.
+Keyboard shortcuts: `/` focuses search, `j`/`k` move across rows, `Esc` closes
+the open drawer, `⌘/Ctrl+B` toggles the sidebar, and `?` lists them all. Live updates stream over
+SSE with visibility-aware polling as fallback; `dashboard.sseMaxClients` (default 5) bounds
+concurrent stream clients.
+
+## Dashboard security
+
+The dashboard and JSON/SSE API live below `dashboard.path`. Every dashboard request passes the
+environment gate and then `dashboard.authorize`. The default authorizer denies requests in
+production; override `dashboard.authorize` explicitly to enable access there.
+
+Request details surface repeated query-family warnings at `dashboard.nPlusOneThreshold` (families
+meeting the threshold are also persisted with the exact `n+1` tag, so they are filterable and
+monitorable), an active OpenTelemetry trace ID when `@opentelemetry/api` is installed, Inertia
+component and prop-key metadata when responses carry the `X-Inertia` header, and a JSON batch
+export suitable for bug reports. Exports contain the application label and JSON-safe entries; they
+never initiate an outbound request.
+
+For a deliberately exposed non-development environment, require an application-specific identity:
+
+```ts
+export default defineConfig({
+  enabledIn: ['development', 'staging'],
+
+  dashboard: {
+    path: '/internal/periscope',
+    authorize: async ({ auth }) => {
+      await auth.check()
+      return auth.user?.email === 'operator@example.com'
+    },
+  },
+})
+```
+
+Do not use a guessable URL as authorization. Terminate TLS at the application or a trusted proxy,
+protect the route with the same identity controls as other operational tools, and keep the
+production environment disabled unless an incident workflow requires it.
+
+Mail HTML is sanitized before rendering, then placed in an iframe with an empty `sandbox` and a
+`no-referrer` policy. Remote images, scripts, forms, embedded content, event handlers, refreshes,
+and network-capable CSS are removed.
+
+## Production sampling
+
+Periscope remains off in production by default. If an incident requires temporary recording, use
+strict authorization, aggressive sampling, low caps, redaction, short retention, and an explicit
+enablement window. The complete recipe and shutdown checklist are in
+[Operations](/adonisjs-periscope/guides/operations#temporary-production-recording).
