@@ -293,3 +293,31 @@ test('falls back to a per-tab EventSource without BroadcastChannel', () => {
   connection.close()
   assert.equal(sources[0].closed, true)
 })
+
+test('connects without createId when crypto.randomUUID is unavailable', () => {
+  const original = crypto.randomUUID
+  // @ts-expect-error Simulate insecure contexts / older browsers.
+  crypto.randomUUID = undefined
+
+  try {
+    const sources: FakeEventSource[] = []
+    const connection = connectLiveUpdates({
+      url: 'http://192.168.1.10/periscope/api/stream',
+      eventSourceFactory: (url) => {
+        const source = new FakeEventSource(url)
+        sources.push(source)
+        return source
+      },
+      broadcastChannelFactory: null,
+      storage: new FakeStorage(),
+      onFlush() {},
+      onModeChange() {},
+    })
+
+    assert.equal(sources.length, 1)
+    connection.close()
+    assert.equal(sources[0].closed, true)
+  } finally {
+    crypto.randomUUID = original
+  }
+})

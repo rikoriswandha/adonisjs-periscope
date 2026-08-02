@@ -1,4 +1,5 @@
 import { ENTRY_TYPES } from '../types.ts'
+import { randomUUID } from './random-uuid.ts'
 import type { EntryFilters, FlushStreamEvent, LiveUpdateMode } from '../types.ts'
 
 const entryTypeLookup: Record<string, true> = Object.fromEntries(
@@ -211,7 +212,7 @@ export function connectLiveUpdates(options: LiveUpdateConnectionOptions): LiveUp
   const clearTimer = options.clearTimer ?? clearTimeout
   const setRepeatingTimer = options.setRepeatingTimer ?? setInterval
   const clearRepeatingTimer = options.clearRepeatingTimer ?? clearInterval
-  const leaderId = options.createId?.() ?? crypto.randomUUID()
+  const leaderId = options.createId?.() ?? randomUUID()
   const leaseKey = `periscope-sse-leader:${options.url}`
   let source: EventSourceLike | null = null
   let channel: BroadcastChannelLike | null = null
