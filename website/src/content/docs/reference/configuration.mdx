@@ -69,10 +69,10 @@ Driver selection:
 - `database` uses the application's Lucid connection and requires the shipped migration.
 - `memory` is process-local and disappears on exit. Maintenance commands reject it because Ace runs
   in a separate process.
-- `custom` calls `storage.factory({ app, config })`. See [Authoring adapters](/adonisjs-periscope/reference/adapters#custom-store).
+- `custom` calls `storage.factory({ app, config })`. See [Authoring adapters](/reference/adapters#custom-store).
 
 For shared databases, assign a unique `applicationName` to every application. See
-[Operations](/adonisjs-periscope/guides/operations#shared-store-application-scope) for deployment and
+[Operations](/guides/operations#shared-store-application-scope) for deployment and
 pruning guidance.
 
 ## Recording
@@ -193,8 +193,8 @@ Globs in `request.ignorePaths` and `event.ignore` use `*` for any run of charact
 cannot recover messages already filtered by Pino, so its effective floor is the stricter of the
 application logger level and `watchers.log.level`.
 
-See [Watchers and commands](/adonisjs-periscope/guides/watchers) for the signal catalogue and
-[Authoring adapters](/adonisjs-periscope/reference/adapters) for queue, scheduler, notification,
+See [Watchers and troubleshooting](/guides/watchers) for the signal catalogue and
+[Authoring adapters](/reference/adapters) for queue, scheduler, notification,
 socket, custom watcher, store, and fanout contracts.
 
 ## Dashboard
@@ -209,11 +209,11 @@ socket, custom watcher, store, and fanout contracts.
 
 Changing `dashboard.path` does not weaken the production gate. For deliberate production exposure,
 replace `dashboard.authorize` with an application-specific policy and follow the
-[dashboard security checklist](/adonisjs-periscope/guides/dashboard#dashboard-security).
+[dashboard security checklist](/guides/dashboard#dashboard-security).
 
 The default fanout reaches only clients connected to the worker that recorded an entry. Durable
 storage still makes entries visible to polling clients on other workers. See
-[Multi-process live updates](/adonisjs-periscope/guides/operations#multi-process-live-updates).
+[Multi-process live updates](/guides/operations#multi-process-live-updates).
 
 ## Validation and merge rules
 

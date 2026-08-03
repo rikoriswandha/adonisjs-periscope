@@ -14,7 +14,7 @@ configuration shape.
 
 The package now exports `@rikology/adonisjs-periscope/testing`. It contains storage-backed polling,
 assertion, cleanup helpers, and a Japa plugin. No test integration is installed automatically; see
-[Testing](/adonisjs-periscope/guides/testing) for setup and application-scoped cleanup.
+[Testing](/guides/testing) for setup and application-scoped cleanup.
 
 ### Doctor and import commands
 
@@ -38,14 +38,14 @@ storage.
 
 The version 1 `periscope.batch` envelope is now a documented public format. The package root exports
 `BATCH_EXPORT_FORMAT`, `BATCH_EXPORT_VERSION`, `parseBatchExport`, `BatchExportV1`, and
-`StoredEntryTransport`. See the [batch export reference](/adonisjs-periscope/reference/batch-export) before producing or consuming exports
+`StoredEntryTransport`. See the [batch export reference](/reference/batch-export) before producing or consuming exports
 outside Periscope.
 
 ### Experimental HTTP API
 
 The dashboard's `/api/*` routes are now explicitly declared experimental. They may change between
 minor releases while the dashboard and server evolve together. External consumers should pin the
-package version and follow the [HTTP API reference](/adonisjs-periscope/reference/http-api).
+package version and follow the [HTTP API reference](/reference/http-api).
 
 ### Release CI gate
 

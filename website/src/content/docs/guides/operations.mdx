@@ -87,7 +87,7 @@ SSE notification, not later reads.
 For cluster-wide live updates, provide a pub/sub-backed `FlushFanout` factory through
 `dashboard.fanout`. Each worker must publish local flushes, subscribe to the common channel, return
 idempotent unsubscribe functions, and release pub/sub resources from `close()`. See
-[Authoring adapters](/adonisjs-periscope/reference/adapters#flush-fanout) for the contract and a skeleton.
+[Authoring adapters](/reference/adapters#flush-fanout) for the contract and a skeleton.
 
 If cluster-wide live updates are not required, leave the default in place. The dashboard's fallback
 polling still discovers persisted entries, but notification latency can differ between workers.

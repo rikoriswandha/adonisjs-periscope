@@ -75,7 +75,7 @@ node ace periscope:export --batch=<batch-id> --out=report.json
 
 The export contains the entries already stored for the batch. It does not run a second redaction
 pass. Review and transport exports as potentially sensitive artifacts. See the
-[batch export format](/adonisjs-periscope/reference/batch-export) for the stable envelope and public
+[batch export format](/reference/batch-export) for the stable envelope and public
 parser.
 
 ## Import a batch
@@ -125,5 +125,5 @@ pause/resume for an already-running shared deployment.
 | Import rejects the document               | Confirm it is an unmodified supported `periscope.batch` export; inspect the format and version fields. |
 | Pause appears delayed                     | Wait for `recording.pausedFlagTtlMs`, or lower that setting if the extra store reads are acceptable.   |
 
-See [Operations](/adonisjs-periscope/guides/operations) for retention, shared-store scope, diagnostics,
+See [Operations](/guides/operations) for retention, shared-store scope, diagnostics,
 and temporary production recording.

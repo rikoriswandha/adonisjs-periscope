@@ -76,6 +76,136 @@ const route = withBasePath;
   </nav>
 </section>
 
+<section class="batch-story" aria-labelledby="batch-heading">
+  <div class="batch-copy">
+    <p class="section-label">One request, one trail</p>
+    <h2 id="batch-heading">See the full request, not isolated events.</h2>
+    <p>
+      Periscope groups related application work into a batch and keeps every entry in capture order.
+      Start with a slow request or exception, then follow the queries, logs, mail, jobs, and events
+      that explain it.
+    </p>
+    <a class="text-link" href={route("/guides/dashboard")}>
+      Learn how to investigate a batch <span aria-hidden="true">→</span>
+    </a>
+  </div>
+
+  <figure class="batch-timeline">
+    <figcaption>
+      <span>POST /orders</span>
+      <small>batch_7fd2</small>
+    </figcaption>
+    <ol>
+      <li>
+        <time>00.0 ms</time>
+        <span class="entry-type">request</span>
+        <strong>POST /orders</strong>
+        <small>started</small>
+      </li>
+      <li>
+        <time>08.6 ms</time>
+        <span class="entry-type">query</span>
+        <strong>select * from products</strong>
+        <small>3 rows</small>
+      </li>
+      <li>
+        <time>23.1 ms</time>
+        <span class="entry-type">event</span>
+        <strong>order:created</strong>
+        <small>dispatched</small>
+      </li>
+      <li>
+        <time>29.4 ms</time>
+        <span class="entry-type">job</span>
+        <strong>SendOrderReceipt</strong>
+        <small>scheduled</small>
+      </li>
+      <li>
+        <time>41.8 ms</time>
+        <span class="entry-type">request</span>
+        <strong>201 Created</strong>
+        <small>completed</small>
+      </li>
+    </ol>
+  </figure>
+</section>
+
+<section class="capability-index" aria-labelledby="capability-heading">
+  <header class="capability-heading">
+    <h2 id="capability-heading">Useful from first request to deep integration.</h2>
+    <p>
+      The defaults are intentionally local and conservative. When you need more, every major
+      boundary is documented and configurable.
+    </p>
+  </header>
+
+  <div class="capability-rows">
+    <article>
+      <h3>Capture the work that matters</h3>
+      <p>
+        Record framework signals out of the box, add monitored tags, tune sampling, and filter or
+        redact entries before they reach storage.
+      </p>
+      <div class="topic-links">
+        <a href={route("/guides/watchers")}>Watchers</a>
+        <a href={route("/reference/configuration")}>Configuration</a>
+      </div>
+    </article>
+
+    <article>
+      <h3>Operate without guesswork</h3>
+      <p>
+        Diagnose installation wiring, pause noisy environments, prune old data, and move a recorded
+        batch between machines for focused debugging.
+      </p>
+      <div class="topic-links">
+        <a href={route("/reference/commands")}>Ace commands</a>
+        <a href={route("/guides/operations")}>Operations</a>
+        <a href={route("/reference/batch-export")}>Batch exports</a>
+      </div>
+    </article>
+
+    <article>
+      <h3>Test and extend on public seams</h3>
+      <p>
+        Assert recorded behavior in Japa, consume the dashboard API, or add queue, scheduler,
+        notification, socket, watcher, storage, and fanout adapters.
+      </p>
+      <div class="topic-links">
+        <a href={route("/guides/testing")}>Testing helpers</a>
+        <a href={route("/reference/http-api")}>HTTP API</a>
+        <a href={route("/reference/adapters")}>Adapter authoring</a>
+      </div>
+    </article>
+  </div>
+</section>
+
+<aside class="local-posture" aria-labelledby="posture-heading">
+  <div>
+    <p class="section-label">A deliberate local-first posture</p>
+    <h2 id="posture-heading">Your diagnostics stay in your application.</h2>
+  </div>
+  <div class="posture-copy">
+    <p>
+      Periscope ships without an outbound telemetry path. It is designed for development and
+      staging, remains disabled in production by default, and runs redaction before entries are
+      buffered.
+    </p>
+    <div class="posture-links">
+      <a href={route("/guides/dashboard")}>Secure the dashboard <span aria-hidden="true">→</span></a>
+      <a href={route("/guides/operations")}>Plan retention and sampling <span aria-hidden="true">→</span></a>
+    </div>
+  </div>
+</aside>
+
+<section class="next-step" aria-labelledby="next-heading">
+  <div>
+    <h2 id="next-heading">Inspect your first request.</h2>
+    <p>Install the provider, open <code>/periscope</code>, and generate application traffic.</p>
+  </div>
+  <a class="primary-action" href={route("/get-started")}>Follow the two-minute quickstart</a>
+</section>
+
 <style>
   main {
     overflow: hidden;
@@ -363,6 +493,300 @@ const route = withBasePath;
     line-height: 1.5;
   }
 
+  .batch-story,
+  .capability-index,
+  .local-posture,
+  .next-step {
+    width: min(78rem, calc(100% - 3rem));
+    margin: 0 auto;
+    border-top: 1px solid var(--nb-border);
+    padding-block: clamp(4.5rem, 9vw, 8rem);
+  }
+
+  .batch-story {
+    display: grid;
+    grid-template-columns: minmax(16rem, 0.7fr) minmax(0, 1.3fr);
+    gap: clamp(3rem, 8vw, 8rem);
+    align-items: center;
+  }
+
+  .section-label {
+    margin: 0 0 1rem;
+    color: var(--nb-primary);
+    font-family: var(--nb-font-mono);
+    font-size: 0.8125rem;
+    font-weight: 600;
+  }
+
+  .batch-copy h2,
+  .capability-heading h2,
+  .local-posture h2,
+  .next-step h2 {
+    margin: 0;
+    color: var(--nb-foreground);
+    font-size: clamp(2rem, 4vw, 3.5rem);
+    font-weight: 600;
+    letter-spacing: -0.035em;
+    line-height: 1.04;
+    text-wrap: balance;
+  }
+
+  .batch-copy > p:not(.section-label),
+  .capability-heading > p,
+  .posture-copy > p,
+  .next-step p {
+    max-width: 64ch;
+    margin: 1.5rem 0 0;
+    color: var(--nb-muted-foreground);
+    line-height: 1.7;
+    text-wrap: pretty;
+  }
+
+  .text-link,
+  .posture-links a {
+    display: inline-flex;
+    gap: 0.45rem;
+    align-items: center;
+    color: var(--nb-foreground);
+    font-weight: 600;
+    text-decoration-color: var(--nb-border-strong);
+    text-underline-offset: 0.25rem;
+    transition:
+      color 160ms ease,
+      text-decoration-color 160ms ease;
+  }
+
+  .text-link {
+    margin-top: 1.75rem;
+  }
+
+  .text-link:hover,
+  .posture-links a:hover {
+    color: var(--nb-primary);
+    text-decoration-color: var(--nb-primary);
+  }
+
+  .batch-timeline {
+    margin: 0;
+    border: 1px solid var(--nb-border);
+    border-radius: 1rem;
+    background: var(--nb-card);
+    box-shadow: var(--nb-shadow-lg);
+    overflow: hidden;
+  }
+
+  .batch-timeline figcaption {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    border-bottom: 1px solid var(--nb-border);
+    padding: 1rem 1.25rem;
+    color: var(--nb-foreground);
+    font-family: var(--nb-font-mono);
+    font-size: 0.8125rem;
+  }
+
+  .batch-timeline figcaption small {
+    color: var(--nb-muted-foreground);
+    font: inherit;
+  }
+
+  .batch-timeline ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .batch-timeline li {
+    position: relative;
+    display: grid;
+    grid-template-columns: 4.25rem 4.75rem minmax(0, 1fr) auto;
+    gap: 1rem;
+    align-items: center;
+    margin-left: 1.35rem;
+    border-bottom: 1px solid var(--nb-border);
+    padding: 1.05rem 1.25rem 1.05rem 1.5rem;
+    font-size: 0.8125rem;
+  }
+
+  .batch-timeline li::before {
+    position: absolute;
+    top: 50%;
+    left: -0.25rem;
+    width: 0.5rem;
+    aspect-ratio: 1;
+    border: 2px solid var(--nb-card);
+    border-radius: 50%;
+    background: var(--nb-primary);
+    box-shadow: 0 0 0 1px var(--nb-primary);
+    content: "";
+    transform: translateY(-50%);
+  }
+
+  .batch-timeline li::after {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -0.03rem;
+    z-index: -1;
+    width: 1px;
+    background: var(--nb-border-strong);
+    content: "";
+  }
+
+  .batch-timeline li:last-child {
+    border-bottom: 0;
+  }
+
+  .batch-timeline time,
+  .batch-timeline .entry-type,
+  .batch-timeline li small {
+    color: var(--nb-muted-foreground);
+    font-family: var(--nb-font-mono);
+    font-size: 0.75rem;
+  }
+
+  .batch-timeline .entry-type {
+    color: var(--nb-primary);
+  }
+
+  .batch-timeline strong {
+    overflow: hidden;
+    color: var(--nb-foreground);
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .capability-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(20rem, 0.78fr);
+    gap: clamp(2rem, 8vw, 7rem);
+    align-items: end;
+    margin-bottom: clamp(3rem, 6vw, 5rem);
+  }
+
+  .capability-heading > p {
+    margin-top: 0;
+  }
+
+  .capability-rows {
+    border-top: 1px solid var(--nb-border);
+  }
+
+  .capability-rows article {
+    display: grid;
+    grid-template-columns: minmax(13rem, 0.65fr) minmax(18rem, 1.15fr) minmax(12rem, 0.7fr);
+    gap: clamp(1.5rem, 4vw, 4rem);
+    align-items: start;
+    border-bottom: 1px solid var(--nb-border);
+    padding-block: 2rem;
+  }
+
+  .capability-rows h3 {
+    margin: 0;
+    color: var(--nb-foreground);
+    font-size: 1.125rem;
+    font-weight: 600;
+    line-height: 1.35;
+    text-wrap: balance;
+  }
+
+  .capability-rows article > p {
+    margin: 0;
+    color: var(--nb-muted-foreground);
+    line-height: 1.65;
+    text-wrap: pretty;
+  }
+
+  .topic-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+  }
+
+  .topic-links a {
+    color: var(--nb-foreground);
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-decoration-color: var(--nb-border-strong);
+    text-underline-offset: 0.25rem;
+    transition:
+      color 160ms ease,
+      text-decoration-color 160ms ease;
+  }
+
+  .topic-links a:hover {
+    color: var(--nb-primary);
+    text-decoration-color: var(--nb-primary);
+  }
+
+  .local-posture {
+    display: grid;
+    grid-template-columns: minmax(16rem, 0.8fr) minmax(0, 1.2fr);
+    gap: clamp(3rem, 9vw, 9rem);
+  }
+
+  .posture-copy > p {
+    margin-top: 0;
+    font-size: clamp(1.05rem, 1.6vw, 1.25rem);
+  }
+
+  .posture-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem 2rem;
+    margin-top: 2rem;
+  }
+
+  .next-step {
+    display: flex;
+    justify-content: space-between;
+    gap: 2rem;
+    align-items: center;
+    padding-block: clamp(3.5rem, 7vw, 5rem);
+  }
+
+  .next-step h2 {
+    font-size: clamp(1.8rem, 3.2vw, 2.75rem);
+  }
+
+  .next-step p {
+    margin-top: 0.75rem;
+  }
+
+  .next-step code {
+    color: var(--nb-foreground);
+    font-family: var(--nb-font-mono);
+    font-size: 0.9em;
+  }
+
+  .next-step .primary-action {
+    display: inline-flex;
+    min-height: 2.75rem;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--nb-primary);
+    border-radius: 0.5rem;
+    background: var(--nb-primary);
+    padding-inline: 1rem;
+    color: var(--nb-primary-foreground);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition:
+      background-color 160ms ease,
+      border-color 160ms ease,
+      transform 160ms ease;
+  }
+
+  .next-step .primary-action:hover {
+    border-color: var(--nb-primary-hover);
+    background: var(--nb-primary-hover);
+    transform: translateY(-1px);
+  }
+
   @media (max-width: 900px) {
     .hero-shell {
       grid-template-columns: 1fr;
@@ -371,11 +795,38 @@ const route = withBasePath;
     .signal-map {
       min-height: 25rem;
     }
+
+    .batch-story,
+    .capability-heading,
+    .local-posture {
+      grid-template-columns: 1fr;
+    }
+
+    .batch-story,
+    .local-posture {
+      gap: 3rem;
+    }
+
+    .capability-heading {
+      gap: 1.5rem;
+    }
+
+    .capability-rows article {
+      grid-template-columns: minmax(12rem, 0.7fr) minmax(0, 1.3fr);
+    }
+
+    .topic-links {
+      grid-column: 2;
+    }
   }
 
   @media (max-width: 640px) {
     .hero-shell,
-    .docs-directory {
+    .docs-directory,
+    .batch-story,
+    .capability-index,
+    .local-posture,
+    .next-step {
       width: min(100% - 2rem, 78rem);
     }
 
@@ -399,15 +850,46 @@ const route = withBasePath;
       grid-template-columns: 1fr;
       gap: 0.3rem;
     }
+
+    .batch-timeline li {
+      grid-template-columns: 4rem minmax(0, 1fr) auto;
+      gap: 0.75rem;
+      margin-left: 1.1rem;
+      padding-inline: 1.25rem 1rem;
+    }
+
+    .batch-timeline .entry-type {
+      display: none;
+    }
+
+    .capability-rows article {
+      grid-template-columns: 1fr;
+      gap: 0.75rem;
+    }
+
+    .topic-links {
+      grid-column: auto;
+      margin-top: 0.5rem;
+    }
+
+    .next-step {
+      align-items: flex-start;
+      flex-direction: column;
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {
     .hero-actions a,
-    .directory-links a {
+    .directory-links a,
+    .text-link,
+    .posture-links a,
+    .topic-links a,
+    .next-step .primary-action {
       transition: none;
     }
 
-    .hero-actions a:hover {
+    .hero-actions a:hover,
+    .next-step .primary-action:hover {
       transform: none;
     }
   }

@@ -10,9 +10,9 @@ sidebar:
 The `/api/*` routes below are mounted under the configured `dashboard.path` (which defaults to
 `/periscope`). They are **experimental** and ship to support the bundled dashboard. Their query,
 request, response, and event shapes may change in any minor release. Breaking changes are listed in
-[Upgrading Periscope](/adonisjs-periscope/guides/upgrading).
+[Upgrading Periscope](/guides/upgrading).
 
-The [versioned batch-export envelope](/adonisjs-periscope/reference/batch-export) is the exception: it is a stable interchange
+The [versioned batch-export envelope](/reference/batch-export) is the exception: it is a stable interchange
 format, not an experimental dashboard transport.
 
 Once these shapes stop churning, the API will be declared public and published with JSON schemas.
@@ -195,7 +195,7 @@ Returns `{ data: StoredEntryTransport[] }`. An unknown batch returns an empty `d
 ### `GET /api/batches/:batchId/export`
 
 Returns the stable, versioned `periscope.batch` JSON document described in
-[batch export reference](/adonisjs-periscope/reference/batch-export), as a download. An unknown or empty batch returns `404`.
+[batch export reference](/reference/batch-export), as a download. An unknown or empty batch returns `404`.
 
 ## Dashboard routes
 

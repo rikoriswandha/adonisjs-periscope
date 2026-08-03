@@ -54,7 +54,7 @@ the package; third-party scheduler adapters register separately under
 Notification and socket integrations use `NotificationWatcherAdapter` and `SocketWatcherAdapter`.
 All adapter-backed watchers are opt-in, default to excluding application payloads, and must remain
 best effort. Consumption examples and the complete authoring contracts are in
-[Authoring adapters](/adonisjs-periscope/reference/adapters).
+[Authoring adapters](/reference/adapters).
 
 ## Hooks and extensibility
 
@@ -63,7 +63,7 @@ watcher factories receive the application, recorder, and resolved config; custom
 the portable `PeriscopeStore` boundary; `dashboard.fanout` accepts a factory for cross-process SSE
 pub/sub. All extension points are safeguarded so diagnostics cannot break host code.
 
-See [Authoring adapters](/adonisjs-periscope/reference/adapters) for hook examples, complete adapter interfaces,
+See [Authoring adapters](/reference/adapters) for hook examples, complete adapter interfaces,
 registration points, lifecycle requirements, custom watcher and store skeletons, and a pub/sub
 fanout implementation.
 
@@ -72,13 +72,13 @@ fanout implementation.
 The `@rikology/adonisjs-periscope/testing` subpath provides flush-and-poll assertions, entry
 matching, scoped cleanup, and a Japa plugin backed by the configured recorder. Use it to assert
 late-settling request batches without arbitrary sleeps. See
-[Testing](/adonisjs-periscope/guides/testing) for setup, signatures, and examples.
+[Testing](/guides/testing) for setup, signatures, and examples.
 
 ## Operational commands
 
 Periscope ships Ace commands for installation diagnosis, scoped clearing and pruning, shared
 pause/resume state, and portable batch import/export. See the
-[CLI command reference](/adonisjs-periscope/reference/commands) for every flag, failure mode, and
+[CLI command reference](/reference/commands) for every flag, failure mode, and
 storage requirement.
 
 ## FAQ

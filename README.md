@@ -6,16 +6,16 @@ Periscope is intended for development and staging diagnostics, not as an APM or 
 
 ## Documentation
 
-Read the complete documentation at [rikoriswandha.github.io/adonisjs-periscope](https://rikoriswandha.github.io/adonisjs-periscope/).
+Read the complete documentation at [adonisjs-periscope.pages.dev](https://adonisjs-periscope.pages.dev/).
 
-- [Get started](https://rikoriswandha.github.io/adonisjs-periscope/get-started)
-- [Dashboard and security](https://rikoriswandha.github.io/adonisjs-periscope/guides/dashboard)
-- [Watcher reference](https://rikoriswandha.github.io/adonisjs-periscope/guides/watchers)
-- [Operations](https://rikoriswandha.github.io/adonisjs-periscope/guides/operations)
-- [Testing](https://rikoriswandha.github.io/adonisjs-periscope/guides/testing)
-- [Architecture](https://rikoriswandha.github.io/adonisjs-periscope/reference/architecture)
-- [HTTP API](https://rikoriswandha.github.io/adonisjs-periscope/reference/http-api)
-- [Adapter authoring](https://rikoriswandha.github.io/adonisjs-periscope/reference/adapters)
+- [Get started](https://adonisjs-periscope.pages.dev/get-started)
+- [Dashboard and security](https://adonisjs-periscope.pages.dev/guides/dashboard)
+- [Watcher reference](https://adonisjs-periscope.pages.dev/guides/watchers)
+- [Operations](https://adonisjs-periscope.pages.dev/guides/operations)
+- [Testing](https://adonisjs-periscope.pages.dev/guides/testing)
+- [Architecture](https://adonisjs-periscope.pages.dev/reference/architecture)
+- [HTTP API](https://adonisjs-periscope.pages.dev/reference/http-api)
+- [Adapter authoring](https://adonisjs-periscope.pages.dev/reference/adapters)
 
 ## Quickstart
 

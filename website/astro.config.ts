@@ -4,8 +4,10 @@ import tailwindcss from '@tailwindcss/vite'
 import nimbus, { defineConfig as defineNimbusConfig } from '@cloudflare/nimbus-docs'
 import { tableScroll } from '@cloudflare/nimbus-docs/markdown'
 
+const site = process.env.DOCS_SITE_URL || 'https://adonisjs-periscope.pages.dev'
+
 const nimbusConfig = defineNimbusConfig({
-  site: 'https://rikoriswandha.github.io',
+  site,
   title: 'Periscope',
   description:
     'Runtime inspection for AdonisJS — requests, queries, exceptions, jobs, and application signals in one local timeline.',
@@ -24,7 +26,6 @@ const nimbusConfig = defineNimbusConfig({
 })
 
 export default defineConfig({
-  base: '/adonisjs-periscope/',
   output: 'static',
   // Tailwind v4 via its Vite plugin (the integration Astro recommends for
   // Tailwind v4 — replaces the PostCSS plugin, which doesn't build under
