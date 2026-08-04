@@ -1,5 +1,17 @@
 # Changelog
 
+# [0.4.0](https://github.com/rikoriswandha/adonisjs-periscope/compare/v0.3.0...v0.4.0) (2026-08-04)
+
+### Bug Fixes
+
+* **dashboard:** close the gap above sticky table headers ([c85202e](https://github.com/rikoriswandha/adonisjs-periscope/commit/c85202e9575d6be8103abbf36a5c2e03d63ccc73))
+* **dashboard:** make the admin UI usable on mobile screens ([f85c267](https://github.com/rikoriswandha/adonisjs-periscope/commit/f85c26735667987936c518039a50ab85beffad94))
+* **docs:** preserve GitHub Pages base path ([97c7424](https://github.com/rikoriswandha/adonisjs-periscope/commit/97c74246ccac299c343d9d066b96c0df4ae3bc96))
+
+### Features
+
+* **dashboard:** rebuild the UI on the Instrument design system ([a604879](https://github.com/rikoriswandha/adonisjs-periscope/commit/a6048799709c2d0d7619d62824f3a88756158612))
+
 # [0.3.0](https://github.com/rikoriswandha/adonisjs-periscope/compare/v0.2.0...v0.3.0) (2026-08-02)
 
 ### Bug Fixes
