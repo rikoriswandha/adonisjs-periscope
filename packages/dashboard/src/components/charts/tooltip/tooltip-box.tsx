@@ -1,6 +1,6 @@
 'use client'
 
-import { motion, useSpring } from 'motion/react'
+import { motion, useReducedMotion, useSpring } from 'motion/react'
 import type { RefObject } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -51,6 +51,7 @@ export interface TooltipBoxProps {
 // Inner-only-on-visible so `useSpring` initializes at the cursor's actual x/y
 // instead of (0, 0) on first hover.
 export function TooltipBox(props: TooltipBoxProps) {
+  const reducedMotion = useReducedMotion()
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
@@ -64,7 +65,14 @@ export function TooltipBox(props: TooltipBoxProps) {
   if (!props.visible) {
     return null
   }
-  return <TooltipBoxInner {...props} container={container} />
+  return (
+    <TooltipBoxInner
+      {...props}
+      animate={reducedMotion ? false : props.animate}
+      container={container}
+      entrance={reducedMotion ? false : props.entrance}
+    />
+  )
 }
 
 function TooltipBoxInner({
@@ -168,11 +176,10 @@ function TooltipBoxInner({
   const transformOrigin = isFlipped ? 'right top' : 'left top'
 
   const panelClassName = cn(
-    'min-w-[140px] overflow-hidden rounded-lg text-chart-tooltip-foreground shadow-lg',
+    'panel min-w-[140px] overflow-hidden rounded-sm text-chart-tooltip-foreground',
     panelStyle?.backgroundColor === undefined &&
       backgroundColor === chartCssVars.tooltipBackground &&
-      'bg-chart-tooltip-background',
-    panelStyle?.backdropFilter === undefined && 'backdrop-blur-md'
+      'bg-chart-tooltip-background'
   )
   const panelStyleResolved = {
     transformOrigin,
@@ -185,7 +192,7 @@ function TooltipBoxInner({
   if (!entrance) {
     return createPortal(
       <div
-        className={cn('pointer-events-none absolute z-50', className)}
+        className={cn('pointer-events-none absolute z-[var(--z-tooltip)]', className)}
         ref={tooltipRef}
         style={{ left: staticPosition.left, top: staticPosition.top }}
       >
@@ -200,7 +207,7 @@ function TooltipBoxInner({
   return createPortal(
     <motion.div
       animate={{ opacity: 1 }}
-      className={cn('pointer-events-none absolute z-50', className)}
+      className={cn('pointer-events-none absolute z-[var(--z-tooltip)]', className)}
       exit={{ opacity: 0 }}
       initial={{ opacity: 0 }}
       ref={tooltipRef}

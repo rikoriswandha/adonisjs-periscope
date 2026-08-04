@@ -1,6 +1,6 @@
 'use client'
 
-import { motion, useSpring, useTransform } from 'motion/react'
+import { motion, useReducedMotion, useSpring, useTransform } from 'motion/react'
 import { type SpringConfig, useChartConfig } from '../chart-config-context'
 import { chartCssVars } from '../chart-context'
 
@@ -83,13 +83,15 @@ export function TooltipDot({
   visible,
   color,
   size = 5,
-  strokeColor = chartCssVars.background,
+  strokeColor = chartCssVars.markerBackground,
   strokeWidth = 2,
   variant = 'dot',
   cornerRadiusFraction = 0.25,
   springConfig,
   animate = true,
 }: TooltipDotProps) {
+  const reducedMotion = useReducedMotion()
+  const shouldAnimate = animate && !reducedMotion
   const { tooltipSpring } = useChartConfig()
   const effectiveSpring = springConfig ?? tooltipSpring
   const animatedX = useSpring(x, effectiveSpring)
@@ -100,7 +102,7 @@ export function TooltipDot({
   const stroke = isRing ? color : strokeColor
   const effectiveStrokeWidth = isRing ? (strokeWidth ?? 1.5) : strokeWidth
 
-  if (animate && !isRing) {
+  if (shouldAnimate && !isRing) {
     animatedX.set(x)
     animatedY.set(y)
   }
@@ -110,7 +112,7 @@ export function TooltipDot({
   }
 
   if (isRing) {
-    if (animate) {
+    if (shouldAnimate) {
       return (
         <AnimatedRingDot
           cornerRadiusFraction={cornerRadiusFraction}
@@ -143,7 +145,7 @@ export function TooltipDot({
     )
   }
 
-  if (!animate) {
+  if (!shouldAnimate) {
     return (
       <circle
         cx={x}

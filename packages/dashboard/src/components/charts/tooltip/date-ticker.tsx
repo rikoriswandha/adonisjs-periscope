@@ -1,6 +1,6 @@
 'use client'
 
-import { motion, useSpring } from 'motion/react'
+import { motion, useReducedMotion, useSpring } from 'motion/react'
 import { memo, useMemo, useRef } from 'react'
 
 const TICKER_ITEM_HEIGHT = 24
@@ -20,9 +20,9 @@ const DateTickerCompact = memo(function DateTickerCompact({
   const label = labels[currentIndex] ?? labels[0] ?? ''
 
   return (
-    <div className="overflow-hidden rounded-full bg-zinc-900 px-4 py-1 text-white shadow-lg dark:bg-zinc-100 dark:text-zinc-900">
+    <div className="panel num overflow-hidden rounded-sm bg-chart-tooltip-background px-3 py-1 text-chart-tooltip-foreground">
       <div className="flex h-6 items-center justify-center">
-        <span className="whitespace-nowrap font-medium text-sm">{label}</span>
+        <span className="whitespace-nowrap text-micro font-medium">{label}</span>
       </div>
     </div>
   )
@@ -93,7 +93,7 @@ const DateTickerInner = memo(function DateTickerInner({
   }
 
   return (
-    <div className="overflow-hidden rounded-full bg-zinc-900 px-4 py-1 text-white shadow-lg dark:bg-zinc-100 dark:text-zinc-900">
+    <div className="panel num overflow-hidden rounded-sm bg-chart-tooltip-background px-3 py-1 text-chart-tooltip-foreground">
       <div className="relative h-6 overflow-hidden">
         <div className="flex items-center justify-center gap-1">
           {/* Month stack */}
@@ -101,7 +101,7 @@ const DateTickerInner = memo(function DateTickerInner({
             <motion.div className="flex flex-col" style={{ y: monthY }}>
               {monthSegments.map((segment) => (
                 <div className="flex h-6 shrink-0 items-center justify-center" key={segment.key}>
-                  <span className="whitespace-nowrap font-medium text-sm">{segment.month}</span>
+                  <span className="whitespace-nowrap text-micro font-medium">{segment.month}</span>
                 </div>
               ))}
             </motion.div>
@@ -112,7 +112,7 @@ const DateTickerInner = memo(function DateTickerInner({
             <motion.div className="flex flex-col" style={{ y: dayY }}>
               {parsedLabels.map((label) => (
                 <div className="flex h-6 shrink-0 items-center justify-center" key={label.key}>
-                  <span className="whitespace-nowrap font-medium text-sm">{label.day}</span>
+                  <span className="whitespace-nowrap text-micro font-medium">{label.day}</span>
                 </div>
               ))}
             </motion.div>
@@ -131,13 +131,18 @@ function labelsLookLikeMonthDay(labels: string[]): boolean {
 }
 
 export function DateTicker({ currentIndex, labels, visible }: DateTickerProps) {
+  const reducedMotion = useReducedMotion()
   if (!visible || labels.length === 0) {
     return null
   }
 
   // Time-only / date+time labels are shown whole; the stacked month/day ticker
   // only understands short "Jul 27" style labels.
-  if (labels.length > COMPACT_TICKER_THRESHOLD || !labelsLookLikeMonthDay(labels)) {
+  if (
+    reducedMotion ||
+    labels.length > COMPACT_TICKER_THRESHOLD ||
+    !labelsLookLikeMonthDay(labels)
+  ) {
     return <DateTickerCompact currentIndex={currentIndex} labels={labels} />
   }
 

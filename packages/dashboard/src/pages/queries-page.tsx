@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 
 import { DurationBadge } from '@/components/duration-badge'
 import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
+import { Panel, PanelBody, PanelHeader, SignalMeter, StatusDot } from '@/components/instrument'
 import { EntryIndexTable, type EntryColumn } from '@/components/entry-index-table'
 import { JsonTree } from '@/components/json-tree'
 import { PageHeader } from '@/components/page-header'
@@ -21,13 +22,15 @@ import { useNewEntryPolling } from '@/hooks/use-polling'
 import { api } from '@/lib/api'
 import { formatDateTime, formatRelativeTime, truncate } from '@/lib/format'
 import { normalizeExactTags } from '@/lib/global-search'
+import { detectNPlusOneWarnings } from '@/lib/n-plus-one'
 import type { EntryFilters, QueryContent, StoredEntry } from '@/types'
 
 function queryContent(entry: StoredEntry): QueryContent {
   return entry.content as QueryContent
 }
 
-const columns: EntryColumn[] = [
+function queryColumns(maxDurationMs: number): EntryColumn[] {
+  return [
   {
     key: 'sql',
     header: 'Query',
@@ -35,8 +38,8 @@ const columns: EntryColumn[] = [
     cell: (entry) => {
       const content = queryContent(entry)
       return (
-        <div className="min-w-0">
-          <div className="max-w-2xl truncate font-mono text-xs font-medium" title={content.sql}>
+        <div className="min-w-0 overflow-hidden">
+          <div className="num max-w-2xl truncate text-xs font-medium text-ink" title={content.sql}>
             {truncate(content.sql.replace(/\s+/g, ' '), 140)}
           </div>
           <div className="mt-1 flex flex-wrap gap-1.5">
@@ -61,20 +64,35 @@ const columns: EntryColumn[] = [
   {
     key: 'connection',
     header: 'Connection',
-    className: 'w-36',
-    cell: (entry) => (
-      <span className="font-mono text-xs text-muted-foreground">
-        {queryContent(entry).connection}
-      </span>
-    ),
+    className: 'w-36 max-w-36',
+    cell: (entry) => {
+      const connection = queryContent(entry).connection
+      return (
+        <span className="num block truncate text-xs text-ink-3" title={connection}>
+          {connection}
+        </span>
+      )
+    },
   },
   {
     key: 'duration',
     header: 'Duration',
-    className: 'w-28',
-    cell: (entry) => (
-      <DurationBadge slow={entry.tags.includes('slow')} value={queryContent(entry).durationMs} />
-    ),
+    className: 'w-32 text-right',
+    cell: (entry) => {
+      const durationMs = queryContent(entry).durationMs
+      const slow = entry.tags.includes('slow')
+      return (
+        <div className="ms-auto w-24 space-y-1 text-right">
+          <DurationBadge slow={slow} value={durationMs} />
+          <SignalMeter
+            className="ms-auto"
+            max={maxDurationMs}
+            signal={slow ? 'warn' : 'neutral'}
+            value={durationMs ?? 0}
+          />
+        </div>
+      )
+    },
   },
   {
     key: 'when',
@@ -94,7 +112,8 @@ const columns: EntryColumn[] = [
       <ArrowUpRight aria-hidden="true" className="ms-auto size-4 text-muted-foreground" />
     ),
   },
-]
+  ]
+}
 
 export function QueryEntryDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
   const { status } = useDashboard()
@@ -121,6 +140,12 @@ export function QueryEntryDetail({ entry, open, onClose }: RegisteredEntryDetail
     return () => controller.abort()
   }, [entry.batchId])
 
+  const threshold = status?.nPlusOneThreshold ?? 5
+  const warning = entry.familyHash
+    ? detectNPlusOneWarnings(batchEntries, threshold).find(
+        (candidate) => candidate.familyHash === entry.familyHash
+      )
+    : undefined
   const occurrenceCount = entry.familyHash
     ? Math.max(
         1,
@@ -129,8 +154,7 @@ export function QueryEntryDetail({ entry, open, onClose }: RegisteredEntryDetail
         ).length
       )
     : 1
-  const threshold = status?.nPlusOneThreshold ?? 5
-  const isNPlusOne = occurrenceCount >= threshold
+  const isNPlusOne = warning !== undefined
 
   return (
     <EntryDetailDrawer
@@ -149,58 +173,70 @@ export function QueryEntryDetail({ entry, open, onClose }: RegisteredEntryDetail
     >
       <SqlBlock bindings={content.bindings} sql={content.sql} />
 
-      <section className="rounded-md border bg-muted/25 p-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold">Query shape in this batch</h3>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Entries sharing the same normalized SQL family hash.
-            </p>
-          </div>
-          {loading ? (
-            <Skeleton className="h-6 w-24" />
-          ) : (
-            <Badge size="lg" variant={isNPlusOne ? 'warning' : 'secondary'}>
-              {occurrenceCount} {occurrenceCount === 1 ? 'occurrence' : 'occurrences'}
-            </Badge>
-          )}
-        </div>
-        {isNPlusOne && (
-          <p className="mt-3 flex items-start gap-2 text-sm text-warning-foreground">
-            <TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-            This meets the configured n+1 hint threshold of {threshold}. Check whether the query
-            runs once per record.
+      <Panel className={isNPlusOne ? 'bg-sig-warn/10' : undefined}>
+        <PanelHeader
+          action={
+            loading ? (
+              <Skeleton className="h-4 w-20" />
+            ) : (
+              <span className="num inline-flex items-center gap-2 text-xs text-ink-2">
+                <StatusDot signal={isNPlusOne ? 'warn' : 'neutral'} />
+                {occurrenceCount} {occurrenceCount === 1 ? 'occurrence' : 'occurrences'}
+              </span>
+            )
+          }
+          icon={
+            <TriangleAlert
+              aria-hidden="true"
+              className={isNPlusOne ? 'text-sig-warn' : 'text-ink-3'}
+            />
+          }
+          title="N+1 detection"
+        />
+        <PanelBody>
+          <p className="text-xs leading-5 text-ink-3">
+            Entries sharing the same normalized SQL family hash in this request batch.
           </p>
-        )}
-        {error && <p className="mt-3 text-xs text-destructive-foreground">{error.message}</p>}
-      </section>
+          {isNPlusOne && (
+            <p className="mt-2 text-sm font-medium text-sig-warn">
+              This meets the configured N+1 hint threshold of {threshold}. Check whether the query
+              runs once per record.
+            </p>
+          )}
+          {error && <p className="mt-2 text-xs text-sig-error">{error.message}</p>}
+        </PanelBody>
+      </Panel>
 
       <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
-        <div>
-          <dt className="text-xs text-muted-foreground">Connection</dt>
-          <dd className="mt-0.5 font-mono text-sm">{content.connection}</dd>
+        <div className="min-w-0">
+          <dt className="text-xs text-ink-3">Connection</dt>
+          <dd className="num mt-0.5 truncate text-sm" title={content.connection}>
+            {content.connection}
+          </dd>
         </div>
-        <div>
-          <dt className="text-xs text-muted-foreground">Operation</dt>
-          <dd className="mt-0.5 font-mono text-sm">{content.method}</dd>
+        <div className="min-w-0">
+          <dt className="text-xs text-ink-3">Operation</dt>
+          <dd className="num mt-0.5 truncate text-sm">{content.method}</dd>
         </div>
-        <div>
-          <dt className="text-xs text-muted-foreground">Model</dt>
-          <dd className="mt-0.5 text-sm">{content.model ?? 'Not associated with a model'}</dd>
+        <div className="min-w-0">
+          <dt className="text-xs text-ink-3">Model</dt>
+          <dd className="mt-0.5 truncate text-sm" title={content.model ?? undefined}>
+            {content.model ?? 'Not associated with a model'}
+          </dd>
         </div>
-        <div>
-          <dt className="text-xs text-muted-foreground">Family hash</dt>
-          <dd className="mt-0.5 truncate font-mono text-xs" title={entry.familyHash ?? undefined}>
+        <div className="min-w-0">
+          <dt className="text-xs text-ink-3">Family hash</dt>
+          <dd className="num mt-0.5 truncate text-xs" title={entry.familyHash ?? undefined}>
             {entry.familyHash ?? 'Unavailable'}
           </dd>
         </div>
       </dl>
 
-      <section className="flex items-start gap-3 rounded-md border bg-muted/25 p-3">
-        <MapPinOff aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-        <div>
+      <section className="well flex min-w-0 items-start gap-3 p-3">
+        <MapPinOff aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-ink-3" />
+        <div className="min-w-0">
           <h3 className="text-sm font-semibold">Call location unavailable</h3>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+          <p className="mt-1 text-xs leading-5 text-ink-3">
             Lucid query events do not expose a reliable application call site. Use the batch
             timeline and route tags to trace the code path without recording a misleading stack.
           </p>
@@ -239,11 +275,15 @@ export function QueriesPage() {
   const pagination = useCursorPagination(filters)
   const reload = pagination.reload
   const polling = useNewEntryPolling(pagination.entries, filters, status?.paused ?? true, revision)
+  const maxDurationMs = Math.max(
+    0,
+    ...pagination.entries.map((entry) => queryContent(entry).durationMs ?? 0)
+  )
+  const columns = useMemo(() => queryColumns(maxDurationMs), [maxDurationMs])
 
   useEffect(() => {
     if (revision > 0) void reload()
   }, [reload, revision])
-
 
   const acceptNew = () => pagination.prepend(polling.accept())
   const openQuery = (entry: StoredEntry) => setSelected(entry)
@@ -256,12 +296,12 @@ export function QueriesPage() {
         aside={
           <div className="flex flex-wrap items-center gap-2">
             {tag && (
-              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Route aria-hidden="true" className="size-3.5" />
+              <span className="flex min-w-0 items-center gap-1.5 text-xs text-ink-3">
+                <Route aria-hidden="true" className="size-3.5 shrink-0" />
                 <TagChip tag={tag} />
               </span>
             )}
-            <label className="flex min-h-8 items-center gap-2 rounded-md border bg-background px-2.5 text-xs font-medium">
+            <label className="flex h-[var(--control-h)] items-center gap-2 rounded-sm border border-edge bg-panel px-2.5 text-xs font-medium text-ink-2">
               Slow only
               <Switch
                 aria-label="Show slow queries only"

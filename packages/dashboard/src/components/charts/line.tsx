@@ -69,7 +69,7 @@ export interface LineProps {
    * Set `false` to disable even during loading.
    */
   loading?: boolean
-  /** Stroke color for the loading pulse overlay. Default: var(--foreground) */
+  /** Stroke color for the loading pulse overlay. Default: var(--chart-foreground-muted) */
   loadingStroke?: string
   /** Loading pulse stroke opacity. Default: 0.5 */
   loadingStrokeOpacity?: number
@@ -206,7 +206,7 @@ export function Line({
   dashFromIndex,
   dashArray = '6,4',
   loading,
-  loadingStroke = chartCssVars.foreground,
+  loadingStroke = chartCssVars.foregroundMuted,
   loadingStrokeOpacity = 0.5,
   loadingPulseMode,
   onLoadingPulseCycleComplete,

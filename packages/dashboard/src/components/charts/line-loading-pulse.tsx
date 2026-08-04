@@ -1,6 +1,6 @@
 'use client'
 
-import { animate, motion, useMotionValue, useTransform } from 'motion/react'
+import { animate, motion, useMotionValue, useReducedMotion, useTransform } from 'motion/react'
 import { useEffect, useId } from 'react'
 import { chartCssVars, useChartStable } from './chart-context'
 import type { ChartPhase } from './chart-phase'
@@ -40,6 +40,7 @@ function useGrowExitClip(
   innerWidth: number,
   mode: LineLoadingPulseMode,
   loopEpoch: number,
+  reducedMotion: boolean,
   onComplete?: () => void
 ) {
   const progress = useMotionValue(0)
@@ -65,6 +66,12 @@ function useGrowExitClip(
   // biome-ignore lint/correctness/useExhaustiveDependencies: loopEpoch restarts pulse when orchestrator advances
   useEffect(() => {
     if (innerWidth <= 0) {
+      return
+    }
+    if (reducedMotion) {
+      if (mode !== 'loop') {
+        onComplete?.()
+      }
       return
     }
 
@@ -136,7 +143,7 @@ function useGrowExitClip(
         controls?.stop()
       }
     }
-  }, [innerWidth, loopEpoch, mode, onComplete, progress])
+  }, [innerWidth, loopEpoch, mode, onComplete, progress, reducedMotion])
 
   return { clipX, clipWidth }
 }
@@ -145,21 +152,40 @@ export function LineLoadingPulseStroke({
   pathD,
   mode = 'loop',
   loopEpoch = 0,
-  stroke = chartCssVars.foreground,
+  stroke = chartCssVars.foregroundMuted,
   strokeOpacity = 0.5,
   strokeWidth = 2.5,
   onCycleComplete,
 }: LineLoadingPulseStrokeProps) {
   const { innerWidth, innerHeight } = useChartStable()
+  const reducedMotion = useReducedMotion() === true
   const reactId = useId()
   const clipPathId = `line-loading-clip-${reactId}`
   const gradientId = `line-loading-gradient-${reactId}`
   const fadeStops = fadeGradientStops(resolveFadeSides(true))
   const clipHeight = innerHeight + CLIP_PADDING * 2
-  const { clipX, clipWidth } = useGrowExitClip(innerWidth, mode, loopEpoch, onCycleComplete)
+  const { clipX, clipWidth } = useGrowExitClip(
+    innerWidth,
+    mode,
+    loopEpoch,
+    reducedMotion,
+    onCycleComplete
+  )
 
   if (innerWidth <= 0) {
     return null
+  }
+  if (reducedMotion) {
+    return (
+      <path
+        d={pathD}
+        fill="none"
+        opacity={strokeOpacity}
+        stroke={stroke}
+        strokeLinecap="round"
+        strokeWidth={strokeWidth}
+      />
+    )
   }
 
   return (

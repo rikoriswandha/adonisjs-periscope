@@ -1,13 +1,38 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark" data-density="compact">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex" />
+    <meta name="color-scheme" content="dark light" />
     <link rel="icon" href="./favicon-32.png" sizes="32x32" type="image/png" />
     <link rel="icon" href="./favicon-16.png" sizes="16x16" type="image/png" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
     <title>Periscope</title>
+    <script>
+      /*
+        Resolve the stored theme before first paint. Without this the document
+        renders one frame of the dark default before React swaps the class,
+        which reads as a flash to anyone running the light theme.
+      */
+      ;(function () {
+        try {
+          var stored = localStorage.getItem('periscope-theme') || 'dark'
+          var resolved =
+            stored === 'system'
+              ? window.matchMedia('(prefers-color-scheme: light)').matches
+                ? 'light'
+                : 'dark'
+              : stored
+          var root = document.documentElement
+          root.classList.toggle('dark', resolved === 'dark')
+          root.classList.toggle('light', resolved === 'light')
+          root.dataset.density = localStorage.getItem('periscope-density') || 'compact'
+        } catch (error) {
+          /* Storage-less contexts keep the dark default already on <html>. */
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

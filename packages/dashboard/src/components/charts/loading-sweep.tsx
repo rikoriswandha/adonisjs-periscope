@@ -33,7 +33,7 @@ const HEIGHT_MAX_PCT = 80
 const DEFAULT_POINT_COUNT = 14
 const BAR_CORNER_RADIUS = 2
 const DEFAULT_BAR_COUNT = 12
-const DEFAULT_FILL = 'var(--foreground)'
+const DEFAULT_FILL = 'var(--chart-foreground-muted)'
 const DEFAULT_BAR_FILL_OPACITY = 0.45
 const LINE_STROKE_OPACITY = 0.55
 const AREA_FILL_TOP_OPACITY = 0.18
@@ -122,7 +122,12 @@ function LoadingSweepMask({
     <>
       <linearGradient id={`${chartId}-grad`} x1="0" x2="1" y1="0" y2="0">
         {gradientStops.map(({ offset, opacity }) => (
-          <stop key={offset} offset={offset} stopColor="white" stopOpacity={opacity} />
+          <stop
+            key={offset}
+            offset={offset}
+            stopColor="var(--chart-foreground)"
+            stopOpacity={opacity}
+          />
         ))}
       </linearGradient>
       <pattern
@@ -151,7 +156,7 @@ function LoadingSweepMask({
           y="0"
         />
       </pattern>
-      <mask id={`${chartId}-mask`} maskUnits="userSpaceOnUse">
+      <mask id={`${chartId}-mask`} maskUnits="userSpaceOnUse" style={{ maskType: 'alpha' }}>
         <rect fill={`url(#${chartId}-pattern)`} height={height} width={width} />
       </mask>
     </>
@@ -377,7 +382,7 @@ export interface BarLoadingSkeletonProps {
   innerHeight: number
   /** Number of skeleton bars. Default: 12 */
   barCount?: number
-  /** Bar fill color. Default: `var(--foreground)` */
+  /** Bar fill color. Default: `var(--chart-foreground-muted)` */
   fill?: string
   /** Bar fill opacity. Default: 0.45 */
   fillOpacity?: number

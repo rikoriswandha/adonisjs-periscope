@@ -1,6 +1,6 @@
 'use client'
 
-import { motion } from 'motion/react'
+import { motion, useReducedMotion } from 'motion/react'
 import type { ReactNode } from 'react'
 import { useChartHover } from './chart-context'
 import { useChartLegendHover } from './chart-legend-hover'
@@ -31,10 +31,11 @@ interface SeriesHoverDimProps {
 export function SeriesHoverDim({
   enabled = true,
   dimOpacity = 0.5,
-  durationSec = 0.4,
+  durationSec = 0.18,
   seriesIndex,
   children,
 }: SeriesHoverDimProps) {
+  const reducedMotion = useReducedMotion()
   const { tooltipData, selection } = useChartHover()
   const { hoveredIndex: legendHoveredIndex } = useChartLegendHover()
   const isChartHovering = tooltipData !== null || selection?.active === true
@@ -45,7 +46,10 @@ export function SeriesHoverDim({
     <motion.g
       animate={{ opacity }}
       initial={{ opacity: 1 }}
-      transition={{ duration: durationSec, ease: 'easeInOut' }}
+      transition={{
+        duration: reducedMotion ? 0 : durationSec,
+        ease: [0.165, 0.84, 0.44, 1],
+      }}
     >
       {children}
     </motion.g>

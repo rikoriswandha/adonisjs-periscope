@@ -1,7 +1,7 @@
 import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
 import type { EntryColumn } from '@/components/entry-index-table'
 import { JsonTree } from '@/components/json-tree'
-import { Badge } from '@/components/ui/badge'
+import { StatusDot } from '@/components/instrument'
 import type { EntryTypeImplementation, RegisteredEntryDetailProps } from '@/entry-type-registry'
 import { formatDateTime, formatRelativeTime, truncate } from '@/lib/format'
 import type { EntryContent, StoredEntry } from '@/types'
@@ -27,11 +27,11 @@ const columns: EntryColumn[] = [
       const content = eventContent(entry)
       return (
         <div className="min-w-0">
-          <div className="max-w-2xl truncate font-mono text-xs font-medium" title={content.name}>
+          <div className="num max-w-2xl truncate text-xs font-medium" title={content.name}>
             {truncate(content.name, 160)}
           </div>
           {content.className && (
-            <div className="mt-1 max-w-2xl truncate text-2xs text-muted-foreground">
+            <div className="num mt-1 max-w-2xl truncate text-2xs text-ink-3" title={content.className}>
               {content.className}
             </div>
           )}
@@ -46,22 +46,23 @@ const columns: EntryColumn[] = [
     cell: (entry) => {
       const isClassEvent = eventContent(entry).isClassEvent
       return (
-        <Badge variant={isClassEvent ? 'info' : 'secondary'}>
+        <span className="num inline-flex items-center gap-2 text-xs">
+          <StatusDot signal="neutral" />
           {isClassEvent ? 'class event' : 'event'}
-        </Badge>
+        </span>
       )
     },
   },
   {
     key: 'listeners',
     header: 'Listeners',
-    className: 'w-24',
+    className: 'w-24 text-right',
     cell: (entry) => {
       const count = eventContent(entry).listenerCount
-      return count === undefined ? (
-        <span className="text-xs text-muted-foreground">Unknown</span>
-      ) : (
-        count.toLocaleString()
+      return (
+        <span className="num block text-right text-xs text-ink-2">
+          {count === undefined ? 'Unknown' : count.toLocaleString()}
+        </span>
       )
     },
   },
@@ -70,7 +71,7 @@ const columns: EntryColumn[] = [
     header: 'When',
     className: 'w-36 text-right',
     cell: (entry) => (
-      <span className="whitespace-nowrap text-xs text-muted-foreground" title={entry.createdAt}>
+      <span className="num whitespace-nowrap text-xs text-ink-3" title={entry.createdAt}>
         {formatRelativeTime(entry.createdAt)}
       </span>
     ),
@@ -84,43 +85,44 @@ function EventDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
     <EntryDetailDrawer
       description={formatDateTime(entry.createdAt)}
       meta={
-        <>
-          <Badge variant={content.isClassEvent ? 'info' : 'secondary'}>
+        <span className="flex flex-wrap items-center gap-3">
+          <span className="num inline-flex items-center gap-2 text-xs">
+            <StatusDot signal="neutral" />
             {content.isClassEvent ? 'class event' : 'event'}
-          </Badge>
+          </span>
           {content.listenerCount !== undefined && (
-            <Badge variant="secondary">
+            <span className="num text-xs text-ink-2">
               {content.listenerCount} {content.listenerCount === 1 ? 'listener' : 'listeners'}
-            </Badge>
+            </span>
           )}
-        </>
+        </span>
       }
       onOpenChange={(open) => !open && onClose()}
       open={open}
       tags={entry.tags}
       title={truncate(content.name, 96)}
     >
-      <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
-        <div className="sm:col-span-2">
-          <dt className="text-xs text-muted-foreground">Event name</dt>
-          <dd className="mt-0.5 break-all font-mono text-sm">{content.name}</dd>
+      <dl className="well grid gap-2.5 p-3 sm:grid-cols-2">
+        <div className="min-w-0 sm:col-span-2">
+          <dt className="text-xs text-ink-3">Event name</dt>
+          <dd className="num mt-0.5 break-all text-sm">{content.name}</dd>
         </div>
         <div>
-          <dt className="text-xs text-muted-foreground">Identity</dt>
-          <dd className="mt-0.5 font-mono text-sm">
+          <dt className="text-xs text-ink-3">Identity</dt>
+          <dd className="num mt-0.5 text-sm">
             {content.isClassEvent ? 'Class event' : 'Named event'}
           </dd>
         </div>
         <div>
-          <dt className="text-xs text-muted-foreground">Listeners</dt>
-          <dd className="mt-0.5 font-mono text-sm">
+          <dt className="text-xs text-ink-3">Listeners</dt>
+          <dd className="num mt-0.5 text-sm">
             {content.listenerCount === undefined ? 'Not reported' : content.listenerCount}
           </dd>
         </div>
         {content.className && (
-          <div className="sm:col-span-2">
-            <dt className="text-xs text-muted-foreground">Class identity</dt>
-            <dd className="mt-0.5 break-all font-mono text-sm">{content.className}</dd>
+          <div className="min-w-0 sm:col-span-2">
+            <dt className="text-xs text-ink-3">Class identity</dt>
+            <dd className="num mt-0.5 break-all text-sm">{content.className}</dd>
           </div>
         )}
       </dl>

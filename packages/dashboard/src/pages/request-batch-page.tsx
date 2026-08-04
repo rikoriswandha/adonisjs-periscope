@@ -15,14 +15,20 @@ import { Link, useParams, useSearchParams } from 'react-router-dom'
 
 import { DurationBadge } from '@/components/duration-badge'
 import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
-import { EntryTagChips } from '@/components/tag-chip'
+import {
+  MethodTag,
+  Panel,
+  PanelBody,
+  PanelHeader,
+  StatusDot,
+  Well,
+} from '@/components/instrument'
 import { JsonTree } from '@/components/json-tree'
 import { StatusBadge } from '@/components/status-badge'
+import { EntryTagChips } from '@/components/tag-chip'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
-import { Frame, FramePanel } from '@/components/ui/frame'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsPanel, TabsTab } from '@/components/ui/tabs'
 import { useDashboard } from '@/dashboard-context'
@@ -108,15 +114,18 @@ export function RequestEntryDetail({ entry, open, onClose }: RegisteredEntryDeta
 
   return (
     <EntryDetailDrawer
-      description={`${request.routePattern ?? 'Unmatched route'} · ${formatDateTime(entry.createdAt)}`}
+      description={request.routePattern ?? 'Unmatched route'}
       meta={
         <>
-          <Badge className="font-mono" variant="outline">
-            {request.method}
-          </Badge>
+          <MethodTag method={request.method} />
           <StatusBadge status={request.status} />
           <DurationBadge value={request.durationMs} />
-          {request.clientDisconnected && <Badge variant="warning">client disconnected</Badge>}
+          {request.clientDisconnected && (
+            <span className="inline-flex items-center gap-1.5 text-xs text-sig-warn">
+              <StatusDot signal="warn" />
+              client disconnected
+            </span>
+          )}
         </>
       }
       onOpenChange={(nextOpen) => !nextOpen && onClose()}
@@ -124,72 +133,93 @@ export function RequestEntryDetail({ entry, open, onClose }: RegisteredEntryDeta
       tags={entry.tags}
       title={truncate(request.url, 120)}
     >
-      <section className="space-y-3 rounded-md border bg-muted/25 p-3">
-        <div>
-          <h3 className="font-mono text-sm font-semibold break-all">{request.url}</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {request.routePattern ?? 'Unmatched route'}
-            {request.routeName ? ` · ${request.routeName}` : ''}
-          </p>
-        </div>
-        {request.traceId && (
-          <p className="truncate font-mono text-xs text-muted-foreground">
-            Trace <span title={request.traceId}>{request.traceId}</span>
-          </p>
-        )}
-        {request.inertia && (
-          <div className="flex flex-col gap-1.5 rounded-md border bg-background px-3 py-2 text-xs sm:flex-row sm:items-start sm:gap-3">
-            <span className="flex shrink-0 items-center gap-1.5 font-medium text-foreground">
-              <Braces aria-hidden="true" className="size-3.5 text-muted-foreground" />
-              Inertia
-            </span>
-            <span className="min-w-0">
-              <span className="block break-all font-mono font-medium text-foreground">
-                {request.inertia.component}
-              </span>
-              {request.inertia.propKeys && (
-                <span className="mt-0.5 block break-words text-muted-foreground">
-                  Props: {request.inertia.propKeys.join(', ') || 'None'}
-                </span>
-              )}
-            </span>
+      <Panel>
+        <PanelHeader title="Request" />
+        <PanelBody className="space-y-3">
+          <div className="min-w-0">
+            <h3 className="num break-all text-sm font-semibold text-ink">{request.url}</h3>
+            <p className="num mt-1 text-xs text-ink-3">
+              {request.routePattern ?? 'Unmatched route'}
+              {request.routeName ? ` · ${request.routeName}` : ''}
+            </p>
           </div>
-        )}
-      </section>
+          {request.traceId && (
+            <p className="num truncate text-xs text-ink-3" title={request.traceId}>
+              Trace {request.traceId}
+            </p>
+          )}
+          {request.inertia && (
+            <Well className="flex flex-col gap-1.5 px-3 py-2 text-xs sm:flex-row sm:items-start sm:gap-3">
+              <span className="flex shrink-0 items-center gap-1.5 font-medium text-ink">
+                <Braces aria-hidden="true" className="size-3.5 text-ink-3" />
+                Inertia
+              </span>
+              <span className="min-w-0">
+                <span className="num block break-all font-medium text-ink">
+                  {request.inertia.component}
+                </span>
+                {request.inertia.propKeys && (
+                  <span className="num mt-0.5 block break-words text-ink-3">
+                    Props: {request.inertia.propKeys.join(', ') || 'None'}
+                  </span>
+                )}
+              </span>
+            </Well>
+          )}
+        </PanelBody>
+      </Panel>
 
-      <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
-        <div>
-          <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Globe2 aria-hidden="true" className="size-3.5" /> Client
-          </dt>
-          <dd className="mt-1 break-all text-sm font-medium">{request.ip}</dd>
-        </div>
-        <div>
-          <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <UserRound aria-hidden="true" className="size-3.5" /> User
-          </dt>
-          <dd className="mt-1 truncate text-sm font-medium">
-            {request.user?.email ?? request.user?.id ?? 'Guest'}
-          </dd>
-        </div>
-        <div>
-          <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Clock3 aria-hidden="true" className="size-3.5" /> Memory delta
-          </dt>
-          <dd className="mt-1 font-mono text-sm font-medium">
-            {formatBytes(request.memoryDeltaBytes)}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-xs text-muted-foreground">Batch ID</dt>
-          <dd className="mt-1 truncate font-mono text-xs font-medium" title={entry.batchId}>
-            {entry.batchId}
-          </dd>
-        </div>
-      </dl>
+      <Panel>
+        <PanelHeader title="Request metadata" />
+        <PanelBody>
+          <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="min-w-0">
+              <dt className="micro-label flex items-center gap-1.5">
+                <Globe2 aria-hidden="true" className="size-3.5" /> Client
+              </dt>
+              <dd className="num mt-1 break-all text-sm text-ink">{request.ip}</dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="micro-label flex items-center gap-1.5">
+                <UserRound aria-hidden="true" className="size-3.5" /> User
+              </dt>
+              <dd
+                className="num mt-1 truncate text-sm text-ink"
+                title={String(request.user?.email ?? request.user?.id ?? 'Guest')}
+              >
+                {request.user?.email ?? request.user?.id ?? 'Guest'}
+              </dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="micro-label flex items-center gap-1.5">
+                <Clock3 aria-hidden="true" className="size-3.5" /> Memory delta
+              </dt>
+              <dd className="num mt-1 text-sm text-ink">{formatBytes(request.memoryDeltaBytes)}</dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="micro-label">Batch ID</dt>
+              <dd className="num mt-1 truncate text-xs text-ink" title={entry.batchId}>
+                {entry.batchId}
+              </dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="micro-label">Entry UUID</dt>
+              <dd className="num mt-1 truncate text-xs text-ink" title={entry.uuid}>
+                {entry.uuid}
+              </dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="micro-label">Recorded</dt>
+              <dd className="num mt-1 whitespace-nowrap text-xs text-ink">
+                <time dateTime={entry.createdAt}>{formatDateTime(entry.createdAt)}</time>
+              </dd>
+            </div>
+          </dl>
+        </PanelBody>
+      </Panel>
 
       <Tabs defaultValue="headers">
-        <div className="overflow-x-auto border-b">
+        <div className="overflow-x-auto border-b border-edge">
           <TabsList className="min-w-max" variant="underline">
             <TabsTab value="headers">Headers</TabsTab>
             <TabsTab value="payload">Payload</TabsTab>
@@ -206,14 +236,14 @@ export function RequestEntryDetail({ entry, open, onClose }: RegisteredEntryDeta
         </TabsPanel>
         <TabsPanel className="space-y-3 pt-3" value="response">
           <div className="flex items-center gap-2 text-sm">
-            <span className="text-muted-foreground">HTTP status</span>
+            <span className="text-ink-3">HTTP status</span>
             <StatusBadge status={request.status} />
           </div>
           <JsonTree label="Response body" value={request.response ?? null} />
         </TabsPanel>
         <TabsPanel className="pt-3" value="session">
           {request.session === undefined ? (
-            <p className="rounded-md border bg-muted/25 p-3 text-sm text-muted-foreground">
+            <p className="well p-3 text-sm text-ink-3">
               No session snapshot was captured for this request.
             </p>
           ) : (
@@ -354,68 +384,65 @@ export function RequestBatchPage() {
           Back to {indexLabel}
         </Button>
 
-        <Frame className="rounded-lg p-0.5">
-          <FramePanel className="overflow-hidden rounded-md p-0 shadow-none before:shadow-none">
-            <section>
-              <div className="flex flex-col gap-4 border-b p-3 sm:flex-row sm:items-start sm:justify-between sm:p-4">
-                <div className="min-w-0">
-                  <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <Badge variant="secondary">ambient/process batch</Badge>
-                    {entryTypes.map((type) => (
-                      <Badge className="font-mono" key={type} variant="outline">
-                        {type}
-                      </Badge>
-                    ))}
-                  </div>
-                  <h2 className="break-all font-mono text-sm font-semibold leading-6 sm:text-base">
-                    {entrySummary(firstEntry)}
-                  </h2>
-                  <p className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">
-                    This batch was recorded outside an HTTP request lifecycle. Its entries remain
-                    available in sequence order.
-                  </p>
-                </div>
-                <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
-                  <Button
-                    render={<a download href={api.getBatchExportUrl(batchId)} />}
-                    size="sm"
-                    variant="outline"
-                  >
-                    <Download aria-hidden="true" />
-                    Export JSON
-                  </Button>
-                  <div className="text-left sm:text-right">
-                    <div className="text-xs text-muted-foreground">Recorded</div>
-                    <time className="text-sm font-medium" dateTime={firstEntry.createdAt}>
-                      {formatDateTime(firstEntry.createdAt)}
-                    </time>
-                  </div>
-                </div>
+        <Panel aria-labelledby="ambient-batch-title">
+          <PanelHeader
+            action={
+              <Button
+                render={<a download href={api.getBatchExportUrl(batchId)} />}
+                size="xs"
+                variant="ghost"
+              >
+                <Download aria-hidden="true" />
+                Export JSON
+              </Button>
+            }
+            id="ambient-batch-title"
+            meta={
+              <time className="num" dateTime={firstEntry.createdAt}>
+                {formatDateTime(firstEntry.createdAt)}
+              </time>
+            }
+            title="Ambient process batch"
+          />
+          <PanelBody className="space-y-4">
+            <div className="min-w-0">
+              <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                {entryTypes.map((type) => (
+                  <span className="num text-micro text-ink-3" key={type}>
+                    {type}
+                  </span>
+                ))}
               </div>
-              <dl className="grid divide-y bg-muted/25 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-                <div className="p-3">
-                  <dt className="text-xs text-muted-foreground">Batch ID</dt>
-                  <dd
-                    className="mt-1 truncate font-mono text-xs font-medium"
-                    title={firstEntry.batchId}
-                  >
+              <h2 className="num break-all text-md font-semibold text-ink">
+                {entrySummary(firstEntry)}
+              </h2>
+              <p className="mt-1 max-w-2xl text-xs leading-5 text-ink-3">
+                This batch was recorded outside an HTTP request lifecycle. Its entries remain
+                available in sequence order.
+              </p>
+            </div>
+            <Well>
+              <dl className="grid divide-y divide-edge sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+                <div className="min-w-0 p-3">
+                  <dt className="micro-label">Batch ID</dt>
+                  <dd className="num mt-1 truncate text-xs text-ink" title={firstEntry.batchId}>
                     {firstEntry.batchId}
                   </dd>
                 </div>
-                <div className="p-3">
-                  <dt className="text-xs text-muted-foreground">Entries</dt>
-                  <dd className="mt-1 font-mono text-sm font-medium">
-                    {entries.length.toLocaleString()}
+                <div className="min-w-0 p-3">
+                  <dt className="micro-label">Entries</dt>
+                  <dd className="num mt-1 text-sm text-ink">{entries.length.toLocaleString()}</dd>
+                </div>
+                <div className="min-w-0 p-3">
+                  <dt className="micro-label">Entry types</dt>
+                  <dd className="num mt-1 break-words text-sm text-ink">
+                    {entryTypes.join(', ')}
                   </dd>
                 </div>
-                <div className="p-3">
-                  <dt className="text-xs text-muted-foreground">Entry types</dt>
-                  <dd className="mt-1 text-sm font-medium">{entryTypes.join(', ')}</dd>
-                </div>
               </dl>
-            </section>
-          </FramePanel>
-        </Frame>
+            </Well>
+          </PanelBody>
+        </Panel>
 
         <BatchWaterfall onSelect={setSelected} summary={entrySummary} timeline={timeline} />
 
@@ -437,128 +464,140 @@ export function RequestBatchPage() {
         All requests
       </Button>
 
-      <Frame className="rounded-lg p-0.5">
-        <FramePanel className="overflow-hidden rounded-md p-0 shadow-none before:shadow-none">
-          <section>
-            <div className="flex flex-col gap-4 border-b p-3 sm:flex-row sm:items-start sm:justify-between sm:p-4">
-              <div className="min-w-0">
-                <div className="mb-2 flex flex-wrap items-center gap-2">
-                  <Badge className="font-mono" variant="outline">
-                    {request.method}
-                  </Badge>
-                  <StatusBadge status={request.status} />
-                  <DurationBadge value={request.durationMs} />
-                  {request.clientDisconnected && (
-                    <Badge variant="warning">client disconnected</Badge>
-                  )}
-                </div>
-                <h2 className="break-all font-mono text-sm font-semibold leading-6 sm:text-base">
-                  {request.url}
-                </h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {request.routePattern ?? 'Unmatched route'}
-                  {request.routeName ? ` · ${request.routeName}` : ''}
-                </p>
-                {request.traceId && (
-                  <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
-                    Trace <span title={request.traceId}>{request.traceId}</span>
-                  </p>
-                )}
-                {request.inertia && (
-                  <div className="mt-3 flex flex-col gap-1.5 rounded-md border bg-muted/30 px-3 py-2 text-xs sm:flex-row sm:items-start sm:gap-3">
-                    <span className="flex shrink-0 items-center gap-1.5 font-medium text-foreground">
-                      <Braces aria-hidden="true" className="size-3.5 text-muted-foreground" />
-                      Inertia
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block break-all font-mono font-medium text-foreground">
-                        {request.inertia.component}
-                      </span>
-                      {request.inertia.propKeys && (
-                        <span className="mt-0.5 block break-words text-muted-foreground">
-                          Props: {request.inertia.propKeys.join(', ') || 'None'}
-                        </span>
-                      )}
-                    </span>
-                  </div>
-                )}
-              </div>
-              <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
-                <Button
-                  render={<a download href={api.getBatchExportUrl(batchId)} />}
-                  size="sm"
-                  variant="outline"
-                >
-                  <Download aria-hidden="true" />
-                  Export JSON
-                </Button>
-                <div className="text-left sm:text-right">
-                  <div className="text-xs text-muted-foreground">Recorded</div>
-                  <time className="text-sm font-medium" dateTime={requestEntry.createdAt}>
-                    {formatDateTime(requestEntry.createdAt)}
-                  </time>
-                </div>
-              </div>
+      <Panel aria-labelledby="request-batch-title">
+        <PanelHeader
+          action={
+            <Button
+              render={<a download href={api.getBatchExportUrl(batchId)} />}
+              size="xs"
+              variant="ghost"
+            >
+              <Download aria-hidden="true" />
+              Export JSON
+            </Button>
+          }
+          id="request-batch-title"
+          meta={
+            <time className="num" dateTime={requestEntry.createdAt}>
+              {formatDateTime(requestEntry.createdAt)}
+            </time>
+          }
+          title="Request batch"
+        />
+        <PanelBody className="space-y-4">
+          <div className="min-w-0">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <MethodTag method={request.method} />
+              <StatusBadge status={request.status} />
+              <DurationBadge value={request.durationMs} />
+              {request.clientDisconnected && (
+                <span className="inline-flex items-center gap-1.5 text-xs text-sig-warn">
+                  <StatusDot signal="warn" />
+                  client disconnected
+                </span>
+              )}
             </div>
-            {requestEntry.tags.length > 0 && (
-              <div className="border-b px-3 py-2 sm:px-4">
-                <EntryTagChips tags={requestEntry.tags} />
-              </div>
+            <h2 className="num break-all text-md font-semibold leading-6 text-ink">{request.url}</h2>
+            <p className="num mt-1 text-xs text-ink-3">
+              {request.routePattern ?? 'Unmatched route'}
+              {request.routeName ? ` · ${request.routeName}` : ''}
+            </p>
+            {request.traceId && (
+              <p className="num mt-1 truncate text-xs text-ink-3" title={request.traceId}>
+                Trace {request.traceId}
+              </p>
             )}
-            <dl className="grid divide-y bg-muted/25 sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-4">
-              <div className="p-3">
-                <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            {request.inertia && (
+              <Well className="mt-3 flex flex-col gap-1.5 px-3 py-2 text-xs sm:flex-row sm:items-start sm:gap-3">
+                <span className="flex shrink-0 items-center gap-1.5 font-medium text-ink">
+                  <Braces aria-hidden="true" className="size-3.5 text-ink-3" />
+                  Inertia
+                </span>
+                <span className="min-w-0">
+                  <span className="num block break-all font-medium text-ink">
+                    {request.inertia.component}
+                  </span>
+                  {request.inertia.propKeys && (
+                    <span className="num mt-0.5 block break-words text-ink-3">
+                      Props: {request.inertia.propKeys.join(', ') || 'None'}
+                    </span>
+                  )}
+                </span>
+              </Well>
+            )}
+          </div>
+          {requestEntry.tags.length > 0 && (
+            <div className="border-t border-edge pt-3">
+              <EntryTagChips tags={requestEntry.tags} />
+            </div>
+          )}
+          <Well>
+            <dl className="grid divide-y divide-edge sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-4">
+              <div className="min-w-0 p-3">
+                <dt className="micro-label flex items-center gap-1.5">
                   <Globe2 aria-hidden="true" className="size-3.5" /> Client
                 </dt>
-                <dd className="mt-1 break-all text-sm font-medium">{request.ip}</dd>
+                <dd className="num mt-1 break-all text-sm text-ink">{request.ip}</dd>
               </div>
-              <div className="p-3">
-                <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <div className="min-w-0 p-3">
+                <dt className="micro-label flex items-center gap-1.5">
                   <UserRound aria-hidden="true" className="size-3.5" /> User
                 </dt>
-                <dd className="mt-1 truncate text-sm font-medium">
+                <dd
+                  className="num mt-1 truncate text-sm text-ink"
+                  title={String(request.user?.email ?? request.user?.id ?? 'Guest')}
+                >
                   {request.user?.email ?? request.user?.id ?? 'Guest'}
                 </dd>
               </div>
-              <div className="p-3">
-                <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <div className="min-w-0 p-3">
+                <dt className="micro-label flex items-center gap-1.5">
                   <Clock3 aria-hidden="true" className="size-3.5" /> Memory delta
                 </dt>
-                <dd className="mt-1 font-mono text-sm font-medium">
+                <dd className="num mt-1 text-sm text-ink">
                   {formatBytes(request.memoryDeltaBytes)}
                 </dd>
               </div>
-              <div className="p-3">
-                <dt className="text-xs text-muted-foreground">Batch ID</dt>
-                <dd
-                  className="mt-1 truncate font-mono text-xs font-medium"
-                  title={requestEntry.batchId}
-                >
+              <div className="min-w-0 p-3">
+                <dt className="micro-label">Batch ID</dt>
+                <dd className="num mt-1 truncate text-xs text-ink" title={requestEntry.batchId}>
                   {requestEntry.batchId}
                 </dd>
               </div>
             </dl>
-          </section>
-        </FramePanel>
-      </Frame>
+          </Well>
+        </PanelBody>
+      </Panel>
 
       {nPlusOneWarnings.length > 0 && (
         <Alert variant="warning">
           <TriangleAlert />
           <AlertTitle>Potential N+1 query pattern</AlertTitle>
           <AlertDescription>
-            {nPlusOneWarnings.length === 1
-              ? `One query shape ran ${nPlusOneWarnings[0].count.toLocaleString()} times in this batch.`
-              : `${nPlusOneWarnings.length.toLocaleString()} query shapes crossed the warning threshold; the most repeated ran ${nPlusOneWarnings[0].count.toLocaleString()} times.`}{' '}
+            {nPlusOneWarnings.length === 1 ? (
+              <>
+                One query shape ran{' '}
+                <span className="num">{nPlusOneWarnings[0].count.toLocaleString()}</span> times in
+                this batch.
+              </>
+            ) : (
+              <>
+                <span className="num">{nPlusOneWarnings.length.toLocaleString()}</span> query shapes
+                crossed the warning threshold; the most repeated ran{' '}
+                <span className="num">{nPlusOneWarnings[0].count.toLocaleString()}</span> times.
+              </>
+            )}{' '}
             Inspect the query waterfall before treating this as a defect.
           </AlertDescription>
         </Alert>
       )}
 
       <Tabs defaultValue="timeline">
-        <div className="overflow-x-auto border-b">
+        <div className="overflow-x-auto border-b border-edge">
           <TabsList className="min-w-max" variant="underline">
-            <TabsTab value="timeline">Waterfall ({timeline.length})</TabsTab>
+            <TabsTab value="timeline">
+              Waterfall <span className="num">({timeline.length})</span>
+            </TabsTab>
             <TabsTab value="headers">Headers</TabsTab>
             <TabsTab value="payload">Payload</TabsTab>
             <TabsTab value="response">Response</TabsTab>
@@ -579,7 +618,7 @@ export function RequestBatchPage() {
         </TabsPanel>
         <TabsPanel className="space-y-4 pt-3" value="response">
           <div className="flex items-center gap-2 text-sm">
-            <span className="text-muted-foreground">HTTP status</span>
+            <span className="text-ink-3">HTTP status</span>
             <StatusBadge status={request.status} />
           </div>
           <JsonTree label="Response body" value={request.response ?? null} />

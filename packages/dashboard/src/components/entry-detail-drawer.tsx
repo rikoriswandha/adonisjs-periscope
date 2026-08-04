@@ -2,8 +2,9 @@ import { createContext, useContext, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import { CopyButton } from '@/components/copy-button'
+import { StatusDot, statusSignal } from '@/components/instrument'
+import type { Signal } from '@/components/instrument'
 import { EntryTagChips } from '@/components/tag-chip'
-import { Separator } from '@/components/ui/separator'
 import {
   Sheet,
   SheetDescription,
@@ -12,6 +13,7 @@ import {
   SheetPopup,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { formatDateTime, formatRelativeTime } from '@/lib/format'
 import type { StoredEntry } from '@/types'
 
 export type EntryDetailPresentation = 'drawer' | 'page'
@@ -44,25 +46,50 @@ function hashUrl(path: string): string {
   return url.toString()
 }
 
+function entrySignal(entry: StoredEntry): Signal {
+  const status = entry.content.status
+  if (typeof status === 'number') return statusSignal(status)
+
+  const normalized = typeof status === 'string' ? status.toLowerCase() : ''
+  const level = typeof entry.content.level === 'string' ? entry.content.level.toLowerCase() : ''
+  if (
+    entry.type === 'exception' ||
+    normalized.includes('fail') ||
+    normalized.includes('error') ||
+    level === 'error' ||
+    level === 'fatal' ||
+    entry.content.failed === true ||
+    entry.content.error != null
+  ) {
+    return 'error'
+  }
+  if (
+    normalized.includes('warn') ||
+    normalized.includes('pending') ||
+    normalized.includes('waiting') ||
+    normalized.includes('denied') ||
+    entry.content.allowed === false
+  ) {
+    return 'warn'
+  }
+  if (normalized.includes('complete') || normalized.includes('success') || normalized === 'sent') {
+    return 'ok'
+  }
+  return 'neutral'
+}
 
 function EntryDetailActions({ entry }: { entry: StoredEntry }) {
   return (
-    <div aria-label="Share links" className="ms-auto flex flex-wrap items-center gap-2">
-      <span className="flex items-center gap-0.5 text-2xs text-muted-foreground">
-        Entry
-        <CopyButton
-          label="Copy entry link"
-          value={hashUrl(`/entries/${encodeURIComponent(entry.uuid)}`)}
-        />
-      </span>
+    <div aria-label="Share links" className="ms-auto flex shrink-0 items-center gap-1">
+      <CopyButton
+        label="Copy entry link"
+        value={hashUrl(`/entries/${encodeURIComponent(entry.uuid)}`)}
+      />
       {entry.batchId && (
-        <span className="flex items-center gap-0.5 text-2xs text-muted-foreground">
-          Batch
-          <CopyButton
-            label="Copy batch link"
-            value={hashUrl(`/requests/${encodeURIComponent(entry.batchId)}`)}
-          />
-        </span>
+        <CopyButton
+          label="Copy batch link"
+          value={hashUrl(`/requests/${encodeURIComponent(entry.batchId)}`)}
+        />
       )}
     </div>
   )
@@ -98,48 +125,62 @@ export function EntryDetailDrawer({
     return () => cancelAnimationFrame(frame)
   }, [open])
 
-  const actions = context ? <EntryDetailActions entry={context.entry} /> : null
+  const entry = context?.entry
   const header = (
-    <div className="space-y-2.5">
-      <div className={context?.presentation === 'drawer' ? 'min-w-0 pe-10' : 'min-w-0'}>
-        <h2 className="break-words font-mono text-base font-semibold leading-snug">{title}</h2>
-        <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
+    <div className="min-w-0 space-y-2">
+      <div className="flex min-w-0 items-center gap-2 pe-10">
+        {entry && <StatusDot signal={entrySignal(entry)} />}
+        <span className="micro-label truncate text-ink-2">
+          {entry?.type.replaceAll('_', ' ') ?? 'Entry'}
+        </span>
+        {entry && <EntryDetailActions entry={entry} />}
       </div>
-      {(meta || actions) && (
-        <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="min-w-0">
+        <h2 className="num break-all text-md leading-snug font-medium text-ink">{title}</h2>
+        <p className="mt-1 break-words text-xs leading-5 text-ink-3">{description}</p>
+      </div>
+      {(entry || meta) && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          {entry && (
+            <time className="num text-xs text-ink-2" dateTime={entry.createdAt}>
+              {formatDateTime(entry.createdAt)}
+            </time>
+          )}
+          {entry && (
+            <span className="num text-xs text-ink-4">{formatRelativeTime(entry.createdAt)}</span>
+          )}
           {meta && <div className="flex flex-wrap items-center gap-1.5">{meta}</div>}
-          {actions}
         </div>
       )}
     </div>
   )
   const panel = (
     <div className="space-y-4">
-      {tags && <EntryTagChips tags={tags} />}
+      {tags && tags.length > 0 && <EntryTagChips tags={tags} />}
       {children}
     </div>
   )
 
   if (context?.presentation === 'page') {
     return (
-      <section className="overflow-hidden rounded-lg border bg-card">
-        <header className="p-4 sm:p-5">{header}</header>
-        <Separator />
-        <div className="p-4 sm:p-5">{panel}</div>
+      <section className="panel overflow-clip">
+        <header className="sticky top-0 z-(--z-sticky) border-b border-edge bg-panel px-4 py-3">
+          {header}
+        </header>
+        <div className="p-4">{panel}</div>
       </section>
     )
   }
 
   return (
     <Sheet onOpenChange={onOpenChange} open={present}>
-      <SheetPopup className="w-full sm:max-w-2xl" side="right">
-        <SheetHeader className="p-4 sm:p-5">
+      <SheetPopup className="w-full bg-chassis sm:max-w-2xl" side="right">
+        <SheetHeader className="shrink-0 border-b border-edge bg-panel px-4 py-3">
           <SheetTitle className="sr-only">{title}</SheetTitle>
           <SheetDescription className="sr-only">{description}</SheetDescription>
           {header}
         </SheetHeader>
-        <Separator />
-        <SheetPanel className="p-4 sm:p-5">{panel}</SheetPanel>
+        <SheetPanel className="bg-chassis p-4">{panel}</SheetPanel>
       </SheetPopup>
     </Sheet>
   )

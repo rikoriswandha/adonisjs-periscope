@@ -3,7 +3,7 @@ import { ArrowUpRight } from 'lucide-react'
 import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
 import type { EntryColumn } from '@/components/entry-index-table'
 import { JsonTree } from '@/components/json-tree'
-import { Badge } from '@/components/ui/badge'
+import { StatusDot } from '@/components/instrument'
 import type { EntryTypeImplementation, RegisteredEntryDetailProps } from '@/entry-type-registry'
 import { formatDateTime, formatRelativeTime, truncate } from '@/lib/format'
 import type { GateContent, StoredEntry } from '@/types'
@@ -28,10 +28,10 @@ const columns: EntryColumn[] = [
       const count = argumentCount(content.args)
       return (
         <div className="min-w-0">
-          <div className="max-w-xl truncate font-mono text-xs font-medium" title={content.ability}>
+          <div className="num max-w-xl truncate text-xs font-medium" title={content.ability}>
             {truncate(content.ability, 120)}
           </div>
-          <div className="mt-1 text-2xs text-muted-foreground">
+          <div className="num mt-1 text-2xs text-ink-3">
             {count === null
               ? 'Arguments unavailable'
               : `${count} ${count === 1 ? 'argument' : 'arguments'}`}
@@ -47,9 +47,10 @@ const columns: EntryColumn[] = [
     cell: (entry) => {
       const allowed = gateContent(entry).allowed
       return (
-        <Badge variant={allowed ? 'success' : 'destructive'}>
+        <span className="num inline-flex items-center gap-2 text-xs">
+          <StatusDot signal={allowed ? 'ok' : 'error'} />
           {allowed ? 'allowed' : 'denied'}
-        </Badge>
+        </span>
       )
     },
   },
@@ -59,7 +60,7 @@ const columns: EntryColumn[] = [
     className: 'w-36',
     cell: (entry) => (
       <span
-        className="block max-w-36 truncate font-mono text-xs text-muted-foreground"
+        className="num block max-w-36 truncate text-xs text-ink-3"
         title={String(gateContent(entry).userId ?? 'Anonymous')}
       >
         {gateContent(entry).userId ?? 'Anonymous'}
@@ -69,22 +70,22 @@ const columns: EntryColumn[] = [
   {
     key: 'status',
     header: 'Status',
-    className: 'w-24',
+    className: 'w-24 text-right',
     cell: (entry) => {
       const status = gateContent(entry).status
       return (
-        <Badge className="font-mono" variant="secondary">
+        <span className="num block whitespace-nowrap text-right text-xs text-ink-2">
           {status === undefined ? 'not set' : `HTTP ${status}`}
-        </Badge>
+        </span>
       )
     },
   },
   {
     key: 'when',
     header: 'When',
-    className: 'w-36',
+    className: 'w-36 text-right',
     cell: (entry) => (
-      <span className="whitespace-nowrap text-xs text-muted-foreground" title={entry.createdAt}>
+      <span className="num block whitespace-nowrap text-right text-xs text-ink-3" title={entry.createdAt}>
         {formatRelativeTime(entry.createdAt)}
       </span>
     ),
@@ -94,7 +95,7 @@ const columns: EntryColumn[] = [
     header: '',
     className: 'w-10 text-right',
     cell: () => (
-      <ArrowUpRight aria-hidden="true" className="ms-auto size-4 text-muted-foreground" />
+      <ArrowUpRight aria-hidden="true" className="ms-auto size-4 text-ink-3" />
     ),
   },
 ]
@@ -106,39 +107,38 @@ function GateDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
     <EntryDetailDrawer
       description={`User ${content.userId ?? 'anonymous'} · ${formatDateTime(entry.createdAt)}`}
       meta={
-        <>
-          <Badge variant={content.allowed ? 'success' : 'destructive'}>
+        <span className="flex flex-wrap items-center gap-3">
+          <span className="num inline-flex items-center gap-2 text-xs">
+            <StatusDot signal={content.allowed ? 'ok' : 'error'} />
             {content.allowed ? 'allowed' : 'denied'}
-          </Badge>
-          <Badge variant="secondary">
+          </span>
+          <span className="num text-xs text-ink-2">
             {argsCount === null
               ? 'arguments unavailable'
               : `${argsCount} ${argsCount === 1 ? 'argument' : 'arguments'}`}
-          </Badge>
+          </span>
           {content.status !== undefined && (
-            <Badge className="font-mono" variant="secondary">
-              HTTP {content.status}
-            </Badge>
+            <span className="num text-xs text-ink-2">HTTP {content.status}</span>
           )}
-        </>
+        </span>
       }
       onOpenChange={(open) => !open && onClose()}
       open={open}
       tags={entry.tags}
       title={truncate(content.ability, 96)}
     >
-      <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
-        <div>
-          <dt className="text-xs text-muted-foreground">Ability</dt>
-          <dd className="mt-0.5 break-all font-mono text-sm">{content.ability}</dd>
+      <dl className="well grid gap-2.5 p-3 sm:grid-cols-2">
+        <div className="min-w-0">
+          <dt className="text-xs text-ink-3">Ability</dt>
+          <dd className="num mt-0.5 break-all text-sm">{content.ability}</dd>
         </div>
-        <div>
-          <dt className="text-xs text-muted-foreground">User ID</dt>
-          <dd className="mt-0.5 break-all font-mono text-sm">{content.userId ?? 'Anonymous'}</dd>
+        <div className="min-w-0">
+          <dt className="text-xs text-ink-3">User ID</dt>
+          <dd className="num mt-0.5 break-all text-sm">{content.userId ?? 'Anonymous'}</dd>
         </div>
-        <div className="sm:col-span-2">
-          <dt className="text-xs text-muted-foreground">Decision message</dt>
-          <dd className="mt-0.5 max-h-24 overflow-auto whitespace-pre-wrap break-words text-sm">
+        <div className="min-w-0 sm:col-span-2">
+          <dt className="text-xs text-ink-3">Decision message</dt>
+          <dd className="num mt-0.5 max-h-24 overflow-auto whitespace-pre-wrap break-words text-sm">
             {content.message ??
               (content.allowed ? 'The ability was authorized.' : 'No denial message was recorded.')}
           </dd>

@@ -1,6 +1,6 @@
 'use client'
 
-import { motion, useSpring } from 'motion/react'
+import { motion, useReducedMotion, useSpring } from 'motion/react'
 import { useEffect } from 'react'
 import { type SpringConfig, useChartConfig } from '../chart-config-context'
 import { chartCssVars } from '../chart-context'
@@ -75,10 +75,16 @@ function resolveWidth(width: IndicatorWidth): number {
 // Inner-only-on-visible so `useSpring` initializes at the real cursor x
 // instead of 0 on first hover.
 export function TooltipIndicator(props: TooltipIndicatorProps) {
+  const reducedMotion = useReducedMotion()
   if (!props.visible) {
     return null
   }
-  return <TooltipIndicatorInner {...props} />
+  return (
+    <TooltipIndicatorInner
+      {...props}
+      animate={reducedMotion ? false : props.animate}
+    />
+  )
 }
 
 function TooltipIndicatorInner({

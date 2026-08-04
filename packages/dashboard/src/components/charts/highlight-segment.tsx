@@ -1,6 +1,6 @@
 'use client'
 
-import { type MotionValue, motion } from 'motion/react'
+import { type MotionValue, motion, useReducedMotion } from 'motion/react'
 import { type RefObject, useId } from 'react'
 
 // Hover-highlight overlay: re-strokes the base path `d`, clipped to a vertical
@@ -33,6 +33,7 @@ export function HighlightSegment({
   x,
   width,
 }: HighlightSegmentProps) {
+  const reducedMotion = useReducedMotion()
   const clipId = useId()
   if (!(visible && pathRef.current)) {
     return null
@@ -50,11 +51,14 @@ export function HighlightSegment({
         d={pathRef.current.getAttribute('d') || ''}
         exit={{ opacity: 0 }}
         fill="none"
-        initial={{ opacity: 0 }}
+        initial={reducedMotion ? false : { opacity: 0 }}
         stroke={stroke}
         strokeLinecap="round"
         strokeWidth={strokeWidth}
-        transition={{ duration: 0.4, ease: 'easeInOut' }}
+        transition={{
+          duration: reducedMotion ? 0 : 0.18,
+          ease: [0.165, 0.84, 0.44, 1],
+        }}
       />
     </>
   )

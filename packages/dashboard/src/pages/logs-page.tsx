@@ -1,7 +1,7 @@
 import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
 import type { EntryColumn } from '@/components/entry-index-table'
 import { JsonTree } from '@/components/json-tree'
-import { Badge } from '@/components/ui/badge'
+import { StatusDot, type Signal } from '@/components/instrument'
 import type { EntryTypeImplementation, RegisteredEntryDetailProps } from '@/entry-type-registry'
 import { formatDateTime, formatRelativeTime, truncate } from '@/lib/format'
 import type { EntryContent, StoredEntry } from '@/types'
@@ -18,19 +18,30 @@ function logContent(entry: StoredEntry): LogContent {
   return entry.content as LogContent
 }
 
-function levelVariant(level: string) {
+function levelSignal(level: string): Signal {
   switch (level.toLowerCase()) {
     case 'fatal':
     case 'error':
-      return 'error' as const
+      return 'error'
     case 'warn':
     case 'warning':
-      return 'warning' as const
+      return 'warn'
     case 'info':
-      return 'info' as const
+      return 'info'
+    case 'debug':
+    case 'trace':
     default:
-      return 'secondary' as const
+      return 'neutral'
   }
+}
+
+function LogLevel({ level }: { level: string }) {
+  return (
+    <span className="num inline-flex items-center gap-2 text-xs">
+      <StatusDot signal={levelSignal(level)} />
+      {level}
+    </span>
+  )
 }
 
 function sourceTimestamp(value: LogContent['time']): string {
@@ -47,10 +58,7 @@ const columns: EntryColumn[] = [
     key: 'level',
     header: 'Level',
     className: 'w-24',
-    cell: (entry) => {
-      const level = logContent(entry).level
-      return <Badge variant={levelVariant(level)}>{level}</Badge>
-    },
+    cell: (entry) => <LogLevel level={logContent(entry).level} />,
   },
   {
     key: 'message',
@@ -59,7 +67,7 @@ const columns: EntryColumn[] = [
     cell: (entry) => {
       const message = logContent(entry).message
       return (
-        <span className="block max-w-2xl truncate text-sm font-medium" title={message ?? undefined}>
+        <span className="num block max-w-2xl truncate text-sm font-medium" title={message ?? undefined}>
           {message ? truncate(message, 180) : 'No message'}
         </span>
       )
@@ -68,11 +76,11 @@ const columns: EntryColumn[] = [
   {
     key: 'context',
     header: 'Context',
-    className: 'w-28',
+    className: 'w-28 text-right',
     cell: (entry) => {
       const count = Object.keys(logContent(entry).context).length
       return (
-        <span className="text-xs text-muted-foreground">
+        <span className="num block text-right text-xs text-ink-3">
           {count} {count === 1 ? 'key' : 'keys'}
         </span>
       )
@@ -83,7 +91,7 @@ const columns: EntryColumn[] = [
     header: 'When',
     className: 'w-36 text-right',
     cell: (entry) => (
-      <span className="whitespace-nowrap text-xs text-muted-foreground" title={entry.createdAt}>
+      <span className="num whitespace-nowrap text-xs text-ink-3" title={entry.createdAt}>
         {formatRelativeTime(entry.createdAt)}
       </span>
     ),
@@ -96,24 +104,28 @@ function LogDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
   return (
     <EntryDetailDrawer
       description={`Recorded ${formatDateTime(entry.createdAt)}`}
-      meta={<Badge variant={levelVariant(content.level)}>{content.level}</Badge>}
+      meta={<LogLevel level={content.level} />}
       onOpenChange={(open) => !open && onClose()}
       open={open}
       tags={entry.tags}
       title={truncate(content.message ?? `${content.level} log entry`, 96)}
     >
-      <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
+      <dl className="well grid gap-2.5 p-3 sm:grid-cols-2">
         <div>
-          <dt className="text-xs text-muted-foreground">Level</dt>
-          <dd className="mt-0.5 font-mono text-sm">{content.level}</dd>
+          <dt className="text-xs text-ink-3">Level</dt>
+          <dd className="mt-0.5">
+            <LogLevel level={content.level} />
+          </dd>
         </div>
-        <div>
-          <dt className="text-xs text-muted-foreground">Source timestamp</dt>
-          <dd className="mt-0.5 font-mono text-sm">{sourceTimestamp(content.time)}</dd>
+        <div className="min-w-0">
+          <dt className="text-xs text-ink-3">Source timestamp</dt>
+          <dd className="num mt-0.5 truncate text-sm" title={sourceTimestamp(content.time)}>
+            {sourceTimestamp(content.time)}
+          </dd>
         </div>
-        <div className="sm:col-span-2">
-          <dt className="text-xs text-muted-foreground">Message</dt>
-          <dd className="mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap break-words text-sm">
+        <div className="min-w-0 sm:col-span-2">
+          <dt className="text-xs text-ink-3">Message</dt>
+          <dd className="num mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap break-words text-sm">
             {content.message ?? 'No message was emitted.'}
           </dd>
         </div>

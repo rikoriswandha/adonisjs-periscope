@@ -78,11 +78,11 @@ export function AreaGradientDefs({
               <stop
                 key={stop.offset}
                 offset={stop.offset}
-                style={{ stopColor: 'white', stopOpacity: stop.opacity }}
+                style={{ stopColor: 'var(--chart-foreground)', stopOpacity: stop.opacity }}
               />
             ))}
           </linearGradient>
-          <mask id={edgeMaskId}>
+          <mask id={edgeMaskId} style={{ maskType: 'alpha' }}>
             <rect
               fill={`url(#${edgeGradientId})`}
               height={innerHeight}

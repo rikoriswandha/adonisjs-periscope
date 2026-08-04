@@ -4,7 +4,7 @@ import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
 import type { EntryColumn } from '@/components/entry-index-table'
 import { JsonTree } from '@/components/json-tree'
 import { MailPreview } from '@/components/mail-preview'
-import { Badge } from '@/components/ui/badge'
+import { StatusDot, type Signal } from '@/components/instrument'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsPanel, TabsTab } from '@/components/ui/tabs'
 import type { EntryTypeImplementation, RegisteredEntryDetailProps } from '@/entry-type-registry'
@@ -24,33 +24,38 @@ function eventLabel(event: MailContent['event']): string {
   return event.replace(/_/g, ' ')
 }
 
-function eventVariant(
-  event: MailContent['event']
-): 'secondary' | 'info' | 'success' | 'destructive' {
+function eventSignal(event: MailContent['event']): Signal {
   switch (event) {
     case 'sending':
     case 'queueing':
       return 'info'
     case 'sent':
     case 'queued':
-      return 'success'
+      return 'ok'
     case 'queue_error':
-      return 'destructive'
-    default:
-      return 'secondary'
+      return 'error'
   }
+}
+
+function Lifecycle({ event }: { event: MailContent['event'] }) {
+  return (
+    <span className="num inline-flex items-center gap-2 text-xs">
+      <StatusDot signal={eventSignal(event)} />
+      {eventLabel(event)}
+    </span>
+  )
 }
 
 function PlainTextBody({ text }: { text?: string }) {
   if (!text?.trim()) {
     return (
-      <p className="rounded-md border bg-muted/25 p-3 text-sm leading-6 text-muted-foreground">
+      <p className="well p-3 text-sm leading-6 text-ink-2">
         No plain-text body was captured for this message.
       </p>
     )
   }
   return (
-    <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/25 p-3 font-sans text-sm leading-6 text-foreground">
+    <pre className="num well max-h-96 overflow-auto whitespace-pre-wrap break-words p-3 text-sm leading-6 text-ink">
       {text}
     </pre>
   )
@@ -66,10 +71,13 @@ const columns: EntryColumn[] = [
       const subject = mailSubject(content)
       return (
         <div className="min-w-0">
-          <div className="max-w-xl truncate text-sm font-medium" title={subject}>
+          <div className="num max-w-xl truncate text-sm font-medium" title={subject}>
             {truncate(subject, 120)}
           </div>
-          <div className="mt-1 max-w-xl truncate font-mono text-xs text-muted-foreground">
+          <div
+            className="num mt-1 max-w-xl truncate text-xs text-ink-3"
+            title={content.messageId ?? 'Message ID unavailable'}
+          >
             {content.messageId ?? 'Message ID unavailable'}
           </div>
         </div>
@@ -80,25 +88,24 @@ const columns: EntryColumn[] = [
     key: 'event',
     header: 'Event',
     className: 'w-28',
-    cell: (entry) => {
-      const event = mailContent(entry).event
-      return <Badge variant={eventVariant(event)}>{eventLabel(event)}</Badge>
-    },
+    cell: (entry) => <Lifecycle event={mailContent(entry).event} />,
   },
   {
     key: 'mailer',
     header: 'Mailer',
     className: 'w-36',
     cell: (entry) => (
-      <span className="font-mono text-xs text-muted-foreground">{mailContent(entry).mailer}</span>
+      <span className="num block max-w-36 truncate text-xs text-ink-3" title={mailContent(entry).mailer}>
+        {mailContent(entry).mailer}
+      </span>
     ),
   },
   {
     key: 'when',
     header: 'When',
-    className: 'w-36',
+    className: 'w-36 text-right',
     cell: (entry) => (
-      <span className="whitespace-nowrap text-xs text-muted-foreground" title={entry.createdAt}>
+      <span className="num block whitespace-nowrap text-right text-xs text-ink-3" title={entry.createdAt}>
         {formatRelativeTime(entry.createdAt)}
       </span>
     ),
@@ -108,7 +115,7 @@ const columns: EntryColumn[] = [
     header: '',
     className: 'w-10 text-right',
     cell: () => (
-      <ArrowUpRight aria-hidden="true" className="ms-auto size-4 text-muted-foreground" />
+      <ArrowUpRight aria-hidden="true" className="ms-auto size-4 text-ink-3" />
     ),
   },
 ]
@@ -120,33 +127,47 @@ function MailDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
     <EntryDetailDrawer
       description={`${content.mailer} · ${formatDateTime(entry.createdAt)}`}
       meta={
-        <>
-          <Badge variant={eventVariant(content.event)}>{eventLabel(content.event)}</Badge>
-          {content.truncated && <Badge variant="warning">truncated</Badge>}
-        </>
+        <span className="flex flex-wrap items-center gap-3">
+          <Lifecycle event={content.event} />
+          {content.truncated && (
+            <span className="num inline-flex items-center gap-2 text-xs">
+              <StatusDot signal="warn" />
+              truncated
+            </span>
+          )}
+        </span>
       }
       onOpenChange={(open) => !open && onClose()}
       open={open}
       tags={entry.tags}
       title={mailSubject(content)}
     >
-      <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
-        <div>
-          <dt className="text-xs text-muted-foreground">Mailer</dt>
-          <dd className="mt-0.5 font-mono text-sm">{content.mailer}</dd>
+      <dl className="well grid gap-2.5 p-3 sm:grid-cols-2">
+        <div className="min-w-0">
+          <dt className="text-xs text-ink-3">Mailer</dt>
+          <dd className="num mt-0.5 truncate text-sm" title={content.mailer}>
+            {content.mailer}
+          </dd>
         </div>
         <div>
-          <dt className="text-xs text-muted-foreground">Lifecycle event</dt>
-          <dd className="mt-0.5 text-sm">{eventLabel(content.event)}</dd>
+          <dt className="text-xs text-ink-3">Lifecycle event</dt>
+          <dd className="mt-0.5">
+            <Lifecycle event={content.event} />
+          </dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="text-xs text-ink-3">Message ID</dt>
+          <dd className="num mt-0.5 truncate text-xs" title={content.messageId ?? 'Unavailable'}>
+            {content.messageId ?? 'Unavailable'}
+          </dd>
         </div>
         <div>
-          <dt className="text-xs text-muted-foreground">Message ID</dt>
-          <dd className="mt-0.5 break-all font-mono text-xs">{content.messageId ?? 'Unavailable'}</dd>
-        </div>
-        <div>
-          <dt className="text-xs text-muted-foreground">Capture state</dt>
-          <dd className="mt-0.5 text-sm">
-            {content.truncated ? 'Truncated at the configured limit' : 'Not truncated'}
+          <dt className="text-xs text-ink-3">Capture state</dt>
+          <dd className="mt-0.5">
+            <span className="num inline-flex items-center gap-2 text-xs">
+              <StatusDot signal={content.truncated ? 'warn' : 'neutral'} />
+              {content.truncated ? 'Truncated at the configured limit' : 'Not truncated'}
+            </span>
           </dd>
         </div>
       </dl>

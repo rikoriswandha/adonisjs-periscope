@@ -10,10 +10,10 @@ import {
   buildHttpClientDurationData,
   isHttpClientFailure,
 } from '@/components/http-client-duration-data'
+import { MethodTag, Panel, PanelHeader } from '@/components/instrument'
 import { StatusBadge } from '@/components/status-badge'
 import { Badge } from '@/components/ui/badge'
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { Frame, FramePanel } from '@/components/ui/frame'
 import { formatDateTime, formatDuration } from '@/lib/format'
 import type { HttpClientContent, StoredEntry } from '@/types'
 
@@ -39,116 +39,129 @@ export function HttpClientDurationChart({ entries }: { entries: StoredEntry[] })
   if (data.length < 2) return null
 
   return (
-    <Frame className="rounded-lg p-0.5" aria-labelledby="http-client-duration-title">
-      <FramePanel className="overflow-hidden rounded-md p-0 shadow-none before:shadow-none">
-        <figure>
-          <figcaption className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
-        <div>
-          <h2
-            className="flex items-center gap-2 text-xs font-semibold"
-            id="http-client-duration-title"
-          >
-            <BarChart3 aria-hidden="true" className="size-3.5 text-primary" />
-            Outbound request duration
-          </h2>
-          <p className="mt-0.5 text-2xs text-muted-foreground">
-            Recent response times as evenly spaced samples, oldest to newest. Outcomes are available in the
-            data table.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {failureCount > 0 && (
-            <Badge variant="destructive">
-              {failureCount} {failureCount === 1 ? 'failure' : 'failures'}
-            </Badge>
-          )}
-          <span className="font-mono text-2xs tabular-nums text-muted-foreground">
-            {data.length} samples
-          </span>
-        </div>
-      </figcaption>
-      <div
-        aria-label={`Line chart of ${data.length} outbound request durations, including ${failureCount} ${failureCount === 1 ? 'failure' : 'failures'}`}
-        className="px-2 pt-2 sm:px-4"
-        role="img"
-      >
-        <LineChart
-          animationDuration={0}
-          aspectRatio="3 / 1"
-          data={data}
-          margin={{ top: 16, right: 20, bottom: 36, left: 20 }}
-          xDataKey="sample"
-        >
-          <Grid horizontal numTicksRows={4} />
-          <Line curve={curveLinear} dataKey="duration" fadeEdges={false} stroke="var(--chart-line-primary)" />
-          <XAxis numTicks={5} />
-          <ChartTooltip
-            content={({ point }) => (
-              <div className="max-w-80 space-y-1.5 px-2.5 py-2">
-                <p className="text-2xs text-chart-tooltip-muted">
-                  {formatDateTime((point.date as Date).toISOString())}
-                </p>
-                <p className="break-all font-mono text-sm font-medium leading-snug text-chart-tooltip-foreground">
-                  <span className="text-2xs font-normal text-chart-tooltip-muted">{String(point.method)}</span>{' '}
-                  {String(point.path)}
-                </p>
-                <p className="font-mono text-xs tabular-nums text-chart-tooltip-foreground">
-                  {formatDuration(point.duration as number)}
-                </p>
-              </div>
+    <Panel aria-labelledby="http-client-duration-title" className="overflow-hidden">
+      <PanelHeader
+        action={
+          <span className="flex items-center gap-2">
+            {failureCount > 0 && (
+              <Badge className="num" variant="destructive">
+                {failureCount} {failureCount === 1 ? 'failure' : 'failures'}
+              </Badge>
             )}
-            showDatePill={false}
-          />
-        </LineChart>
-      </div>
-      <Collapsible onOpenChange={setTableOpen} open={tableOpen}>
-        <CollapsibleTrigger className="flex w-full items-center justify-center gap-1.5 border-t px-3 py-1.5 text-2xs font-medium text-muted-foreground outline-none hover:bg-accent/45 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
-          {tableOpen ? 'Hide' : 'View'} chart data
-          <ChevronDown
-            aria-hidden="true"
-            className={`size-3.5 transition-transform ${tableOpen ? 'rotate-180' : ''}`}
-          />
-        </CollapsibleTrigger>
-        <CollapsiblePanel>
-          <div className="max-h-64 overflow-auto border-t">
-            <table className="w-full text-left text-xs">
-              <caption className="sr-only">
-                Outbound HTTP request duration and outcome data used by the chart
-              </caption>
-              <thead className="sticky top-0 bg-muted text-muted-foreground">
-                <tr>
-                  <th className="h-8 px-2.5 text-2xs font-medium tracking-wide uppercase">When</th>
-                  <th className="h-8 px-2.5 text-2xs font-medium tracking-wide uppercase">Request</th>
-                  <th className="h-8 px-2.5 text-2xs font-medium tracking-wide uppercase">Result</th>
-                  <th className="h-8 px-2.5 text-right text-2xs font-medium tracking-wide uppercase">
-                    Duration
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {data.map((point, index) => (
-                  <tr key={`${point.date.toISOString()}-${index}`}>
-                    <td className="whitespace-nowrap px-3 py-2">
-                      {formatDateTime(point.date.toISOString())}
-                    </td>
-                    <td className="max-w-md break-all px-3 py-2 font-mono" title={`${point.method} ${point.path}`}>
-                      <span className="text-muted-foreground">{point.method}</span> {point.path}
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-2">
-                      <HttpClientResult content={point.content} />
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono tabular-nums">
-                      {formatDuration(point.duration)}
-                    </td>
+            <span className="num text-micro text-ink-3">{data.length} samples</span>
+          </span>
+        }
+        icon={<BarChart3 aria-hidden="true" className="size-3.5" />}
+        id="http-client-duration-title"
+        title="Outbound request duration"
+      />
+      <figure>
+        <figcaption className="sr-only">
+          Recent outbound response times as evenly spaced samples, oldest to newest; outcomes
+          are available in the data table
+        </figcaption>
+        <div
+          aria-label={`Line chart of ${data.length} outbound request durations, including ${failureCount} ${failureCount === 1 ? 'failure' : 'failures'}`}
+          className="h-[200px] px-2 pt-2 sm:px-3"
+          role="img"
+        >
+          <LineChart
+            animationDuration={0}
+            aspectRatio={null}
+            data={data}
+            margin={{ top: 16, right: 20, bottom: 36, left: 20 }}
+            xDataKey="sample"
+          >
+            <Grid horizontal numTicksRows={4} />
+            <Line
+              curve={curveLinear}
+              dataKey="duration"
+              fadeEdges={false}
+              stroke="var(--chart-line-primary)"
+            />
+            <XAxis numTicks={5} />
+            <ChartTooltip
+              content={({ point }) => (
+                <div className="max-w-80 space-y-1.5 px-3 py-2.5">
+                  <p className="micro-label">Duration</p>
+                  <p className="num text-micro text-chart-tooltip-muted">
+                    {formatDateTime((point.date as Date).toISOString())}
+                  </p>
+                  <p className="num break-all text-sm leading-snug text-chart-tooltip-foreground">
+                    <span className="text-chart-tooltip-muted">{String(point.method)}</span>{' '}
+                    {String(point.path)}
+                  </p>
+                  <p className="num text-xs font-medium text-chart-tooltip-foreground">
+                    {formatDuration(point.duration as number)}
+                  </p>
+                </div>
+              )}
+              showDatePill={false}
+            />
+          </LineChart>
+        </div>
+        <Collapsible onOpenChange={setTableOpen} open={tableOpen}>
+          <CollapsibleTrigger className="flex min-h-[var(--control-h)] w-full items-center justify-center gap-1.5 border-t border-edge px-3 text-xs font-medium text-ink-3 outline-none transition-colors duration-[var(--dur-fast)] hover:bg-panel-raised hover:text-ink active:bg-well disabled:pointer-events-none disabled:opacity-50 [@media(pointer:coarse)]:min-h-11">
+            {tableOpen ? 'Hide' : 'View'} chart data
+            <ChevronDown
+              aria-hidden="true"
+              className={`size-3.5 transition-transform duration-[var(--dur-base)] ${tableOpen ? 'rotate-180' : ''}`}
+            />
+          </CollapsibleTrigger>
+          <CollapsiblePanel>
+            <div className="well max-h-64 overflow-auto rounded-none border-x-0 border-b-0">
+              <table className="w-full text-left text-xs">
+                <caption className="sr-only">
+                  Outbound HTTP request duration and outcome data used by the chart
+                </caption>
+                <thead className="sticky top-0 bg-well text-ink-3">
+                  <tr>
+                    <th className="micro-label px-3 py-[var(--cell-py)]" scope="col">
+                      When
+                    </th>
+                    <th className="micro-label px-3 py-[var(--cell-py)]" scope="col">
+                      Request
+                    </th>
+                    <th className="micro-label px-3 py-[var(--cell-py)]" scope="col">
+                      Result
+                    </th>
+                    <th
+                      className="micro-label px-3 py-[var(--cell-py)] text-right"
+                      scope="col"
+                    >
+                      Duration
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CollapsiblePanel>
-      </Collapsible>
-        </figure>
-      </FramePanel>
-    </Frame>
+                </thead>
+                <tbody className="divide-y divide-edge text-ink-2">
+                  {data.map((point, index) => (
+                    <tr className="h-[var(--row-h)]" key={`${point.date.toISOString()}-${index}`}>
+                      <td className="num whitespace-nowrap px-3 py-[var(--cell-py)]">
+                        {formatDateTime(point.date.toISOString())}
+                      </td>
+                      <td
+                        className="max-w-md px-3 py-[var(--cell-py)]"
+                        title={`${point.method} ${point.path}`}
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <MethodTag method={point.method} />
+                          <span className="num truncate text-ink">{point.path}</span>
+                        </span>
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-[var(--cell-py)]">
+                        <HttpClientResult content={point.content} />
+                      </td>
+                      <td className="num whitespace-nowrap px-3 py-[var(--cell-py)] text-right text-ink">
+                        {formatDuration(point.duration)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CollapsiblePanel>
+        </Collapsible>
+      </figure>
+    </Panel>
   )
 }

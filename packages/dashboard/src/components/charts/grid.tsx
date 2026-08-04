@@ -9,7 +9,8 @@ import { isLoadingChromePhase, isLoadingGridChromePhase } from './y-domain-utils
 
 const DEFAULT_SHIMMER_LENGTH_PX = 140
 const DEFAULT_SHIMMER_SPEED = 1
-const DEFAULT_SHIMMER_STROKE = 'color-mix(in oklch, var(--foreground) 68%, transparent)'
+const DEFAULT_SHIMMER_STROKE =
+  'color-mix(in oklch, var(--chart-foreground-muted) 68%, transparent)'
 
 export interface GridProps {
   /** Show horizontal grid lines. Default: true */
@@ -168,12 +169,12 @@ export function Grid({
       {horizontal && fadeHorizontal && (
         <defs>
           <linearGradient id={hGradientId} x1="0%" x2="100%" y1="0%" y2="0%">
-            <stop offset="0%" style={{ stopColor: 'white', stopOpacity: 0 }} />
-            <stop offset="10%" style={{ stopColor: 'white', stopOpacity: 1 }} />
-            <stop offset="90%" style={{ stopColor: 'white', stopOpacity: 1 }} />
-            <stop offset="100%" style={{ stopColor: 'white', stopOpacity: 0 }} />
+            <stop offset="0%" style={{ stopColor: 'var(--chart-foreground)', stopOpacity: 0 }} />
+            <stop offset="10%" style={{ stopColor: 'var(--chart-foreground)', stopOpacity: 1 }} />
+            <stop offset="90%" style={{ stopColor: 'var(--chart-foreground)', stopOpacity: 1 }} />
+            <stop offset="100%" style={{ stopColor: 'var(--chart-foreground)', stopOpacity: 0 }} />
           </linearGradient>
-          <mask id={hMaskId}>
+          <mask id={hMaskId} style={{ maskType: 'alpha' }}>
             <rect
               fill={`url(#${hGradientId})`}
               height={innerHeight}
@@ -209,12 +210,12 @@ export function Grid({
       {vertical && fadeVertical && (
         <defs>
           <linearGradient id={vGradientId} x1="0%" x2="0%" y1="0%" y2="100%">
-            <stop offset="0%" style={{ stopColor: 'white', stopOpacity: 0 }} />
-            <stop offset="10%" style={{ stopColor: 'white', stopOpacity: 1 }} />
-            <stop offset="90%" style={{ stopColor: 'white', stopOpacity: 1 }} />
-            <stop offset="100%" style={{ stopColor: 'white', stopOpacity: 0 }} />
+            <stop offset="0%" style={{ stopColor: 'var(--chart-foreground)', stopOpacity: 0 }} />
+            <stop offset="10%" style={{ stopColor: 'var(--chart-foreground)', stopOpacity: 1 }} />
+            <stop offset="90%" style={{ stopColor: 'var(--chart-foreground)', stopOpacity: 1 }} />
+            <stop offset="100%" style={{ stopColor: 'var(--chart-foreground)', stopOpacity: 0 }} />
           </linearGradient>
-          <mask id={vMaskId}>
+          <mask id={vMaskId} style={{ maskType: 'alpha' }}>
             <rect
               fill={`url(#${vGradientId})`}
               height={innerHeight}

@@ -12,12 +12,10 @@ import type { EntryColumn } from '@/components/entry-index-table'
 import { JsonTree } from '@/components/json-tree'
 import { PageHeader } from '@/components/page-header'
 import { TagChip } from '@/components/tag-chip'
-import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useDashboard } from '@/dashboard-context'
 import { useCursorPagination } from '@/hooks/use-cursor-pagination'
 import { useNewEntryPolling } from '@/hooks/use-polling'
-import { formatDateTime } from '@/lib/format'
 import { entryUrlFilterState } from '@/lib/global-search'
 import { registerEntryType as registerMetadata } from '@/lib/entry-type-registration'
 import type { EntryFilters, EntryType, StoredEntry } from '@/types'
@@ -104,8 +102,7 @@ function GenericEntryDetail({
 }: RegisteredEntryDetailProps & { error?: Error }) {
   return (
     <EntryDetailDrawer
-      description={`${entry.type.replaceAll('_', ' ')} · ${formatDateTime(entry.createdAt)}`}
-      meta={<Badge variant="secondary">{entry.type.replaceAll('_', ' ')}</Badge>}
+      description={error ? 'The registered detail renderer could not be loaded.' : 'Loading recorded entry content.'}
       onOpenChange={(nextOpen) => !nextOpen && onClose()}
       open={open}
       tags={entry.tags}
@@ -113,13 +110,19 @@ function GenericEntryDetail({
     >
       {error ? (
         <div className="space-y-3">
-          <p className="rounded-md border bg-destructive/5 p-3 text-sm text-destructive-foreground">
+          <p className="well bg-sig-error/10 p-3 text-sm text-sig-error" role="alert">
             {error.message}
           </p>
           <JsonTree label="Recorded content" value={entry.content} />
         </div>
       ) : (
-        <div aria-label="Loading entry details" className="space-y-3" role="status">
+        <div
+          aria-busy="true"
+          aria-label="Loading entry details"
+          aria-live="polite"
+          className="space-y-3"
+          role="status"
+        >
           <Skeleton className="h-24 w-full" />
           <Skeleton className="h-40 w-full" />
         </div>

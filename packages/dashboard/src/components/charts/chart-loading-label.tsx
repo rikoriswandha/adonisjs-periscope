@@ -1,6 +1,6 @@
 'use client'
 
-import { motion } from 'motion/react'
+import { motion, useReducedMotion } from 'motion/react'
 import { cn } from '@/lib/utils'
 import { ShimmeringText } from '../shimmering-text'
 import {
@@ -22,6 +22,7 @@ export function ChartLoadingLabel({
   className,
   exiting = false,
 }: ChartLoadingLabelProps) {
+  const reducedMotion = useReducedMotion()
   if (!text.trim()) {
     return null
   }
@@ -41,12 +42,12 @@ export function ChartLoadingLabel({
       initial={false}
       role="status"
       transition={{
-        duration: LOADING_LABEL_EXIT_S,
+        duration: reducedMotion ? 0 : LOADING_LABEL_EXIT_S,
         ease: [...LINE_LOADING_PULSE_EASE],
       }}
     >
       <ShimmeringText
-        className="font-medium text-sm tracking-wide [--color:var(--muted-foreground)] [--shimmering-color:var(--foreground)]"
+        className="text-sm font-medium [--color:var(--chart-foreground-muted)] [--shimmering-color:var(--chart-foreground)]"
         text={text}
       />
     </motion.div>

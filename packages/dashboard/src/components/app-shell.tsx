@@ -1,38 +1,21 @@
 import {
-  BellRing,
-  Bug,
   CirclePause,
   Database,
-  CircleHelp,
   Ellipsis,
-  Gauge,
-  LayoutDashboard,
-  Monitor,
-  Moon,
+  Menu as MenuIcon,
+  PanelLeft,
+  Rows2,
+  Rows3,
   Search,
-  Sun,
   Trash2,
   TriangleAlert,
 } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { FormEvent } from 'react'
-import { NavLink, Outlet, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useSearchParams } from 'react-router-dom'
 
-import { DashboardContext } from '@/dashboard-context'
-import { usePolling } from '@/hooks/use-polling'
-import { api } from '@/lib/api'
-import { globalSearchTarget } from '@/lib/global-search'
-import { connectLiveUpdates, liveUpdateLabel } from '@/lib/live-updates'
-import { normalizeMonitoredTags, setMonitoredTag } from '@/lib/monitored-tags'
-import type {
-  DashboardStatus,
-  EntryCounts,
-  EntryType,
-  FlushStreamEvent,
-  LiveUpdateMode,
-} from '@/types'
-import { wave2EntryTypes } from '@/wave2-entry-types'
+import { CommandPalette } from '@/components/command-palette'
+import { PeriscopeLogo } from '@/components/periscope-logo'
+import { SignalStrip } from '@/components/signal-strip'
 import {
   AlertDialog,
   AlertDialogClose,
@@ -42,30 +25,9 @@ import {
   AlertDialogPopup,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogPanel, DialogPopup, DialogTitle } from '@/components/ui/dialog'
-import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group'
 import { Kbd, KbdGroup } from '@/components/ui/kbd'
-import { Separator } from '@/components/ui/separator'
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarInset,
-  SidebarMenu,
-  SidebarMenuBadge,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarProvider,
-  SidebarRail,
-  SidebarSeparator,
-  SidebarTrigger,
-} from '@/components/ui/sidebar'
 import {
   Menu,
   MenuCheckboxItem,
@@ -76,144 +38,213 @@ import {
   MenuRadioGroup,
   MenuRadioItem,
   MenuSeparator,
-  MenuShortcut,
   MenuTrigger,
 } from '@/components/ui/menu'
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { PeriscopeLogo } from '@/components/periscope-logo'
+import { Sheet, SheetPopup, SheetTitle } from '@/components/ui/sheet'
+import { Tooltip, TooltipPopup, TooltipTrigger } from '@/components/ui/tooltip'
+import { DashboardContext } from '@/dashboard-context'
+import { usePolling } from '@/hooks/use-polling'
+import { api } from '@/lib/api'
+import { connectLiveUpdates, liveUpdateLabel } from '@/lib/live-updates'
+import { normalizeMonitoredTags, setMonitoredTag } from '@/lib/monitored-tags'
+import { navigationGroups, titleByPath } from '@/lib/navigation'
+import type { Density, ThemePreference } from '@/lib/preferences'
+import {
+  applyDensity,
+  applyThemePreference,
+  readDensity,
+  readThemePreference,
+} from '@/lib/preferences'
+import { cn } from '@/lib/utils'
+import type {
+  DashboardStatus,
+  EntryCounts,
+  FlushStreamEvent,
+  LiveUpdateMode,
 
-type NavigationItem = {
-  to: string
-  label: string
-  type?: EntryType
-  icon: LucideIcon
-}
+} from '@/types'
 
-const navigationGroups: { label: string; items: NavigationItem[] }[] = [
-  {
-    label: 'Core',
-    items: [
-      { to: '/overview', label: 'Overview', icon: LayoutDashboard },
-      { to: '/requests', label: 'Requests', type: 'request', icon: Gauge },
-      { to: '/queries', label: 'Queries', type: 'query', icon: Database },
-      { to: '/exceptions', label: 'Exceptions', type: 'exception', icon: Bug },
-    ],
-  },
-  ...(['Application', 'Infrastructure', 'Diagnostics'] as const).map((label) => ({
-    label,
-    items: [
-      ...wave2EntryTypes
-        .filter((registration) => registration.group === label)
-        .map((registration) => ({
-          to: `/${registration.path}`,
-          label: registration.label,
-          type: registration.type,
-          icon: registration.icon,
-        })),
-      ...(label === 'Diagnostics'
-        ? [{ to: '/monitored-tags', label: 'Monitored tags', icon: BellRing }]
-        : []),
-    ],
-  })),
-]
-
-const titleByPath: Record<string, string> = {
-  'overview': 'Overview',
-  'requests': 'Requests',
-  'queries': 'Queries',
-  'exceptions': 'Exceptions',
-  'search': 'Search',
-  'monitored-tags': 'Monitored tags',
-  ...Object.fromEntries(
-    wave2EntryTypes.map((registration) => [registration.path, registration.label])
-  ),
-}
-
-function LiveStatusBadge({
-  liveUpdateMode,
-  enabled,
-}: {
-  liveUpdateMode: LiveUpdateMode
-  enabled: boolean | undefined
-}) {
-  const variant =
-    liveUpdateMode === 'live' ? 'success' : liveUpdateMode === 'polling' ? 'warning' : 'secondary'
-
-  return (
-    <Badge
-      aria-live="polite"
-      className="font-mono tabular-nums"
-      role="status"
-      size="sm"
-      variant={variant}
-    >
-      <span
-        aria-hidden="true"
-        className={`size-1.5 rounded-full ${
-          liveUpdateMode === 'live'
-            ? 'bg-success'
-            : liveUpdateMode === 'polling'
-              ? 'bg-warning'
-              : 'bg-muted-foreground'
-        }`}
-      />
-      {enabled === undefined ? 'Checking' : liveUpdateLabel(liveUpdateMode, enabled)}
-    </Badge>
-  )
-}
-
-type ThemePreference = 'light' | 'dark' | 'system'
-
-const THEME_STORAGE_KEY = 'periscope-theme'
 const ROW_NAVIGATION_EVENT = 'periscope:index-row-navigation'
 const CLOSE_DETAIL_EVENT = 'periscope:close-entry-detail'
+const RAIL_STORAGE_KEY = 'periscope-rail-collapsed'
+
+const shortcutItems = [
+  { label: 'Command palette', keys: ['⌘', 'K'] },
+  { label: 'Search recorded content', keys: ['/'] },
+  { label: 'Collapse navigation', keys: ['⌘', 'B'] },
+  { label: 'Move between rows', keys: ['J', 'K'] },
+  { label: 'Close detail', keys: ['Esc'] },
+  { label: 'This help', keys: ['?'] },
+] as const
+
+const densityItems: { label: string; value: Density }[] = [
+  { label: 'Compact', value: 'compact' },
+  { label: 'Comfortable', value: 'comfortable' },
+]
+
 const themeItems: { label: string; value: ThemePreference }[] = [
-  { label: 'Light', value: 'light' },
   { label: 'Dark', value: 'dark' },
+  { label: 'Light', value: 'light' },
   { label: 'System', value: 'system' },
 ]
 
-const shortcutItems = [
-  { keys: ['/'], label: 'Focus search' },
-  { keys: ['J'], label: 'Focus next row' },
-  { keys: ['K'], label: 'Focus previous row' },
-  { keys: ['Esc'], label: 'Close detail drawer' },
-  { keys: ['⌘/Ctrl', 'B'], label: 'Toggle sidebar' },
-  { keys: ['?'], label: 'Show shortcuts' },
-] as const
-function readThemePreference(): ThemePreference {
-  try {
-    const stored = localStorage.getItem(THEME_STORAGE_KEY)
-    if (stored === 'light' || stored === 'dark' || stored === 'system') return stored
-  } catch {
-    // Storage can be unavailable in locked-down browser contexts.
-  }
-  return 'system'
-}
-
-function applyThemePreference(theme: ThemePreference): void {
-  const dark =
-    theme === 'dark' ||
-    (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
-  document.documentElement.classList.toggle('dark', dark)
-  document.documentElement.dataset.theme = theme
-  document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
-}
-
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false
+  const tag = target.tagName
   return (
-    target.matches('input, textarea, select') ||
-    target.isContentEditable ||
-    target.closest('[contenteditable="true"]') !== null
+    tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable === true
+  )
+}
+
+/**
+ * The live indicator. A recorder's most important piece of status is whether it
+ * is currently recording, so it sits in the rail header where it is never more
+ * than a glance away.
+ */
+function LiveIndicator({
+  liveUpdateMode,
+  enabled,
+  compact,
+}: {
+  liveUpdateMode: LiveUpdateMode
+  enabled: boolean | undefined
+  compact: boolean
+}) {
+  const live = liveUpdateMode === 'live'
+  const connecting = liveUpdateMode === 'connecting'
+  const tone = enabled === false || liveUpdateMode === 'off' ? 'off' : live ? 'live' : 'degraded'
+
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1.5 text-micro',
+        tone === 'live' && 'text-sig-ok',
+        tone === 'degraded' && 'text-sig-warn',
+        tone === 'off' && 'text-ink-4'
+      )}
+      title={liveUpdateLabel(liveUpdateMode, enabled ?? false)}
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          'size-[5px] shrink-0 rounded-full',
+          tone === 'live' && 'bg-sig-ok',
+          tone === 'degraded' && 'bg-sig-warn',
+          tone === 'off' && 'bg-ink-4',
+          (live || connecting) && 'animate-pulse-dot'
+        )}
+      />
+      {!compact && (
+        <span className="truncate">{liveUpdateLabel(liveUpdateMode, enabled ?? false)}</span>
+      )}
+    </span>
+  )
+}
+
+/**
+ * The navigation rail. Built directly rather than through a generic sidebar
+ * primitive: the chassis *is* the identity here, and the active state is a
+ * raised panel rather than a coloured stripe.
+ */
+function Rail({
+  collapsed,
+  counts,
+  applicationSearch,
+  onNavigate,
+}: {
+  collapsed: boolean
+  counts: EntryCounts
+  applicationSearch: string
+  onNavigate?: () => void
+}) {
+  const location = useLocation()
+
+  return (
+    <nav
+      aria-label="Watchers"
+      className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-2 py-3"
+    >
+      {navigationGroups.map((group) => (
+        <div className="flex flex-col gap-0.5" key={group.label}>
+          {!collapsed && <span className="micro-label px-2 pb-1">{group.label}</span>}
+          {group.items.map((item) => {
+            const Icon = item.icon
+            const active =
+              location.pathname === item.to || location.pathname.startsWith(`${item.to}/`)
+            const count = item.type ? (counts[item.type] ?? 0) : null
+
+            const link = (
+              <NavLink
+                aria-label={collapsed ? item.label : undefined}
+                className={cn(
+                  'group relative flex h-7 shrink-0 items-center gap-2 rounded-sm px-2',
+                  'transition-colors duration-(--dur-fast) ease-(--ease-out-quart)',
+                  collapsed && 'justify-center px-0',
+                  active
+                    ? 'border border-edge-strong bg-panel-raised text-ink shadow-[inset_0_1px_0_0_var(--highlight)]'
+                    : 'border border-transparent text-ink-2 hover:bg-panel hover:text-ink'
+                )}
+                onClick={onNavigate}
+                key={item.to}
+                to={{ pathname: item.to, search: applicationSearch }}
+              >
+                <Icon
+                  aria-hidden="true"
+                  className={cn('size-3.5 shrink-0', active ? 'text-ink' : 'text-ink-3')}
+                />
+                {!collapsed && (
+                  <>
+                    <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
+                    {count !== null && (
+                      <span
+                        className={cn(
+                          'num shrink-0 text-micro',
+                          count === 0 ? 'text-ink-4' : active ? 'text-ink-2' : 'text-ink-3'
+                        )}
+                      >
+                        {count.toLocaleString()}
+                      </span>
+                    )}
+                  </>
+                )}
+              </NavLink>
+            )
+
+            if (!collapsed) return link
+
+            return (
+              <Tooltip key={item.to}>
+                <TooltipTrigger render={link} />
+                <TooltipPopup side="right">
+                  <span className="flex items-center gap-2">
+                    {item.label}
+                    {count !== null && <span className="num text-ink-3">{count}</span>}
+                  </span>
+                </TooltipPopup>
+              </Tooltip>
+            )
+          })}
+        </div>
+      ))}
+    </nav>
   )
 }
 
 export function AppShell() {
-  const navigate = useNavigate()
   const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
   const [theme, setTheme] = useState<ThemePreference>(readThemePreference)
+  const [density, setDensity] = useState<Density>(readDensity)
+  const [railCollapsed, setRailCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(RAIL_STORAGE_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false)
   const [clearDialogOpen, setClearDialogOpen] = useState(false)
   const [status, setStatus] = useState<DashboardStatus | null>(null)
@@ -233,14 +264,17 @@ export function AppShell() {
   const monitoredTagMutationsRef = useRef(new Set<string>())
   const monitoredTagsRequestRef = useRef<AbortController | null>(null)
   const preservedApplicationRef = useRef<string | null>(searchParams.get('application'))
+
   const commitMonitoredTags = useCallback((update: (current: string[]) => string[]) => {
     const next = update(monitoredTagsRef.current)
     monitoredTagsRef.current = next
     setMonitoredTags(next)
   }, [])
+
   const requestedApplication = searchParams.get('application')
   if (requestedApplication) preservedApplicationRef.current = requestedApplication
   const preservedApplication = requestedApplication ?? preservedApplicationRef.current
+
   const selectedApplication = useMemo(() => {
     if (
       preservedApplication &&
@@ -250,6 +284,7 @@ export function AppShell() {
     }
     return status?.applicationName ?? preservedApplication ?? 'default'
   }, [preservedApplication, status])
+
   const selectApplication = useCallback(
     (application: string) => {
       const next = new URLSearchParams(searchParams)
@@ -262,12 +297,28 @@ export function AppShell() {
   const selectTheme = useCallback((nextTheme: ThemePreference) => {
     setTheme(nextTheme)
     applyThemePreference(nextTheme)
-    try {
-      localStorage.setItem(THEME_STORAGE_KEY, nextTheme)
-    } catch {
-      // The in-memory preference still works when persistence is unavailable.
-    }
   }, [])
+
+  const selectDensity = useCallback((nextDensity: Density) => {
+    setDensity(nextDensity)
+    applyDensity(nextDensity)
+  }, [])
+
+  const toggleRail = useCallback(() => {
+    setRailCollapsed((collapsed) => {
+      const next = !collapsed
+      try {
+        localStorage.setItem(RAIL_STORAGE_KEY, next ? '1' : '0')
+      } catch {
+        // The in-memory preference still works when persistence is unavailable.
+      }
+      return next
+    })
+  }, [])
+
+  useEffect(() => {
+    applyDensity(density)
+  }, [density])
 
   useEffect(() => {
     applyThemePreference(theme)
@@ -289,22 +340,25 @@ export function AppShell() {
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
-      if (
-        event.defaultPrevented ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.altKey ||
-        isEditableTarget(event.target)
-      ) {
+      if (event.defaultPrevented) return
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setPaletteOpen((open) => !open)
         return
       }
 
-      if (event.key === '/') {
-        const input = document.querySelector<HTMLInputElement>('form[role="search"] input')
-        if (!input) return
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'b') {
         event.preventDefault()
-        input.focus()
-        input.select()
+        toggleRail()
+        return
+      }
+
+      if (event.metaKey || event.ctrlKey || event.altKey || isEditableTarget(event.target)) return
+
+      if (event.key === '/') {
+        event.preventDefault()
+        setPaletteOpen(true)
         return
       }
 
@@ -331,7 +385,7 @@ export function AppShell() {
 
     window.addEventListener('keydown', handleShortcut, true)
     return () => window.removeEventListener('keydown', handleShortcut, true)
-  }, [])
+  }, [toggleRail])
 
   const refreshMonitoredTags = useCallback(async () => {
     if (monitoredTagMutationsRef.current.size > 0) return
@@ -402,10 +456,7 @@ export function AppShell() {
     immediate: true,
   })
 
-  usePolling(refreshMonitoredTags, {
-    enabled: true,
-    immediate: true,
-  })
+  usePolling(refreshMonitoredTags, { enabled: true, immediate: true })
 
   useEffect(
     () => () => {
@@ -538,305 +589,339 @@ export function AppShell() {
     ]
   )
 
-  const submitSearch = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const form = new FormData(event.currentTarget)
-    navigate(globalSearchTarget(String(form.get('text') ?? '')))
-  }
-
   const pageSegment = location.pathname.split('/').filter(Boolean)[0] ?? 'overview'
   const pageTitle = titleByPath[pageSegment] ?? 'Periscope'
-  const searchText = pageSegment === 'search' ? (searchParams.get('text') ?? '') : ''
+  const sectionLabel =
+    navigationGroups.find((group) => group.items.some((item) => item.to === `/${pageSegment}`))
+      ?.label ?? 'Core'
   const applicationSearch = preservedApplication
     ? `?${new URLSearchParams({ application: preservedApplication })}`
     : ''
+  const applications = status?.applications ?? []
+
+  const railBrand = (
+    <div
+      className={cn(
+        'flex h-11 shrink-0 items-center gap-2 border-b border-edge px-3',
+        railCollapsed && 'justify-center px-0'
+      )}
+    >
+      <PeriscopeLogo className="size-5" />
+      {!railCollapsed && (
+        <div className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate text-sm leading-4 font-semibold tracking-tight text-ink">
+            Periscope
+          </span>
+          <LiveIndicator
+            compact={false}
+            enabled={status?.enabled}
+            liveUpdateMode={liveUpdateMode}
+          />
+        </div>
+      )}
+    </div>
+  )
+
+  const railFooter = !railCollapsed && (
+    <div className="flex shrink-0 flex-col gap-2 border-t border-edge p-2">
+      {applications.length > 1 ? (
+        <Select
+          items={applications.map((application) => ({
+            label: application.name,
+            value: application.name,
+          }))}
+          onValueChange={(value) => {
+            if (typeof value === 'string' && value !== '') selectApplication(value)
+          }}
+          value={selectedApplication}
+        >
+          <SelectTrigger aria-label="Recording application" className="w-full" size="sm">
+            <Database aria-hidden="true" />
+            <SelectValue placeholder="Application" />
+          </SelectTrigger>
+          <SelectPopup>
+            {applications.map((application) => (
+              <SelectItem key={application.name} value={application.name}>
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate">{application.name}</span>
+                  <span className="num text-micro text-ink-3">
+                    {application.entries.toLocaleString()}
+                  </span>
+                </span>
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      ) : (
+        <span className="num truncate px-1 text-micro text-ink-4" title={selectedApplication}>
+          {selectedApplication}
+        </span>
+      )}
+      <p className="px-1 text-micro leading-4 text-ink-4">
+        Entries stay in this app&apos;s local store and follow retention settings.
+      </p>
+    </div>
+  )
 
   return (
     <DashboardContext.Provider value={contextValue}>
-      <SidebarProvider className="bg-background text-foreground">
-        <Sidebar collapsible="icon" variant="sidebar">
-          <SidebarHeader className="gap-2 border-b border-sidebar-border px-2 py-2.5">
-            <div className="flex items-center gap-2 px-1 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
-              <PeriscopeLogo className="size-7" />
-              <div className="min-w-0 group-data-[collapsible=icon]:hidden">
-                <div className="truncate text-sm font-semibold tracking-tight">Periscope</div>
-                <div className="truncate text-2xs text-muted-foreground">
-                  Local runtime recorder
-                </div>
-              </div>
-            </div>
-            <div className="px-1 group-data-[collapsible=icon]:hidden">
-              <LiveStatusBadge liveUpdateMode={liveUpdateMode} enabled={status?.enabled} />
-            </div>
-          </SidebarHeader>
+      <div className="flex h-dvh overflow-hidden bg-chassis text-ink">
+        <aside
+          className={cn(
+            'relative hidden shrink-0 flex-col border-r border-edge bg-[var(--sidebar)] lg:flex',
+            'transition-[width] duration-(--dur-base) ease-(--ease-out-quart)',
+            railCollapsed ? 'w-[3.25rem]' : 'w-56',
+            'z-[var(--z-rail)]'
+          )}
+        >
+          {railBrand}
+          <Rail
+            applicationSearch={applicationSearch}
+            collapsed={railCollapsed}
+            counts={counts}
+          />
+          {railFooter}
+        </aside>
 
-          <SidebarContent className="gap-1 px-1 py-2">
-            {navigationGroups.map((group, index) => (
-              <SidebarGroup className="p-1" key={group.label}>
-                {index > 0 && <SidebarSeparator className="mx-1 mb-2" />}
-                <SidebarGroupLabel className="h-6 px-2 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
-                  {group.label}
-                </SidebarGroupLabel>
-                <SidebarGroupContent>
-                  <SidebarMenu>
-                    {group.items.map((item) => {
-                      const Icon = item.icon
-                      const isActive =
-                        location.pathname === item.to || location.pathname.startsWith(`${item.to}/`)
-                      const count = item.type ? (counts[item.type] ?? 0) : null
-                      return (
-                        <SidebarMenuItem key={item.to}>
-                          <SidebarMenuButton
-                            isActive={isActive}
-                            render={
-                              <NavLink to={{ pathname: item.to, search: applicationSearch }} />
-                            }
-                            size="sm"
-                            tooltip={item.label}
-                          >
-                            <Icon aria-hidden="true" />
-                            <span>{item.label}</span>
-                          </SidebarMenuButton>
-                          {count !== null && (
-                            <SidebarMenuBadge className="font-mono text-2xs text-muted-foreground peer-data-[active=true]/menu-button:text-sidebar-accent-foreground">
-                              {count.toLocaleString()}
-                            </SidebarMenuBadge>
-                          )}
-                        </SidebarMenuItem>
-                      )
-                    })}
-                  </SidebarMenu>
-                </SidebarGroupContent>
-              </SidebarGroup>
-            ))}
-          </SidebarContent>
+        <Sheet onOpenChange={setMobileNavOpen} open={mobileNavOpen}>
+          <SheetPopup
+            className="flex w-64 flex-col bg-[var(--sidebar)] p-0"
+            side="left"
+          >
+            <SheetTitle className="sr-only">Watchers</SheetTitle>
+            {railBrand}
+            <Rail
+              applicationSearch={applicationSearch}
+              collapsed={false}
+              counts={counts}
+              onNavigate={() => setMobileNavOpen(false)}
+            />
+            {railFooter}
+          </SheetPopup>
+        </Sheet>
 
-          <SidebarFooter className="gap-2 border-t border-sidebar-border p-2">
-            <p className="px-2 text-2xs leading-4 text-muted-foreground group-data-[collapsible=icon]:hidden">
-              Entries stay in this app&apos;s local store and follow retention settings.
-            </p>
-            <div className="flex items-center gap-1.5 px-2 text-2xs text-muted-foreground group-data-[collapsible=icon]:hidden">
-              <span>Toggle nav</span>
-              <KbdGroup>
-                <Kbd>⌘</Kbd>
-                <Kbd>B</Kbd>
-              </KbdGroup>
-            </div>
-          </SidebarFooter>
-          <SidebarRail />
-        </Sidebar>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header
+            className="z-[var(--z-sticky)] flex h-11 shrink-0 items-center gap-2 border-b border-edge bg-chassis px-3"
+          >
+            <Button
+              aria-label="Open navigation"
+              className="lg:hidden"
+              onClick={() => setMobileNavOpen(true)}
+              size="sm"
+              variant="ghost"
+            >
+              <MenuIcon aria-hidden="true" />
+            </Button>
+            <Button
+              aria-label={railCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+              className="hidden lg:inline-flex"
+              onClick={toggleRail}
+              size="sm"
+              variant="ghost"
+            >
+              <PanelLeft aria-hidden="true" />
+            </Button>
 
-        <SidebarInset>
-          <header className="sticky top-0 z-20 border-b bg-background/95 backdrop-blur-sm supports-backdrop-filter:bg-background/80">
-            <div className="flex min-h-12 flex-wrap items-center gap-2 px-3 py-2 sm:px-4 lg:px-5">
-              <SidebarTrigger className="-ms-1" />
-              <Separator className="mx-0.5 hidden h-4 sm:block" orientation="vertical" />
-              <div className="me-auto flex min-w-0 items-center gap-2">
-                <h1 className="truncate text-sm font-semibold tracking-tight">{pageTitle}</h1>
-                {status?.paused && (
-                  <Badge
-                    render={
-                      <button
-                        aria-label="Recording paused. Resume recording"
-                        disabled={mutating}
-                        onClick={() => void togglePaused(false)}
-                        type="button"
-                      />
-                    }
-                    variant="warning"
-                  >
-                    <CirclePause aria-hidden="true" />
-                    Paused
-                  </Badge>
-                )}
-              </div>
+            <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5">
+              <span className="hidden text-sm text-ink-4 sm:inline">{sectionLabel}</span>
+              <span aria-hidden="true" className="hidden text-ink-4 sm:inline">
+                /
+              </span>
+              <h1 className="truncate text-sm font-medium text-ink" aria-current="page">
+                {pageTitle}
+              </h1>
+            </nav>
 
-              <form
-                className="order-last w-full basis-full sm:order-none sm:w-64 sm:basis-auto"
-                onSubmit={submitSearch}
-                role="search"
+            {status?.paused && (
+              <button
+                aria-label="Recording paused. Resume recording"
+                className="inline-flex h-5 shrink-0 items-center gap-1.5 rounded-sm border border-sig-warn/35 bg-sig-warn/10 px-1.5 text-micro text-sig-warn transition-colors hover:bg-sig-warn/16"
+                disabled={mutating}
+                onClick={() => void togglePaused(false)}
+                type="button"
               >
-                <InputGroup>
-                  <InputGroupInput
-                    aria-label="Search all recorded entry content"
-                    className="text-xs"
-                    defaultValue={searchText}
-                    key={searchText}
-                    name="text"
-                    placeholder="Search recorded content"
-                    type="search"
-                  />
-                  <InputGroupAddon>
-                    <Search aria-hidden="true" />
-                  </InputGroupAddon>
-                </InputGroup>
-              </form>
-
-              {(status?.applications.length ?? 0) > 1 && (
-                <Select
-                  items={(status?.applications ?? []).map((application) => ({
-                    label: application.name,
-                    value: application.name,
-                  }))}
-                  onValueChange={(value) => {
-                    if (typeof value === 'string' && value !== '') selectApplication(value)
-                  }}
-                  value={selectedApplication}
-                >
-                  <SelectTrigger
-                    aria-label="Application"
-                    className="max-w-[38vw] sm:w-36"
-                    size="sm"
-                  >
-                    <Database aria-hidden="true" />
-                    <SelectValue placeholder="Application" />
-                  </SelectTrigger>
-                  <SelectPopup>
-                    {(status?.applications ?? []).map((application) => (
-                      <SelectItem key={application.name} value={application.name}>
-                        <span className="flex min-w-0 items-center gap-2">
-                          <span className="min-w-0 flex-1 truncate">{application.name}</span>
-                          <span className="font-mono text-2xs tabular-nums text-muted-foreground">
-                            {application.entries.toLocaleString()}
-                          </span>
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectPopup>
-                </Select>
-              )}
-
-              <div className="relative shrink-0">
-                <Menu>
-                  <MenuTrigger
-                    render={<Button aria-label="Dashboard options" size="sm" variant="ghost" />}
-                  >
-                    <Ellipsis aria-hidden="true" />
-                  </MenuTrigger>
-                  <MenuPopup align="end" className="w-52">
-                    <MenuCheckboxItem
-                      checked={status?.paused ?? false}
-                      disabled={!status || !status.enabled || mutating}
-                      onCheckedChange={(checked) => void togglePaused(checked)}
-                      variant="switch"
-                    >
-                      <span className="flex items-center gap-2">
-                        <CirclePause aria-hidden="true" />
-                        Pause recording
-                      </span>
-                    </MenuCheckboxItem>
-                    <MenuSeparator />
-                    <MenuGroup>
-                      <MenuGroupLabel>Theme</MenuGroupLabel>
-                      <MenuRadioGroup
-                        onValueChange={(value) => {
-                          if (value === 'light' || value === 'dark' || value === 'system') {
-                            selectTheme(value)
-                          }
-                        }}
-                        value={theme}
-                      >
-                        {themeItems.map((item) => {
-                          const Icon =
-                            item.value === 'light' ? Sun : item.value === 'dark' ? Moon : Monitor
-                          return (
-                            <MenuRadioItem key={item.value} value={item.value}>
-                              <span className="flex items-center gap-2">
-                                <Icon aria-hidden="true" />
-                                {item.label}
-                              </span>
-                            </MenuRadioItem>
-                          )
-                        })}
-                      </MenuRadioGroup>
-                    </MenuGroup>
-                    <MenuSeparator />
-                    <MenuItem onClick={() => setShortcutHelpOpen(true)}>
-                      <CircleHelp aria-hidden="true" />
-                      Keyboard shortcuts
-                      <MenuShortcut>?</MenuShortcut>
-                    </MenuItem>
-                    <MenuSeparator />
-                    <MenuItem
-                      disabled={mutating}
-                      onClick={() => setClearDialogOpen(true)}
-                      variant="destructive"
-                    >
-                      <Trash2 aria-hidden="true" />
-                      Clear entries…
-                    </MenuItem>
-                  </MenuPopup>
-                </Menu>
-                <Dialog onOpenChange={setShortcutHelpOpen} open={shortcutHelpOpen}>
-                  <DialogPopup
-                    aria-modal="true"
-                    bottomStickOnMobile={false}
-                    className="w-64 rounded-lg p-3"
-                    id="keyboard-shortcut-help"
-                    showCloseButton={false}
-                  >
-                    <DialogTitle className="mb-2 text-xs">Keyboard shortcuts</DialogTitle>
-                    <DialogPanel className="p-0" scrollFade={false}>
-                      <dl className="space-y-1.5">
-                        {shortcutItems.map((shortcut) => (
-                          <div
-                            className="flex items-center justify-between gap-4"
-                            key={shortcut.label}
-                          >
-                            <dt className="text-xs text-muted-foreground">{shortcut.label}</dt>
-                            <dd>
-                              <KbdGroup>
-                                {shortcut.keys.map((key) => (
-                                  <Kbd key={key}>{key}</Kbd>
-                                ))}
-                              </KbdGroup>
-                            </dd>
-                          </div>
-                        ))}
-                      </dl>
-                    </DialogPanel>
-                  </DialogPopup>
-                </Dialog>
-              </div>
-
-              <AlertDialog onOpenChange={setClearDialogOpen} open={clearDialogOpen}>
-                <AlertDialogPopup>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Clear recorded entries?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      This permanently removes entries recorded by “{selectedApplication}” and
-                      cannot be undone. Other applications in this shared store are not changed.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogClose render={<Button variant="ghost" />}>Cancel</AlertDialogClose>
-                    <AlertDialogClose
-                      render={<Button loading={mutating} variant="destructive" />}
-                      onClick={() => void clearEntries()}
-                    >
-                      Clear {selectedApplication}
-                    </AlertDialogClose>
-                  </AlertDialogFooter>
-                </AlertDialogPopup>
-              </AlertDialog>
-            </div>
-
-            {statusError && (
-              <div
-                className="flex items-start gap-2 border-t bg-destructive/6 px-3 py-2 text-xs text-destructive-foreground sm:px-4 lg:px-5"
-                role="alert"
-              >
-                <TriangleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-                <span>{statusError.message}</span>
-              </div>
+                <CirclePause aria-hidden="true" className="size-3" />
+                Paused
+              </button>
             )}
+
+            <div className="ms-auto flex shrink-0 items-center gap-1.5">
+              <button
+                aria-label="Open command palette"
+                className={cn(
+                  'group flex h-7 items-center gap-2 rounded-sm border border-edge bg-well px-2',
+                  'text-ink-3 transition-colors duration-(--dur-fast) ease-(--ease-out-quart)',
+                  'hover:border-edge-strong hover:text-ink-2'
+                )}
+                onClick={() => setPaletteOpen(true)}
+                type="button"
+              >
+                <Search aria-hidden="true" className="size-3.5" />
+                <span className="hidden text-sm md:inline">Search or jump to…</span>
+                <KbdGroup className="hidden md:flex">
+                  <Kbd>⌘</Kbd>
+                  <Kbd>K</Kbd>
+                </KbdGroup>
+              </button>
+
+              <span className="hidden lg:inline">
+                <LiveIndicator
+                  compact
+                  enabled={status?.enabled}
+                  liveUpdateMode={liveUpdateMode}
+                />
+              </span>
+
+              <Menu>
+                <MenuTrigger
+                  render={<Button aria-label="Dashboard options" size="sm" variant="ghost" />}
+                >
+                  <Ellipsis aria-hidden="true" />
+                </MenuTrigger>
+                <MenuPopup align="end" className="w-56">
+                  <MenuCheckboxItem
+                    checked={status?.paused ?? false}
+                    disabled={!status || !status.enabled || mutating}
+                    onCheckedChange={(checked) => void togglePaused(checked)}
+                    variant="switch"
+                  >
+                    <span className="flex items-center gap-2">
+                      <CirclePause aria-hidden="true" />
+                      Pause recording
+                    </span>
+                  </MenuCheckboxItem>
+                  <MenuSeparator />
+                  <MenuGroup>
+                    <MenuGroupLabel>Density</MenuGroupLabel>
+                    <MenuRadioGroup
+                      onValueChange={(value) => {
+                        if (value === 'compact' || value === 'comfortable') selectDensity(value)
+                      }}
+                      value={density}
+                    >
+                      {densityItems.map((item) => (
+                        <MenuRadioItem key={item.value} value={item.value}>
+                          <span className="flex items-center gap-2">
+                            {item.value === 'compact' ? (
+                              <Rows3 aria-hidden="true" />
+                            ) : (
+                              <Rows2 aria-hidden="true" />
+                            )}
+                            {item.label}
+                          </span>
+                        </MenuRadioItem>
+                      ))}
+                    </MenuRadioGroup>
+                  </MenuGroup>
+                  <MenuSeparator />
+                  <MenuGroup>
+                    <MenuGroupLabel>Theme</MenuGroupLabel>
+                    <MenuRadioGroup
+                      onValueChange={(value) => {
+                        if (value === 'light' || value === 'dark' || value === 'system') {
+                          selectTheme(value)
+                        }
+                      }}
+                      value={theme}
+                    >
+                      {themeItems.map((item) => (
+                        <MenuRadioItem key={item.value} value={item.value}>
+                          {item.label}
+                        </MenuRadioItem>
+                      ))}
+                    </MenuRadioGroup>
+                  </MenuGroup>
+                  <MenuSeparator />
+                  <MenuItem
+                    disabled={mutating}
+                    onClick={() => setClearDialogOpen(true)}
+                    variant="destructive"
+                  >
+                    <Trash2 aria-hidden="true" />
+                    Clear entries…
+                  </MenuItem>
+                </MenuPopup>
+              </Menu>
+            </div>
           </header>
 
-          <main className="mx-auto w-full max-w-dashboard flex-1 px-3 py-4 sm:px-4 sm:py-5 lg:px-5">
+          <SignalStrip />
+
+          {statusError && (
+            <div
+              className="flex shrink-0 items-start gap-2 border-b border-sig-error/30 bg-sig-error/8 px-3 py-1.5 text-xs text-sig-error"
+              role="alert"
+            >
+              <TriangleAlert aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+              <span>{statusError.message}</span>
+            </div>
+          )}
+
+          <main className="min-h-0 flex-1 overflow-y-auto bg-chassis px-4 py-4">
             <Outlet />
           </main>
-        </SidebarInset>
-      </SidebarProvider>
+        </div>
+      </div>
+
+      <CommandPalette
+        density={density}
+        onClearRequest={() => setClearDialogOpen(true)}
+        onDensityChange={selectDensity}
+        onOpenChange={setPaletteOpen}
+        onShortcutHelp={() => setShortcutHelpOpen(true)}
+        onThemeChange={selectTheme}
+        open={paletteOpen}
+        theme={theme}
+      />
+
+      <Dialog onOpenChange={setShortcutHelpOpen} open={shortcutHelpOpen}>
+        <DialogPopup
+          aria-modal="true"
+          bottomStickOnMobile={false}
+          className="w-72 p-3"
+          showCloseButton={false}
+        >
+          <DialogTitle className="mb-2 text-sm">Keyboard shortcuts</DialogTitle>
+          <DialogPanel className="p-0" scrollFade={false}>
+            <dl className="space-y-1.5">
+              {shortcutItems.map((shortcut) => (
+                <div className="flex items-center justify-between gap-4" key={shortcut.label}>
+                  <dt className="text-sm text-ink-3">{shortcut.label}</dt>
+                  <dd>
+                    <KbdGroup>
+                      {shortcut.keys.map((key) => (
+                        <Kbd key={key}>{key}</Kbd>
+                      ))}
+                    </KbdGroup>
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </DialogPanel>
+        </DialogPopup>
+      </Dialog>
+
+      <AlertDialog onOpenChange={setClearDialogOpen} open={clearDialogOpen}>
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear recorded entries?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes entries recorded by “{selectedApplication}” and cannot be
+              undone. Other applications in this shared store are not changed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="ghost" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose
+              render={<Button loading={mutating} variant="destructive" />}
+              onClick={() => void clearEntries()}
+            >
+              Clear {selectedApplication}
+            </AlertDialogClose>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
     </DashboardContext.Provider>
   )
 }

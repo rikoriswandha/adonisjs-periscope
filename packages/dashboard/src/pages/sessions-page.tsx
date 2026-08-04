@@ -1,7 +1,7 @@
 import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
 import type { EntryColumn } from '@/components/entry-index-table'
 import { JsonTree } from '@/components/json-tree'
-import { Badge } from '@/components/ui/badge'
+import { StatusDot } from '@/components/instrument'
 import type { EntryTypeImplementation, RegisteredEntryDetailProps } from '@/entry-type-registry'
 import { formatDateTime, formatRelativeTime } from '@/lib/format'
 import type { SessionContent, StoredEntry } from '@/types'
@@ -15,33 +15,55 @@ const columns: EntryColumn[] = [
     key: 'operation',
     header: 'Lifecycle',
     primary: true,
-    cell: (entry) => <Badge variant="secondary">{content(entry).operation}</Badge>,
+    cell: (entry) => (
+      <span className="num inline-flex items-center gap-2 text-xs">
+        <StatusDot signal="neutral" />
+        {content(entry).operation}
+      </span>
+    ),
   },
   {
     key: 'session',
     header: 'Session hash',
-    cell: (entry) => <span className="font-mono text-xs">{content(entry).sessionIdHash}</span>,
+    className: 'w-72',
+    cell: (entry) => (
+      <span className="num block max-w-72 truncate text-xs" title={content(entry).sessionIdHash}>
+        {content(entry).sessionIdHash}
+      </span>
+    ),
   },
   {
     key: 'state',
     header: 'State',
+    className: 'w-28',
     cell: (entry) => {
       const value = content(entry)
-      return value.fresh
+      const state = value.fresh
         ? 'fresh'
         : value.modified
           ? 'modified'
           : value.readonly
             ? 'read-only'
             : 'unchanged'
+      return (
+        <span className="num inline-flex items-center gap-2 text-xs text-ink-2">
+          <StatusDot signal="neutral" />
+          {state}
+        </span>
+      )
     },
   },
   {
     key: 'when',
     header: 'When',
-    className: 'text-right',
+    className: 'w-36 text-right',
     cell: (entry) => (
-      <span title={formatDateTime(entry.createdAt)}>{formatRelativeTime(entry.createdAt)}</span>
+      <span
+        className="num block whitespace-nowrap text-right text-xs text-ink-3"
+        title={formatDateTime(entry.createdAt)}
+      >
+        {formatRelativeTime(entry.createdAt)}
+      </span>
     ),
   },
 ]
@@ -51,7 +73,12 @@ function SessionDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
   return (
     <EntryDetailDrawer
       description={formatDateTime(entry.createdAt)}
-      meta={<Badge variant="secondary">{value.operation}</Badge>}
+      meta={
+        <span className="num inline-flex items-center gap-2 text-xs">
+          <StatusDot signal="neutral" />
+          {value.operation}
+        </span>
+      }
       onOpenChange={(open) => !open && onClose()}
       open={open}
       tags={entry.tags}

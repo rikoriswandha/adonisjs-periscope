@@ -18,10 +18,10 @@ import { PageHeader } from '@/components/page-header'
 import { StackTrace } from '@/components/stack-trace'
 import { StatusBadge } from '@/components/status-badge'
 import { TagChip } from '@/components/tag-chip'
+import { Panel, PanelBody, PanelHeader, SignalMeter, StatusDot } from '@/components/instrument'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
-import { Frame, FramePanel } from '@/components/ui/frame'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -32,6 +32,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import type { RegisteredEntryDetailProps } from '@/entry-type-registry'
 import { useDashboard } from '@/dashboard-context'
 import { usePolling } from '@/hooks/use-polling'
@@ -73,7 +74,7 @@ function ExceptionTrend({ buckets }: { buckets: number[] }) {
   return (
     <svg
       aria-label={`${occurrenceCount.toLocaleString()} occurrences in the last 24 hours`}
-      className="h-6 w-[5.5rem] text-primary"
+      className="h-6 w-[5.5rem] text-sig-error"
       role="img"
       viewBox={`0 0 ${width} ${height}`}
     >
@@ -91,13 +92,13 @@ function ExceptionTrend({ buckets }: { buckets: number[] }) {
 }
 
 function ExceptionStateBadge({ state }: { state: ExceptionGroupState }) {
-  const variant =
-    state === 'open' ? 'warning' : state === 'resolved' ? 'success' : ('secondary' as const)
+  const signal = state === 'open' ? 'error' : state === 'resolved' ? 'ok' : 'neutral'
 
   return (
-    <Badge className="capitalize" size="sm" variant={variant}>
+    <span className="inline-flex items-center gap-2 text-xs text-ink-2 capitalize">
+      <StatusDot signal={signal} />
       {state}
-    </Badge>
+    </span>
   )
 }
 
@@ -107,13 +108,19 @@ function ExceptionOccurrenceContent({ entry }: { entry: StoredEntry }) {
   return (
     <>
       {content.request && (
-        <section className="rounded-md border bg-muted/25 p-3">
-          <div className="flex items-center gap-2 text-sm font-semibold">
-            <Route aria-hidden="true" className="size-4 text-primary" />
-            {content.request.method} {content.request.url}
+        <section className="well min-w-0 p-3">
+          <div className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+            <Route aria-hidden="true" className="size-4 shrink-0 text-ink-3" />
+            <span className="num shrink-0">{content.request.method}</span>
+            <span className="num min-w-0 truncate" title={content.request.url}>
+              {content.request.url}
+            </span>
           </div>
           {content.request.route && (
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p
+              className="num mt-1 min-w-0 truncate text-xs text-ink-3"
+              title={`${content.request.route.pattern}${content.request.route.name ? ` · ${content.request.route.name}` : ''}`}
+            >
               {content.request.route.pattern}
               {content.request.route.name ? ` · ${content.request.route.name}` : ''}
             </p>
@@ -133,14 +140,14 @@ function ExceptionOccurrenceContent({ entry }: { entry: StoredEntry }) {
 
       <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
         <div>
-          <dt className="text-xs text-muted-foreground">Family hash</dt>
-          <dd className="mt-0.5 truncate font-mono text-xs" title={entry.familyHash ?? undefined}>
+          <dt className="text-xs text-ink-3">Family hash</dt>
+          <dd className="num mt-0.5 truncate text-xs" title={entry.familyHash ?? undefined}>
             {entry.familyHash ?? 'Unavailable'}
           </dd>
         </div>
-        <div>
-          <dt className="text-xs text-muted-foreground">Sequence</dt>
-          <dd className="mt-0.5 truncate font-mono text-xs">{entry.sequence}</dd>
+        <div className="min-w-0">
+          <dt className="text-xs text-ink-3">Sequence</dt>
+          <dd className="num mt-0.5 truncate text-xs">{entry.sequence}</dd>
         </div>
       </dl>
 
@@ -181,6 +188,7 @@ export function ExceptionsPage() {
   const { status, revision, liveUpdateMode, flushEvent, flushRevision, selectedApplication } =
     useDashboard()
   const tag = searchParams.get('tag')?.trim() || undefined
+  const familyHash = searchParams.get('familyHash')?.trim() || undefined
   const [groups, setGroups] = useState<ExceptionGroup[]>([])
   const [pendingGroups, setPendingGroups] = useState<ExceptionGroup[]>([])
   const [nextCursor, setNextCursor] = useState<string | null>(null)
@@ -204,6 +212,8 @@ export function ExceptionsPage() {
   const pollingGenerationRef = useRef(0)
   const listControllerRef = useRef<AbortController | null>(null)
   const pollingControllerRef = useRef<AbortController | null>(null)
+  const deepLinkPagingRef = useRef(false)
+  const handledFamilyHashRef = useRef<string | null>(null)
   const scopeKey = `${revision}:${selectedApplication}:${tag ?? ''}`
   const scopeKeyRef = useRef(scopeKey)
   const scopeChanged = scopeKeyRef.current !== scopeKey
@@ -218,6 +228,7 @@ export function ExceptionsPage() {
     pollingControllerRef.current?.abort()
     groupsRef.current = []
     pendingGroupsRef.current = []
+    handledFamilyHashRef.current = null
   }
 
   const loadInitial = useCallback(async () => {
@@ -416,12 +427,13 @@ export function ExceptionsPage() {
     stateFilter === 'all'
       ? visibleGroups
       : visibleGroups.filter((group) => group.state === stateFilter)
+  const maxOccurrenceCount = Math.max(0, ...filteredGroups.map((group) => group.count))
   const pendingNewCount = visiblePendingGroups.reduce((total, group) => {
     const current = visibleGroups.find((candidate) => candidate.familyHash === group.familyHash)
     return total + Math.max(1, group.count - (current?.count ?? 0))
   }, 0)
 
-  const loadMore = async () => {
+  const loadMore = useCallback(async () => {
     if (!nextCursor || listControllerRef.current) return
     const controller = new AbortController()
     const generation = requestGenerationRef.current
@@ -447,7 +459,7 @@ export function ExceptionsPage() {
         setLoadingMore(false)
       }
     }
-  }
+  }, [nextCursor, selectedApplication, tag])
   const loadMoreOccurrences = async () => {
     if (!selectedGroup || !occurrencesNextCursor || occurrencesLoadingMore) return
     setOccurrencesLoadingMore(true)
@@ -529,10 +541,39 @@ export function ExceptionsPage() {
 
   const indexLoading = loading || scopeChanged
   const current = selectedOccurrence ? exceptionContent(selectedOccurrence) : null
-  const openGroup = (group: ExceptionGroup) => {
+  const openGroup = useCallback((group: ExceptionGroup) => {
     setSelectedOccurrence(group.latest)
     setSelectedGroup(group)
-  }
+  }, [])
+
+  useEffect(() => {
+    if (!familyHash) {
+      handledFamilyHashRef.current = null
+      return
+    }
+    if (indexLoading || handledFamilyHashRef.current === familyHash) return
+
+    const group = groups.find((candidate) => candidate.familyHash === familyHash)
+    if (!group) {
+      if (nextCursor && !loadingMore && !error && !deepLinkPagingRef.current) {
+        deepLinkPagingRef.current = true
+        void loadMore().finally(() => {
+          deepLinkPagingRef.current = false
+        })
+      }
+      return
+    }
+
+    handledFamilyHashRef.current = familyHash
+    setStateFilter('all')
+    openGroup(group)
+    const frame = requestAnimationFrame(() => {
+      document
+        .getElementById(`exception-family-${encodeURIComponent(familyHash)}`)
+        ?.scrollIntoView({ block: 'center' })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [error, familyHash, groups, indexLoading, loadMore, loadingMore, nextCursor, openGroup])
 
   return (
     <div className="space-y-4">
@@ -563,55 +604,59 @@ export function ExceptionsPage() {
         </div>
       )}
 
-      <div
-        aria-label="Filter exception families by triage state"
-        className="flex flex-wrap items-center gap-1.5"
-        role="group"
-      >
-        <span className="mr-0.5 text-2xs font-medium text-muted-foreground">Triage</span>
-        {exceptionStateFilters.map((filter) => {
-          const selected = stateFilter === filter.value
-          return (
-            <Button
-              aria-pressed={selected}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-ink-3">Triage</span>
+        <ToggleGroup
+          aria-label="Filter exception families by triage state"
+          onValueChange={(value) => {
+            const next = value[0] as ExceptionStateFilter | undefined
+            if (next) setStateFilter(next)
+          }}
+          value={[stateFilter]}
+          variant="outline"
+        >
+          {exceptionStateFilters.map((filter) => (
+            <ToggleGroupItem
+              className="h-[var(--control-h)] px-2.5 text-xs"
               key={filter.value}
-              onClick={() => setStateFilter(filter.value)}
-              size="xs"
-              type="button"
-              variant={selected ? 'secondary' : 'ghost'}
+              value={filter.value}
             >
               {filter.label}
-            </Button>
-          )
-        })}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
       </div>
 
-      <Frame className="rounded-lg p-0.5">
-        <FramePanel className="overflow-hidden rounded-md p-0 shadow-none before:shadow-none">
+      <Panel className="overflow-hidden">
+        <PanelHeader
+          meta={`${filteredGroups.length.toLocaleString()} shown`}
+          title="Exception groups"
+        />
+        <PanelBody className="p-0">
           <div className="overflow-x-auto">
             <Table className="min-w-data-table text-xs">
               <TableCaption className="sr-only">Grouped recorded exceptions</TableCaption>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="h-8 px-2.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
-                    Latest exception
+                  <TableHead className="micro-label w-32 text-right" scope="col">
+                    Occurrences
                   </TableHead>
-                  <TableHead className="h-8 w-28 px-2.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
-                    Status
+                  <TableHead className="micro-label" scope="col">
+                    Exception
                   </TableHead>
-                  <TableHead className="h-8 w-24 px-2.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
-                    Triage
-                  </TableHead>
-                  <TableHead className="h-8 w-48 px-2.5 text-right text-2xs font-medium tracking-wide text-muted-foreground uppercase">
-                    Occurrences · 24h trend
-                  </TableHead>
-                  <TableHead className="h-8 w-36 px-2.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
+                  <TableHead className="micro-label w-36" scope="col">
                     Last seen
                   </TableHead>
-                  <TableHead className="h-8 w-28 px-2.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
+                  <TableHead className="micro-label w-24" scope="col">
+                    State
+                  </TableHead>
+                  <TableHead className="micro-label w-32" scope="col">
+                    24h trend
+                  </TableHead>
+                  <TableHead className="micro-label w-28" scope="col">
                     Actions
                   </TableHead>
-                  <TableHead className="h-8 w-10 px-2.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
+                  <TableHead className="w-10" scope="col">
                     <span className="sr-only">Open details</span>
                   </TableHead>
                 </TableRow>
@@ -646,55 +691,71 @@ export function ExceptionsPage() {
                     const content = exceptionContent(group.latest)
                     return (
                       <TableRow
-                        className="cursor-pointer hover:bg-accent/45"
+                        aria-selected={familyHash === group.familyHash}
+                        className={`cursor-pointer transition-colors duration-(--dur-fast) hover:bg-panel-raised ${
+                          familyHash === group.familyHash
+                            ? 'bg-sig-error/10 outline outline-1 -outline-offset-1 outline-sig-error/60'
+                            : ''
+                        }`}
+                        id={`exception-family-${encodeURIComponent(group.familyHash)}`}
                         key={group.familyHash}
                         onClick={() => openGroup(group)}
                       >
-                        <TableCell className="px-2.5 py-2">
+                        <TableCell className="w-32 py-[var(--cell-py)] text-right">
+                          <div className="ms-auto w-24 space-y-1">
+                            <span className="num block text-sm font-semibold text-ink">
+                              {group.count.toLocaleString()}
+                            </span>
+                            <SignalMeter
+                              className="ms-auto"
+                              max={maxOccurrenceCount}
+                              signal="error"
+                              value={group.count}
+                            />
+                          </div>
+                        </TableCell>
+                        <TableCell className="max-w-0 py-[var(--cell-py)]">
                           <button
-                            className="block w-full rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                            className="block w-full min-w-0 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                             type="button"
                           >
                             <span className="sr-only">
                               Inspect {content.name}: {content.message}.{' '}
                             </span>
-                            <span className="block max-w-2xl">
-                              <span className="block truncate text-sm font-medium">
-                                {content.message}
+                            <span className="block min-w-0">
+                              <span className="num block truncate text-xs font-medium text-ink">
+                                {content.name}
+                                {content.code ? ` · ${content.code}` : ''}
                               </span>
-                              <span className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                                <span>{content.name}</span>
-                                {content.code && <span className="font-mono">{content.code}</span>}
+                              <span
+                                className="mt-1 block truncate text-sm text-ink-2"
+                                title={content.message}
+                              >
+                                {content.message}
                               </span>
                             </span>
                           </button>
                         </TableCell>
-                        <TableCell className="px-2.5 py-2">
-                          <StatusBadge status={content.status} />
-                        </TableCell>
-                        <TableCell className="px-2.5 py-2">
-                          <ExceptionStateBadge state={group.state} />
-                        </TableCell>
-                        <TableCell className="px-2.5 py-2">
-                          <div className="flex items-center justify-end gap-2">
-                            {trendBucketsByFamily[group.familyHash] ? (
-                              <ExceptionTrend buckets={trendBucketsByFamily[group.familyHash]} />
-                            ) : selectedGroup?.familyHash === group.familyHash ? (
-                              <Skeleton
-                                aria-label="Loading 24-hour occurrence trend"
-                                className="h-6 w-22"
-                              />
-                            ) : null}
-                            <span className="font-mono text-sm font-semibold tabular-nums">
-                              {group.count.toLocaleString()}
-                            </span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="whitespace-nowrap px-2.5 py-2 text-xs text-muted-foreground">
+                        <TableCell className="num whitespace-nowrap py-[var(--cell-py)] text-xs text-ink-3">
                           {formatRelativeTime(group.lastSeen)}
                         </TableCell>
+                        <TableCell className="py-[var(--cell-py)]">
+                          <ExceptionStateBadge state={group.state} />
+                        </TableCell>
+                        <TableCell className="py-[var(--cell-py)]">
+                          {trendBucketsByFamily[group.familyHash] ? (
+                            <ExceptionTrend buckets={trendBucketsByFamily[group.familyHash]} />
+                          ) : selectedGroup?.familyHash === group.familyHash ? (
+                            <Skeleton
+                              aria-label="Loading 24-hour occurrence trend"
+                              className="h-6 w-22"
+                            />
+                          ) : (
+                            <span className="text-xs text-ink-4">—</span>
+                          )}
+                        </TableCell>
                         <TableCell
-                          className="px-2.5 py-2"
+                          className="py-[var(--cell-py)]"
                           onClick={(event) => event.stopPropagation()}
                         >
                           <div className="flex items-center gap-0.5">
@@ -739,11 +800,8 @@ export function ExceptionsPage() {
                             </Button>
                           </div>
                         </TableCell>
-                        <TableCell className="px-2.5 py-2">
-                          <ArrowUpRight
-                            aria-hidden="true"
-                            className="size-4 text-muted-foreground"
-                          />
+                        <TableCell className="py-[var(--cell-py)]">
+                          <ArrowUpRight aria-hidden="true" className="size-4 text-ink-3" />
                         </TableCell>
                       </TableRow>
                     )
@@ -799,8 +857,8 @@ export function ExceptionsPage() {
           )}
 
           {visibleGroups.length > 0 && (
-            <div className="flex items-center justify-between border-t bg-muted/40 px-2.5 py-1.5">
-              <span className="font-mono text-2xs tabular-nums text-muted-foreground">
+            <div className="flex items-center justify-between border-t border-edge bg-well px-2.5 py-1.5">
+              <span className="num text-micro text-ink-3">
                 {filteredGroups.length.toLocaleString()} of {visibleGroups.length.toLocaleString()}{' '}
                 groups shown
               </span>
@@ -816,8 +874,8 @@ export function ExceptionsPage() {
               )}
             </div>
           )}
-        </FramePanel>
-      </Frame>
+        </PanelBody>
+      </Panel>
 
       {error && visibleGroups.length > 0 && (
         <div className="flex items-center justify-between rounded-lg border bg-destructive/5 px-3 py-2 text-sm text-destructive-foreground">

@@ -6,7 +6,7 @@ import type { EntryColumn } from '@/components/entry-index-table'
 import { HttpClientDurationChart } from '@/components/http-client-duration-chart'
 import { JsonTree } from '@/components/json-tree'
 import { StatusBadge } from '@/components/status-badge'
-import { Badge } from '@/components/ui/badge'
+import { MethodTag, StatusDot } from '@/components/instrument'
 import { Tabs, TabsList, TabsPanel, TabsTab } from '@/components/ui/tabs'
 import type { EntryTypeImplementation, RegisteredEntryDetailProps } from '@/entry-type-registry'
 import { formatDateTime, formatRelativeTime, truncate } from '@/lib/format'
@@ -19,15 +19,28 @@ function httpClientContent(entry: StoredEntry): HttpClientContent {
 function HttpClientResult({ content }: { content: HttpClientContent }) {
   if (content.error !== undefined && content.error !== null) {
     return (
-      <span className="flex flex-wrap items-center gap-1.5">
-        <Badge variant="destructive">failed</Badge>
+      <span className="num inline-flex flex-wrap items-center gap-2 text-xs">
+        <StatusDot signal="error" />
+        failed
         {content.status !== undefined && <StatusBadge status={content.status} />}
       </span>
     )
   }
-  if (!content.completed) return <Badge variant="outline">pending</Badge>
+  if (!content.completed) {
+    return (
+      <span className="num inline-flex items-center gap-2 text-xs">
+        <StatusDot pulse signal="info" />
+        pending
+      </span>
+    )
+  }
   if (content.status !== undefined) return <StatusBadge status={content.status} />
-  return <Badge variant="success">completed</Badge>
+  return (
+    <span className="num inline-flex items-center gap-2 text-xs">
+      <StatusDot signal="ok" />
+      completed
+    </span>
+  )
 }
 
 const columns: EntryColumn[] = [
@@ -35,11 +48,7 @@ const columns: EntryColumn[] = [
     key: 'method',
     header: 'Method',
     className: 'w-24',
-    cell: (entry) => (
-      <Badge className="font-mono" variant="outline">
-        {httpClientContent(entry).method}
-      </Badge>
-    ),
+    cell: (entry) => <MethodTag method={httpClientContent(entry).method} />,
   },
   {
     key: 'url',
@@ -49,10 +58,10 @@ const columns: EntryColumn[] = [
       const content = httpClientContent(entry)
       return (
         <div className="min-w-0">
-          <div className="max-w-2xl truncate font-mono text-xs font-medium" title={content.url}>
+          <div className="num max-w-2xl truncate text-xs font-medium" title={content.url}>
             {truncate(content.url, 140)}
           </div>
-          <div className="mt-1 text-xs text-muted-foreground">
+          <div className="num mt-1 text-xs text-ink-3">
             {content.error !== undefined && content.error !== null
               ? 'Request failed'
               : content.completed
@@ -66,21 +75,21 @@ const columns: EntryColumn[] = [
   {
     key: 'result',
     header: 'Result',
-    className: 'w-32',
+    className: 'w-36',
     cell: (entry) => <HttpClientResult content={httpClientContent(entry)} />,
   },
   {
     key: 'duration',
     header: 'Duration',
-    className: 'w-28',
+    className: 'w-28 text-right',
     cell: (entry) => <DurationBadge value={httpClientContent(entry).durationMs} />,
   },
   {
     key: 'when',
     header: 'When',
-    className: 'w-36',
+    className: 'w-36 text-right',
     cell: (entry) => (
-      <span className="whitespace-nowrap text-xs text-muted-foreground" title={entry.createdAt}>
+      <span className="num block whitespace-nowrap text-right text-xs text-ink-3" title={entry.createdAt}>
         {formatRelativeTime(entry.createdAt)}
       </span>
     ),
@@ -90,7 +99,7 @@ const columns: EntryColumn[] = [
     header: '',
     className: 'w-10 text-right',
     cell: () => (
-      <ArrowUpRight aria-hidden="true" className="ms-auto size-4 text-muted-foreground" />
+      <ArrowUpRight aria-hidden="true" className="ms-auto size-4 text-ink-3" />
     ),
   },
 ]
@@ -111,18 +120,37 @@ function HttpClientDetail({ entry, open, onClose }: RegisteredEntryDetailProps) 
       tags={entry.tags}
       title={truncate(`${content.method} ${content.url}`, 96)}
     >
-      <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
+      <dl className="well grid gap-2.5 p-3 sm:grid-cols-2">
         <div>
-          <dt className="text-xs text-muted-foreground">Method</dt>
-          <dd className="mt-0.5 font-mono text-sm">{content.method}</dd>
+          <dt className="text-xs text-ink-3">Method</dt>
+          <dd className="num mt-0.5 text-sm">{content.method}</dd>
         </div>
         <div>
-          <dt className="text-xs text-muted-foreground">Completion</dt>
-          <dd className="mt-0.5 text-sm">{content.completed ? 'Completed' : 'In progress'}</dd>
+          <dt className="text-xs text-ink-3">Completion</dt>
+          <dd className="mt-0.5">
+            <span className="num inline-flex items-center gap-2 text-xs">
+              <StatusDot
+                signal={
+                  content.error !== undefined && content.error !== null
+                    ? 'error'
+                    : content.completed
+                      ? 'ok'
+                      : 'info'
+                }
+              />
+              {content.error !== undefined && content.error !== null
+                ? 'Failed'
+                : content.completed
+                  ? 'Completed'
+                  : 'In progress'}
+            </span>
+          </dd>
         </div>
-        <div className="sm:col-span-2">
-          <dt className="text-xs text-muted-foreground">URL</dt>
-          <dd className="mt-0.5 break-all font-mono text-xs leading-5">{content.url}</dd>
+        <div className="min-w-0 sm:col-span-2">
+          <dt className="text-xs text-ink-3">URL</dt>
+          <dd className="num mt-0.5 break-all text-xs leading-5" title={content.url}>
+            {content.url}
+          </dd>
         </div>
       </dl>
       <section aria-labelledby="http-client-headers-title" className="space-y-3">
@@ -130,7 +158,7 @@ function HttpClientDetail({ entry, open, onClose }: RegisteredEntryDetailProps) 
           <h3 className="text-sm font-semibold" id="http-client-headers-title">
             Headers
           </h3>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+          <p className="mt-1 text-xs leading-5 text-ink-3">
             Sensitive header values are redacted during recording.
           </p>
         </div>

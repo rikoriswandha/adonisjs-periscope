@@ -36,6 +36,7 @@ interface XAxisLabelProps {
   isHovering: boolean
   tickerHalfWidth: number
   animatePosition: boolean
+  align: 'start' | 'center' | 'end'
 }
 
 function XAxisLabel({
@@ -46,6 +47,7 @@ function XAxisLabel({
   isHovering,
   tickerHalfWidth,
   animatePosition,
+  align,
 }: XAxisLabelProps) {
   const fadeBuffer = 20
   const fadeRadius = tickerHalfWidth + fadeBuffer
@@ -70,17 +72,23 @@ function XAxisLabel({
         bottom: 12,
         width: 0,
         display: 'flex',
-        justifyContent: 'center',
+        /*
+          Labels are zero-width and centred on their tick, which pushes the
+          first and last past the plot edge into the panel's clip. The outer
+          ticks anchor to their inside edge instead.
+        */
+        justifyContent:
+          align === 'center' ? 'center' : align === 'start' ? 'flex-start' : 'flex-end',
         transition: animatePosition
           ? `left ${X_AXIS_POSITION_TWEEN_MS}ms cubic-bezier(${LINE_LOADING_PULSE_EASE.join(', ')})`
           : undefined,
       }}
     >
       <span
-        className={cn('whitespace-nowrap text-chart-label text-xs')}
+        className={cn('num whitespace-nowrap text-micro text-chart-label')}
         style={{
           opacity,
-          transition: 'opacity 0.4s ease-in-out',
+          transition: 'opacity var(--dur-fast) var(--ease-out-quart)',
         }}
       >
         {label}
@@ -613,8 +621,9 @@ const XAxisInner = memo(function XAxisInner({
 
   return createPortal(
     <div className="pointer-events-none absolute inset-0">
-      {labelsToShow.map((item) => (
+      {labelsToShow.map((item, index) => (
         <XAxisLabel
+          align={index === 0 ? 'start' : index === labelsToShow.length - 1 ? 'end' : 'center'}
           animatePosition={xDomain == null}
           crosshairX={crosshairX}
           hoveredLabel={hoveredLabel}

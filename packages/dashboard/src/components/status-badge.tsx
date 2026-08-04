@@ -1,12 +1,26 @@
-import { Badge } from '@/components/ui/badge'
+import { StatusDot, statusSignal, SIGNAL_TEXT } from '@/components/instrument'
 
+/**
+ * A status code repeats down every request column. Rendering 200 filled pills
+ * turns the column into noise, so the dot carries the signal and the monospaced
+ * figure carries the value.
+ */
 export function StatusBadge({ status }: { status: number | null | undefined }) {
+  const signal = statusSignal(status)
+
   if (status === null || status === undefined) {
-    return <Badge variant="outline">pending</Badge>
+    return (
+      <span className="inline-flex items-center gap-1.5 text-ink-4">
+        <StatusDot signal="neutral" />
+        <span className="num text-xs">···</span>
+      </span>
+    )
   }
 
-  const variant =
-    status >= 500 ? 'destructive' : status >= 400 ? 'warning' : status >= 300 ? 'info' : 'success'
-
-  return <Badge variant={variant}>{status}</Badge>
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <StatusDot signal={signal} />
+      <span className={`num text-xs font-medium ${SIGNAL_TEXT[signal]}`}>{status}</span>
+    </span>
+  )
 }

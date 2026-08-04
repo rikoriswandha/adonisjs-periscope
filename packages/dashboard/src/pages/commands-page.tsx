@@ -4,7 +4,7 @@ import { DurationBadge } from '@/components/duration-badge'
 import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
 import type { EntryColumn } from '@/components/entry-index-table'
 import { JsonTree } from '@/components/json-tree'
-import { Badge } from '@/components/ui/badge'
+import { StatusDot } from '@/components/instrument'
 import type { EntryTypeImplementation, RegisteredEntryDetailProps } from '@/entry-type-registry'
 import { formatDateTime, formatRelativeTime, truncate } from '@/lib/format'
 import type { CommandContent, StoredEntry } from '@/types'
@@ -31,11 +31,11 @@ const columns: EntryColumn[] = [
       const content = commandContent(entry)
       return (
         <div className="min-w-0">
-          <div className="max-w-xl truncate font-mono text-xs font-medium" title={content.command}>
+          <div className="num max-w-xl truncate text-xs font-medium" title={content.command}>
             {truncate(content.command, 120)}
           </div>
           <div
-            className="mt-1 max-w-xl truncate font-mono text-2xs text-muted-foreground"
+            className="num mt-1 max-w-xl truncate text-2xs text-ink-3"
             title={summarize(content.args)}
           >
             args {summarize(content.args)}
@@ -49,36 +49,38 @@ const columns: EntryColumn[] = [
     header: 'Process',
     className: 'w-32',
     cell: (entry) => (
-      <Badge size="sm" variant={commandContent(entry).isMain ? 'info' : 'secondary'}>
+      <span className="num inline-flex items-center gap-2 text-xs">
+        <StatusDot signal="neutral" />
         {commandContent(entry).isMain ? 'main process' : 'nested command'}
-      </Badge>
+      </span>
     ),
   },
   {
     key: 'result',
     header: 'Result',
-    className: 'w-24',
+    className: 'w-24 text-right',
     cell: (entry) => {
       const exitCode = commandContent(entry).exitCode
       return (
-        <Badge className="font-mono" variant={exitCode === 0 ? 'success' : 'destructive'}>
+        <span className="num inline-flex items-center justify-end gap-2 text-xs">
+          <StatusDot signal={exitCode === 0 ? 'ok' : 'error'} />
           exit {exitCode}
-        </Badge>
+        </span>
       )
     },
   },
   {
     key: 'duration',
     header: 'Duration',
-    className: 'w-28',
+    className: 'w-28 text-right',
     cell: (entry) => <DurationBadge value={commandContent(entry).durationMs} />,
   },
   {
     key: 'when',
     header: 'When',
-    className: 'w-36',
+    className: 'w-36 text-right',
     cell: (entry) => (
-      <span className="whitespace-nowrap text-xs text-muted-foreground" title={entry.createdAt}>
+      <span className="num block whitespace-nowrap text-right text-xs text-ink-3" title={entry.createdAt}>
         {formatRelativeTime(entry.createdAt)}
       </span>
     ),
@@ -88,7 +90,7 @@ const columns: EntryColumn[] = [
     header: '',
     className: 'w-10 text-right',
     cell: () => (
-      <ArrowUpRight aria-hidden="true" className="ms-auto size-4 text-muted-foreground" />
+      <ArrowUpRight aria-hidden="true" className="ms-auto size-4 text-ink-3" />
     ),
   },
 ]
@@ -99,26 +101,26 @@ function CommandDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
     <EntryDetailDrawer
       description={`${content.isMain ? 'Main process' : 'Nested command'} · ${formatDateTime(entry.createdAt)}`}
       meta={
-        <>
-          <Badge variant={content.isMain ? 'info' : 'secondary'}>
+        <span className="flex flex-wrap items-center gap-3">
+          <span className="num inline-flex items-center gap-2 text-xs">
+            <StatusDot signal="neutral" />
             {content.isMain ? 'main process' : 'nested command'}
-          </Badge>
-          <Badge className="font-mono" variant={content.exitCode === 0 ? 'success' : 'destructive'}>
+          </span>
+          <span className="num inline-flex items-center gap-2 text-xs">
+            <StatusDot signal={content.exitCode === 0 ? 'ok' : 'error'} />
             exit {content.exitCode}
-          </Badge>
+          </span>
           <DurationBadge value={content.durationMs} />
-        </>
+        </span>
       }
       onOpenChange={(open) => !open && onClose()}
       open={open}
       tags={entry.tags}
       title={truncate(content.command, 96)}
     >
-      <section className="overflow-hidden rounded-md border bg-muted/35">
-        <div className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">
-          Invocation
-        </div>
-        <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs leading-5">
+      <section className="well overflow-hidden">
+        <div className="micro-label border-b border-edge px-3 py-2">Invocation</div>
+        <pre className="num max-h-40 overflow-auto whitespace-pre-wrap break-words p-3 text-xs leading-5">
           {content.command}
         </pre>
       </section>
@@ -127,11 +129,9 @@ function CommandDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
         <JsonTree label="Flags" value={content.flags} />
       </div>
       {content.output !== undefined && (
-        <section className="overflow-hidden rounded-md border bg-muted/35">
-          <div className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">
-            Command output
-          </div>
-          <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs leading-5">
+        <section className="well overflow-hidden">
+          <div className="micro-label border-b border-edge px-3 py-2">Command output</div>
+          <pre className="num max-h-72 overflow-auto whitespace-pre-wrap break-words p-3 text-xs leading-5">
             {content.output || 'The command completed without writing output.'}
           </pre>
         </section>

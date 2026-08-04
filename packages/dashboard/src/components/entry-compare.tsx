@@ -1,11 +1,11 @@
 import { CircleAlert } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
-import { JsonTree } from '@/components/json-tree'
 import { diffEntryContent } from '@/components/entry-compare-logic'
 import type { EntryContentDiff } from '@/components/entry-compare-logic'
+import { JsonTree } from '@/components/json-tree'
+import { Well } from '@/components/instrument'
 import { Button } from '@/components/ui/button'
-import { Separator } from '@/components/ui/separator'
 import {
   Sheet,
   SheetDescription,
@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import { api } from '@/lib/api'
+import { cn } from '@/lib/utils'
 import type { StoredEntry } from '@/types'
 
 type CompareState =
@@ -24,10 +25,17 @@ type CompareState =
   | { status: 'error'; error: Error }
 
 const DIFF_TONE: Record<EntryContentDiff['status'], string> = {
-  'changed': 'border-amber-500/30 bg-amber-500/8',
-  'left-only': 'border-destructive/30 bg-destructive/6',
-  'right-only': 'border-emerald-500/30 bg-emerald-500/8',
-  'same': 'border-border bg-background',
+  changed: 'bg-sig-warn/10',
+  'left-only': 'bg-sig-error/10',
+  'right-only': 'bg-sig-ok/10',
+  same: '',
+}
+
+const DIFF_TEXT: Record<EntryContentDiff['status'], string> = {
+  changed: 'text-sig-warn',
+  'left-only': 'text-sig-error',
+  'right-only': 'text-sig-ok',
+  same: 'text-ink-4',
 }
 
 export function EntryCompare({
@@ -68,35 +76,31 @@ export function EntryCompare({
 
   return (
     <Sheet onOpenChange={onOpenChange} open={open}>
-      <SheetPopup className="w-full sm:max-w-5xl" side="right">
-        <SheetHeader className="p-4 sm:p-5">
-          <SheetTitle>Compare entries</SheetTitle>
-          <SheetDescription>
-            Content keys are aligned side by side. Highlighted rows are missing from one entry or
-            contain different values.
+      <SheetPopup className="w-full bg-chassis min-[900px]:max-w-5xl" side="right">
+        <SheetHeader className="shrink-0 border-b border-edge bg-panel px-4 py-3">
+          <SheetTitle className="text-md text-ink">Compare entries</SheetTitle>
+          <SheetDescription className="text-xs text-ink-3">
+            Content keys are aligned. Signal tint marks changed or missing values.
           </SheetDescription>
         </SheetHeader>
-        <Separator />
-        <SheetPanel className="p-4 sm:p-5">
+        <SheetPanel className="bg-chassis p-4">
           {state.status === 'loading' && (
             <div
               aria-busy="true"
               aria-label="Loading entry comparison"
-              className="space-y-3"
+              aria-live="polite"
+              className="grid gap-3 min-[900px]:grid-cols-2"
               role="status"
             >
-              <Skeleton className="h-12 w-full" />
-              <Skeleton className="h-40 w-full" />
-              <Skeleton className="h-40 w-full" />
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-48 w-full min-[900px]:col-span-2" />
             </div>
           )}
 
           {state.status === 'error' && (
-            <div
-              className="space-y-3 rounded-md border border-destructive/30 bg-destructive/5 p-4"
-              role="alert"
-            >
-              <div className="flex items-start gap-2 text-sm text-destructive-foreground">
+            <div className="well space-y-3 bg-sig-error/10 p-4" role="alert">
+              <div className="flex items-start gap-2 text-sm text-sig-error">
                 <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
                 <span>{state.error.message}</span>
               </div>
@@ -107,42 +111,49 @@ export function EntryCompare({
           )}
 
           {state.status === 'ready' && (
-            <div className="min-w-160 space-y-2 overflow-x-auto">
-              <div className="grid grid-cols-2 gap-2">
-                <div className="rounded-md border bg-muted/35 p-3">
-                  <p className="font-mono text-xs font-medium">{state.left.uuid}</p>
-                  <p className="mt-1 text-2xs text-muted-foreground">{state.left.type}</p>
-                </div>
-                <div className="rounded-md border bg-muted/35 p-3">
-                  <p className="font-mono text-xs font-medium">{state.right.uuid}</p>
-                  <p className="mt-1 text-2xs text-muted-foreground">{state.right.type}</p>
-                </div>
+            <div className="space-y-3">
+              <div className="grid gap-2 min-[900px]:grid-cols-2">
+                <Well className="num min-w-0 p-3">
+                  <p className="break-all text-xs font-medium text-ink">{state.left.uuid}</p>
+                  <p className="mt-1 text-micro text-ink-3">{state.left.type}</p>
+                </Well>
+                <Well className="num min-w-0 p-3">
+                  <p className="break-all text-xs font-medium text-ink">{state.right.uuid}</p>
+                  <p className="mt-1 text-micro text-ink-3">{state.right.type}</p>
+                </Well>
               </div>
+
               {diff.map((row) => (
-                <section className={`rounded-md border p-2 ${DIFF_TONE[row.status]}`} key={row.key}>
-                  <div className="mb-2 flex items-center justify-between gap-2 px-1">
-                    <h3 className="font-mono text-xs font-semibold">{row.key}</h3>
+                <section className="border-t border-edge pt-3" key={row.key}>
+                  <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
+                    <h3 className="num min-w-0 break-all text-xs font-medium text-ink-2">
+                      {row.key}
+                    </h3>
                     {row.status !== 'same' && (
-                      <span className="text-2xs font-medium uppercase text-muted-foreground">
+                      <span className={cn('shrink-0 text-xs', DIFF_TEXT[row.status])}>
                         {row.status.replace('-', ' ')}
                       </span>
                     )}
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {row.status === 'right-only' ? (
-                      <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                        Not present
-                      </div>
-                    ) : (
-                      <JsonTree label={`${row.key} in ${state.left.uuid}`} value={row.left} />
-                    )}
-                    {row.status === 'left-only' ? (
-                      <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                        Not present
-                      </div>
-                    ) : (
-                      <JsonTree label={`${row.key} in ${state.right.uuid}`} value={row.right} />
-                    )}
+                  <div className="grid gap-2 min-[900px]:grid-cols-2">
+                    <div className={cn('min-w-0 rounded-sm p-0.5', DIFF_TONE[row.status])}>
+                      {row.status === 'right-only' ? (
+                        <Well className="num flex min-h-16 items-center p-3 text-xs text-ink-4">
+                          Not present
+                        </Well>
+                      ) : (
+                        <JsonTree label={`${row.key} in ${state.left.uuid}`} value={row.left} />
+                      )}
+                    </div>
+                    <div className={cn('min-w-0 rounded-sm p-0.5', DIFF_TONE[row.status])}>
+                      {row.status === 'left-only' ? (
+                        <Well className="num flex min-h-16 items-center p-3 text-xs text-ink-4">
+                          Not present
+                        </Well>
+                      ) : (
+                        <JsonTree label={`${row.key} in ${state.right.uuid}`} value={row.right} />
+                      )}
+                    </div>
                   </div>
                 </section>
               ))}

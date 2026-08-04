@@ -1,24 +1,37 @@
-import { ArrowDown, ArrowUp, CircleAlert, Columns2, Inbox, Pin, RefreshCw } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import {
+  ArrowDown,
+  CircleAlert,
+  Clipboard,
+  Columns2,
+  ExternalLink,
+  Inbox,
+  Pin,
+  RefreshCw,
+} from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
 
 import { EntryCompare } from '@/components/entry-compare'
 import { reconcileLiveTailQueue } from '@/components/entry-index-table-logic'
+import { Panel, PanelHeader } from '@/components/instrument'
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
-import { Frame, FramePanel } from '@/components/ui/frame'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Switch } from '@/components/ui/switch'
 import {
   Table,
   TableBody,
   TableCaption,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Switch } from '@/components/ui/switch'
 import { api } from '@/lib/api'
+import { cn } from '@/lib/utils'
 import type { EntryMetadataRecord, StoredEntry } from '@/types'
 
 export type EntryColumn = {
@@ -27,6 +40,18 @@ export type EntryColumn = {
   className?: string
   primary?: boolean
   cell: (entry: StoredEntry) => ReactNode
+}
+
+const MAGNITUDE_KEY = /duration|count|bytes|size|listeners|checks|arguments|changes|status/i
+const NUMERIC_KEY = /duration|count|bytes|size|listeners|checks|arguments|changes|status|time|when|date|id|uuid|hash/i
+const TIME_KEY = /^(when|time|createdAt|scheduledAt)$/i
+const STATUS_KEY = /status|result|decision|level|state|kind|event|operation/i
+
+function mobileRole(column: EntryColumn, primaryKey: string | undefined) {
+  if (column.key === primaryKey) return 'primary'
+  if (TIME_KEY.test(column.key)) return 'time'
+  if (STATUS_KEY.test(column.key)) return 'status'
+  return 'secondary'
 }
 
 export function EntryIndexTable({
@@ -62,15 +87,23 @@ export function EntryIndexTable({
   newCount?: number
   onAcceptNew?: () => void
 }) {
-  const primaryColumnKey = columns.find((column) => column.primary)?.key ?? columns[0]?.key
+  const displayColumns = useMemo(() => columns.filter((column) => column.key !== 'open'), [columns])
+  const primaryColumnKey =
+    displayColumns.find((column) => column.primary)?.key ?? displayColumns[0]?.key
+  const firstStatusKey = displayColumns.find(
+    (column) => column.key !== primaryColumnKey && STATUS_KEY.test(column.key)
+  )?.key
+  const panelRef = useRef<HTMLElement | null>(null)
   const [selected, setSelected] = useState<string[]>([])
   const [compareOpen, setCompareOpen] = useState(false)
-  const [liveTail, setLiveTail] = useState(false)
-  const [atTop, setAtTop] = useState(() => window.scrollY <= 24)
+  const [searchParams] = useSearchParams()
+  const liveTail = searchParams.get('tail') === '1'
+  const [atTop, setAtTop] = useState(true)
   const [pinnedOnly, setPinnedOnly] = useState(false)
   const [metadata, setMetadata] = useState<Map<string, EntryMetadataRecord>>(new Map())
   const [metadataLoading, setMetadataLoading] = useState(true)
   const [metadataError, setMetadataError] = useState<Error | null>(null)
+  const [pinning, setPinning] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     const controller = new AbortController()
@@ -93,10 +126,14 @@ export function EntryIndexTable({
   }, [])
 
   useEffect(() => {
-    const updatePosition = () => setAtTop(window.scrollY <= 24)
+    const scrollContainer = panelRef.current?.closest('main') ?? window
+    const updatePosition = () => {
+      const top = scrollContainer instanceof Window ? scrollContainer.scrollY : scrollContainer.scrollTop
+      setAtTop(top <= 24)
+    }
     updatePosition()
-    window.addEventListener('scroll', updatePosition, { passive: true })
-    return () => window.removeEventListener('scroll', updatePosition)
+    scrollContainer.addEventListener('scroll', updatePosition, { passive: true })
+    return () => scrollContainer.removeEventListener('scroll', updatePosition)
   }, [])
 
   const liveTailDecision = reconcileLiveTailQueue({
@@ -122,160 +159,291 @@ export function EntryIndexTable({
     })
   }
 
+  const togglePinned = async (entry: StoredEntry) => {
+    if (pinning.has(entry.uuid)) return
+    const current = metadata.get(entry.uuid)
+    const pinned = !(current?.pinned ?? false)
+    setPinning((value) => new Set(value).add(entry.uuid))
+    setMetadataError(null)
+    try {
+      const record = await api.putEntryMetadata(entry.uuid, { pinned })
+      setMetadata((value) => new Map(value).set(entry.uuid, record))
+    } catch (cause: unknown) {
+      setMetadataError(cause instanceof Error ? cause : new Error('The entry could not be pinned'))
+    } finally {
+      setPinning((value) => {
+        const next = new Set(value)
+        next.delete(entry.uuid)
+        return next
+      })
+    }
+  }
+
+  const actionButtonClass =
+    'relative inline-flex size-[var(--control-h)] items-center justify-center rounded-sm text-ink-3 transition-colors duration-[var(--dur-fast)] hover:bg-panel hover:text-ink active:bg-panel-raised disabled:pointer-events-none disabled:opacity-50 pointer-coarse:after:absolute pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11'
+
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <label className="flex min-h-8 items-center gap-2 rounded-md border bg-background px-2.5 text-xs font-medium">
-          Pinned
-          <Switch
-            aria-label="Show pinned entries only"
-            checked={pinnedOnly}
-            disabled={metadataLoading || metadataError !== null}
-            onCheckedChange={setPinnedOnly}
-          />
-        </label>
-        <label className="flex min-h-8 items-center gap-2 rounded-md border bg-background px-2.5 text-xs font-medium">
-          Live tail
-          <Switch
-            aria-label="Automatically show new entries"
-            checked={liveTail}
-            disabled={!onAcceptNew}
-            onCheckedChange={setLiveTail}
-          />
-        </label>
-      </div>
+      <Panel className="panel-flush" ref={panelRef}>
+        <PanelHeader
+          action={
+            <label className="flex h-[var(--control-h)] items-center gap-2 rounded-sm border border-edge bg-well px-2 text-xs text-ink-2">
+              Pinned
+              <Switch
+                aria-label="Show pinned entries only"
+                checked={pinnedOnly}
+                disabled={metadataLoading || metadataError !== null}
+                onCheckedChange={setPinnedOnly}
+              />
+            </label>
+          }
+          meta={`${visibleRows.length.toLocaleString()} loaded${pinnedOnly ? ' pinned' : ''}`}
+          title="Entries"
+        />
 
-      {newCount > 0 && onAcceptNew && !liveTail && (
-        <div className="flex justify-center">
-          <Button
-            className="font-mono text-xs tabular-nums"
-            onClick={onAcceptNew}
-            size="sm"
-            variant="secondary"
-          >
-            <RefreshCw aria-hidden="true" />
-            {newCount} new {newCount === 1 ? 'entry' : 'entries'}
-          </Button>
-        </div>
-      )}
+        {metadataError && (
+          <Alert className="m-2 rounded-sm" variant="error">
+            <CircleAlert aria-hidden="true" />
+            <AlertTitle>Pinned entries unavailable</AlertTitle>
+            <AlertDescription>{metadataError.message}</AlertDescription>
+          </Alert>
+        )}
 
-      {metadataError && (
         <div
-          className="rounded-md border bg-destructive/5 px-2.5 py-2 text-xs text-destructive-foreground"
-          role="alert"
+          aria-busy={loading}
+          aria-label={loading ? 'Loading entries' : undefined}
+          className="well rounded-none border-x-0 border-y-0"
+          role={loading ? 'status' : undefined}
         >
-          Pinned entries could not be loaded: {metadataError.message}
-        </div>
-      )}
-
-      <Frame className="rounded-lg p-0.5">
-        <FramePanel className="overflow-hidden rounded-md p-0 shadow-none before:shadow-none">
-          <div
-            aria-busy={loading}
-            aria-label={loading ? 'Loading entries' : undefined}
-            className="overflow-x-auto"
-            role={loading ? 'status' : undefined}
+          <Table
+            className="min-w-data-table text-xs max-sm:min-w-0"
+            render={<div className="relative w-full" style={{ overflow: 'visible' }} />}
           >
-            <Table className="min-w-data-table text-xs">
-              <TableCaption className="sr-only">{caption}</TableCaption>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead className="h-8 w-9 px-2">
-                    <span className="sr-only">Select entries to compare</span>
+            <TableCaption className="sr-only">{caption}</TableCaption>
+            <TableHeader className="sticky top-0 z-[var(--z-sticky)] bg-panel max-sm:hidden">
+              <TableRow className="h-[var(--row-h)] border-edge hover:bg-panel">
+                <TableHead className="h-[var(--row-h)] w-9 px-2" scope="col">
+                  <span className="sr-only">Select entries to compare</span>
+                </TableHead>
+                {displayColumns.map((column) => (
+                  <TableHead
+                    className={cn(
+                      'micro-label h-[var(--row-h)] bg-panel px-2.5 text-ink-3',
+                      MAGNITUDE_KEY.test(column.key) && 'text-right',
+                      column.className
+                    )}
+                    key={column.key}
+                    scope="col"
+                  >
+                    {column.header}
                   </TableHead>
-                  {columns.map((column) => (
-                    <TableHead
-                      className={`h-8 px-2.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase ${column.className ?? ''}`}
-                      key={column.key}
+                ))}
+                <TableHead className="micro-label h-[var(--row-h)] w-24 bg-panel px-2 text-right" scope="col">
+                  Actions
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {newCount > 0 && onAcceptNew && (!liveTail || liveTailDecision.paused) && (
+                <TableRow className="sticky top-[var(--row-h)] z-[var(--z-sticky)] animate-slide-up border-edge bg-panel hover:bg-panel max-sm:top-0 max-sm:table-row">
+                  <TableCell className="p-0 max-sm:table-cell" colSpan={displayColumns.length + 2}>
+                    <button
+                      className="flex h-[var(--row-h)] w-full items-center justify-center gap-2 rounded-none text-xs text-ink-2 transition-colors duration-[var(--dur-fast)] hover:bg-panel-raised hover:text-ink active:bg-panel disabled:pointer-events-none disabled:opacity-50 pointer-coarse:min-h-11"
+                      onClick={onAcceptNew}
+                      type="reset"
                     >
-                      {column.header || <span className="sr-only">Open details</span>}
-                    </TableHead>
-                  ))}
+                      <RefreshCw aria-hidden="true" className="size-3.5" />
+                      <span className="num">{newCount.toLocaleString()}</span> new{' '}
+                      {newCount === 1 ? 'entry' : 'entries'}
+                    </button>
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {loading &&
-                  Array.from({ length: 8 }, (_, index) => (
-                    <TableRow key={index}>
-                      <TableCell className="px-2 py-2">
-                        <Skeleton className="size-3.5" />
-                      </TableCell>
-                      {columns.map((column) => (
-                        <TableCell className="px-2.5 py-2" key={column.key}>
+              )}
+
+              {loading &&
+                Array.from({ length: 8 }, (_, index) => (
+                  <TableRow
+                    className="h-[var(--row-h)] border-edge max-sm:grid max-sm:min-h-[var(--row-h)] max-sm:grid-cols-[2rem_minmax(0,1fr)_5rem] max-sm:grid-rows-2 max-sm:items-center"
+                    key={index}
+                  >
+                    <TableCell className="h-[var(--row-h)] px-2 py-[var(--cell-py)] max-sm:row-span-2">
+                      <Skeleton className="size-3.5" />
+                    </TableCell>
+                    {displayColumns.map((column) => {
+                      const role = mobileRole(column, primaryColumnKey)
+                      return (
+                        <TableCell
+                          className={cn(
+                            'h-[var(--row-h)] px-2.5 py-[var(--cell-py)]',
+                            role === 'primary' &&
+                              'max-sm:col-start-2 max-sm:row-start-1 max-sm:block',
+                            role === 'status' &&
+                              column.key === firstStatusKey &&
+                              'max-sm:col-start-3 max-sm:row-start-1 max-sm:block',
+                            role === 'time' &&
+                              'max-sm:col-start-2 max-sm:row-start-2 max-sm:block max-sm:h-auto max-sm:py-0',
+                            role === 'secondary' && 'max-sm:hidden',
+                            role === 'status' && column.key !== firstStatusKey && 'max-sm:hidden'
+                          )}
+                          key={column.key}
+                        >
                           <Skeleton className="h-3.5 w-full max-w-36" />
                         </TableCell>
-                      ))}
-                    </TableRow>
-                  ))}
+                      )
+                    })}
+                    <TableCell className="h-[var(--row-h)] px-2 py-[var(--cell-py)] max-sm:hidden">
+                      <Skeleton className="ms-auto h-5 w-16" />
+                    </TableCell>
+                  </TableRow>
+                ))}
 
-                {!loading &&
-                  visibleRows.map((entry) => {
-                    const isSelected = selected.includes(entry.uuid)
-                    const pinned = metadata.get(entry.uuid)?.pinned === true
-                    return (
-                      <TableRow
-                        className="cursor-pointer"
-                        data-state={isSelected ? 'selected' : undefined}
-                        key={entry.uuid}
-                        onClick={() => onRowOpen(entry)}
-                      >
-                        <TableCell className="w-9 px-2 py-2">
+              {!loading &&
+                visibleRows.map((entry) => {
+                  const isSelected = selected.includes(entry.uuid)
+                  const pinned = metadata.get(entry.uuid)?.pinned === true
+                  return (
+                    <TableRow
+                      className="group h-[var(--row-h)] cursor-pointer border-edge transition-colors duration-[var(--dur-fast)] hover:bg-panel-raised focus-within:bg-panel-raised max-sm:grid max-sm:min-h-[var(--row-h)] max-sm:grid-cols-[2rem_minmax(0,1fr)_auto] max-sm:grid-rows-2 max-sm:items-center"
+                      data-state={isSelected ? 'selected' : undefined}
+                      key={entry.uuid}
+                      onClick={() => onRowOpen(entry)}
+                    >
+                      <TableCell className="h-[var(--row-h)] w-9 px-2 py-[var(--cell-py)] max-sm:row-span-2">
+                        <label
+                          className="relative flex items-center justify-center pointer-coarse:size-11"
+                          onClick={(event) => event.stopPropagation()}
+                        >
                           <input
                             aria-label={`Select ${rowLabel(entry)} for comparison`}
                             checked={isSelected}
-                            className="size-3.5 rounded border-border accent-primary"
+                            className="size-3.5 rounded-sm border-edge accent-ink"
                             disabled={!isSelected && selected.length >= 2}
                             onChange={() => toggleSelection(entry.uuid)}
-                            onClick={(event) => event.stopPropagation()}
                             type="checkbox"
                           />
-                        </TableCell>
-                        {columns.map((column) => (
+                        </label>
+                      </TableCell>
+                      {displayColumns.map((column) => {
+                        const role = mobileRole(column, primaryColumnKey)
+                        return (
                           <TableCell
-                            className={`px-2.5 py-2 ${column.className ?? ''}`}
+                            className={cn(
+                              'h-[var(--row-h)] min-w-0 px-2.5 py-[var(--cell-py)] text-ink-2',
+                              NUMERIC_KEY.test(column.key) && 'num',
+                              MAGNITUDE_KEY.test(column.key) && 'text-right',
+                              role === 'primary' && 'max-sm:col-start-2 max-sm:row-start-1 max-sm:block max-sm:pr-1',
+                              role === 'status' &&
+                                column.key === firstStatusKey &&
+                                'max-sm:col-start-3 max-sm:row-start-1 max-sm:block max-sm:px-2',
+                              role === 'time' &&
+                                'max-sm:col-start-2 max-sm:row-start-2 max-sm:block max-sm:h-auto max-sm:px-2.5 max-sm:py-0 max-sm:text-left max-sm:text-micro max-sm:text-ink-3',
+                              role === 'secondary' && 'max-sm:hidden',
+                              role === 'status' && column.key !== firstStatusKey && 'max-sm:hidden',
+                              column.className
+                            )}
+                            data-mobile-role={role}
                             key={column.key}
                           >
                             {column.key === primaryColumnKey ? (
-                              <div className="flex items-center gap-2">
-                                <button
-                                  className="block min-w-0 flex-1 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-                                  type="button"
-                                >
-                                  <span className="sr-only">{rowLabel(entry)}: </span>
-                                  {column.cell(entry)}
-                                </button>
-                                {pinned && (
-                                  <span className="shrink-0 text-primary" title="Pinned entry">
-                                    <Pin aria-hidden="true" className="size-3.5 fill-current" />
-                                    <span className="sr-only">Pinned</span>
-                                  </span>
-                                )}
-                              </div>
+                              <button
+                                className="block min-w-0 max-w-full truncate rounded-sm text-left outline-none pointer-coarse:min-h-11"
+                                type="button"
+                              >
+                                <span className="sr-only">{rowLabel(entry)}: </span>
+                                {column.cell(entry)}
+                              </button>
                             ) : (
                               column.cell(entry)
                             )}
                           </TableCell>
-                        ))}
-                      </TableRow>
-                    )
-                  })}
-              </TableBody>
-            </Table>
-          </div>
+                        )
+                      })}
+                      <TableCell className="h-[var(--row-h)] w-24 px-1.5 py-[var(--cell-py)] max-sm:col-start-3 max-sm:row-start-2 max-sm:block max-sm:w-auto max-sm:self-center max-sm:py-0">
+                        <div className="flex justify-end gap-0.5 opacity-0 transition-opacity duration-[var(--dur-fast)] group-hover:opacity-100 group-focus-within:opacity-100 max-sm:opacity-100">
+                          <button
+                            aria-label={`Open ${rowLabel(entry)}`}
+                            className={actionButtonClass}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              onRowOpen(entry)
+                            }}
+                            title="Open entry"
+                            type="reset"
+                          >
+                            <ExternalLink aria-hidden="true" className="size-3.5" />
+                          </button>
+                          <button
+                            aria-label={`Copy id for ${rowLabel(entry)}`}
+                            className={actionButtonClass}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              void navigator.clipboard.writeText(entry.uuid)
+                            }}
+                            title="Copy entry id"
+                            type="reset"
+                          >
+                            <Clipboard aria-hidden="true" className="size-3.5" />
+                          </button>
+                          <button
+                            aria-label={`${pinned ? 'Unpin' : 'Pin'} ${rowLabel(entry)}`}
+                            className={cn(actionButtonClass, pinned && 'text-ink')}
+                            disabled={metadataLoading || pinning.has(entry.uuid)}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              void togglePinned(entry)
+                            }}
+                            title={pinned ? 'Unpin entry' : 'Pin entry'}
+                            type="reset"
+                          >
+                            <Pin aria-hidden="true" className={cn('size-3.5', pinned && 'fill-current')} />
+                          </button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+            </TableBody>
+            {visibleRows.length > 0 && (
+              <TableFooter className="border-edge bg-panel">
+                <TableRow className="h-[var(--row-h)] border-0 hover:bg-panel">
+                  <TableCell
+                    className="h-[var(--row-h)] px-2.5 py-[var(--cell-py)]"
+                    colSpan={displayColumns.length + 2}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="num text-micro text-ink-3">
+                        {visibleRows.length.toLocaleString()} loaded
+                        {pinnedOnly ? ' pinned' : ''}
+                      </span>
+                      {hasMore && (
+                        <Button
+                          loading={loadingMore}
+                          onClick={onLoadMore}
+                          size="xs"
+                          variant="ghost"
+                        >
+                          <ArrowDown aria-hidden="true" />
+                          Older
+                        </Button>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              </TableFooter>
+            )}
+          </Table>
 
           {!loading && error && rows.length === 0 && (
-            <Empty className="border-0 py-12 md:py-14">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <CircleAlert aria-hidden="true" />
-                </EmptyMedia>
-                <EmptyTitle className="text-base">Entries could not be loaded</EmptyTitle>
-                <EmptyDescription>{error.message}</EmptyDescription>
-              </EmptyHeader>
-              <Button onClick={onRetry} size="sm" variant="outline">
-                Try again
-              </Button>
-            </Empty>
+            <Alert className="m-3 w-auto rounded-sm" variant="error">
+              <CircleAlert aria-hidden="true" />
+              <AlertTitle>Entries could not be loaded</AlertTitle>
+              <AlertDescription>{error.message}</AlertDescription>
+              <AlertAction>
+                <Button onClick={onRetry} size="sm" variant="outline">
+                  Try again
+                </Button>
+              </AlertAction>
+            </Alert>
           )}
 
           {!loading && !error && visibleRows.length === 0 && (
@@ -284,64 +452,39 @@ export function EntryIndexTable({
                 <EmptyMedia variant="icon">
                   {pinnedOnly ? <Pin aria-hidden="true" /> : <Inbox aria-hidden="true" />}
                 </EmptyMedia>
-                <EmptyTitle className="text-base">
+                <EmptyTitle className="text-md">
                   {pinnedOnly ? 'No pinned entries' : emptyTitle}
                 </EmptyTitle>
                 <EmptyDescription>
                   {pinnedOnly
-                    ? 'Pin an entry from its detail page to keep it available in this view.'
+                    ? 'Pin an entry from any row to keep important runtime evidence close at hand.'
                     : emptyDescription}
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>
           )}
 
-          {visibleRows.length > 0 && (
-            <div className="flex items-center justify-between border-t bg-muted/40 px-2.5 py-1.5">
-              <span className="font-mono text-2xs tabular-nums text-muted-foreground">
-                {visibleRows.length.toLocaleString()} loaded
-                {pinnedOnly ? ' pinned' : ''}
-              </span>
-              {hasMore && (
-                <Button loading={loadingMore} onClick={onLoadMore} size="xs" variant="ghost">
-                  <ArrowDown aria-hidden="true" />
-                  Older
-                </Button>
-              )}
-            </div>
-          )}
-        </FramePanel>
-      </Frame>
+        </div>
+      </Panel>
 
       {error && rows.length > 0 && (
-        <div
-          className="flex items-center justify-between rounded-md border bg-destructive/5 px-2.5 py-2 text-xs text-destructive-foreground"
-          role="alert"
-        >
-          <span>{error.message}</span>
-          <Button onClick={onRetry} size="xs" variant="ghost">
-            Retry
-          </Button>
-        </div>
+        <Alert className="rounded-sm" variant="error">
+          <CircleAlert aria-hidden="true" />
+          <AlertTitle>More entries could not be loaded</AlertTitle>
+          <AlertDescription>{error.message}</AlertDescription>
+          <AlertAction>
+            <Button onClick={onRetry} size="xs" variant="ghost">
+              Retry
+            </Button>
+          </AlertAction>
+        </Alert>
       )}
 
-      {liveTailDecision.paused && (
-        <Button
-          className="fixed right-4 bottom-4 z-40 shadow-lg"
-          onClick={() => window.scrollTo({ behavior: 'smooth', top: 0 })}
-          size="sm"
-          variant="secondary"
-        >
-          <ArrowUp aria-hidden="true" />
-          Live tail paused
-          {liveTailDecision.queued > 0 && ` · ${liveTailDecision.queued} queued`}
-        </Button>
-      )}
 
       {selected.length === 2 && (
         <>
           <Button
-            className="fixed bottom-4 left-1/2 z-40 -translate-x-1/2 shadow-lg"
+            className="fixed bottom-4 left-1/2 z-[var(--z-overlay)] -translate-x-1/2 shadow-lg"
             onClick={() => setCompareOpen(true)}
             size="sm"
           >

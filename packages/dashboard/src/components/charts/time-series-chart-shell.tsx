@@ -228,7 +228,7 @@ const TimeSeriesChartCore = memo(function TimeSeriesChartCore({
     chartStatus,
     revealSignature,
     skeletonData,
-    skipEnterReveal: staticPreview,
+    skipEnterReveal: staticPreview || animationDuration <= 0,
     targetData: data,
     yDomainTweenDuration,
   })

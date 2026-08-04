@@ -94,7 +94,7 @@ export function SeriesMarkers({
 
   const revealDurationSec =
     clipRevealTransition(enterTransition).duration ?? animationDuration / 1000
-  const enterDuration = 0.5
+  const enterDuration = 0.18
   const isRevealing = animate && !isLoaded
 
   const getY = useCallback(
@@ -115,7 +115,9 @@ export function SeriesMarkers({
         const cx = xScale(xAccessor(d)) ?? 0
         const leadingEdge = Math.max(0, cx - visualExtent)
         const revealDelay =
-          innerWidth > 0 && isRevealing ? (leadingEdge / innerWidth) * revealDurationSec : 0
+          innerWidth > 0 && isRevealing
+            ? (leadingEdge / innerWidth) * Math.max(0, revealDurationSec - enterDuration)
+            : 0
 
         return [{ index, cx, cy, revealDelay }]
       }),

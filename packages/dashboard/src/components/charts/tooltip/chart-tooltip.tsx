@@ -1,6 +1,6 @@
 'use client'
 
-import { motion, useSpring } from 'motion/react'
+import { motion, useReducedMotion, useSpring } from 'motion/react'
 import { memo, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { resolveTooltipBoxMotion, type SpringConfig, useChartConfig } from '../chart-config-context'
@@ -265,7 +265,7 @@ const ChartTooltipInner = memo(function ChartTooltipInner({
                 key={line.dataKey}
                 size={resolvedDotSize}
                 springConfig={springConfig}
-                strokeColor={chartCssVars.background}
+                strokeColor={chartCssVars.markerBackground}
                 strokeWidth={dotVariant === 'ring' ? dotStrokeWidth : undefined}
                 variant={dotVariant}
                 visible={visible}
@@ -352,10 +352,16 @@ interface DatePillTrackerProps {
 // Inner-only-on-visible so `useSpring` initializes at the real cursor x
 // instead of `margin.left` on first hover.
 function DatePillTracker(props: DatePillTrackerProps) {
+  const reducedMotion = useReducedMotion()
   if (!(props.enabled && props.visible && props.labels.length > 0)) {
     return null
   }
-  return <DatePillTrackerInner {...props} />
+  return (
+    <DatePillTrackerInner
+      {...props}
+      discreteInteraction={reducedMotion ? true : props.discreteInteraction}
+    />
+  )
 }
 
 function DatePillTrackerInner({
@@ -381,7 +387,7 @@ function DatePillTrackerInner({
 
   return (
     <motion.div
-      className="pointer-events-none absolute z-50"
+      className="pointer-events-none absolute z-[var(--z-tooltip)]"
       style={{
         left: discreteInteraction ? xWithMargin : animatedX,
         transform: 'translateX(-50%)',

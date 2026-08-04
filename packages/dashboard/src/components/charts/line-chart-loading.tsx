@@ -14,10 +14,10 @@ import { Line } from './line'
 import { LineChart } from './line-chart'
 
 const LOADING_DATA_KEY = DEFAULT_SKELETON_DATA_KEY
-const DEFAULT_LOADING_STROKE = 'var(--foreground)'
+const DEFAULT_LOADING_STROKE = 'var(--chart-foreground-muted)'
 const DEFAULT_LOADING_GRID_STROKE = 'color-mix(in oklch, var(--chart-grid) 50%, transparent)'
 const DEFAULT_LOADING_GRID_SHIMMER_STROKE =
-  'color-mix(in oklch, var(--foreground) 68%, transparent)'
+  'color-mix(in oklch, var(--chart-foreground-muted) 68%, transparent)'
 const DEFAULT_LOADING_STROKE_OPACITY = 0.5
 
 export interface LineChartLoadingProps {
@@ -45,7 +45,7 @@ export interface LineChartLoadingProps {
   /** Centered shimmer label text. Default: "Loading" */
   label?: string
   /** Aspect ratio as "width / height". Default: "2 / 1" */
-  aspectRatio?: string
+  aspectRatio?: string | null
   /** Additional class name for the container */
   className?: string
 }

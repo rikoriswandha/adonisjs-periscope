@@ -2,14 +2,88 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+  ============================================================================
+  PERISCOPE — "INSTRUMENT"
+  ============================================================================
+
+  Scene
+  -----
+  A backend engineer at 23:00. Dark IDE on the left half of a 27" display,
+  Periscope on the right, hunting a 500 that only reproduces in staging. One
+  desk lamp. They need to spot the anomaly in 200 rows without reading them.
+
+  Colour strategy — "signal discipline"
+  ------------------------------------
+  The chassis is achromatic and cold. Chroma is reserved for MEANING: error,
+  warning, success, info, and HTTP verbs. Nothing decorative is coloured.
+
+  Brand expression is luminance and form, never hue. The primary action is a
+  near-white fill; the active nav item is a raised panel. Because the only
+  saturated pixels on screen are status, the eye lands on problems first —
+  the identity *is* the product behaviour.
+
+  Surfaces are physical, three planes deep:
+    well    inset  — data, code, tables. Recessed into the chassis.
+    chassis ground — the app background. Never scrolls.
+    panel   raised — grouped content. 1px light line along its top edge.
+
+  Token architecture
+  ------------------
+  `--chassis / --panel / --well / --ink-*` are the source of truth. The
+  shadcn/coss token names alias into them, so every component in
+  components/ui inherits this identity without being touched.
+*/
+
 @theme inline {
-  --font-sans: 'IBM Plex Sans', 'Segoe UI', sans-serif;
-  --font-mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
+
+  /* Fixed rem ramp, ~1.15 ratio. Product register: no fluid type. */
+  --text-micro: 0.6875rem; /* 11px — column heads, badges (uppercase, tracked) */
+  --text-micro--line-height: 1rem;
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: 1rem;
+  --text-xs: 0.75rem; /* 12px — dense meta */
+  --text-xs--line-height: 1.0625rem;
+  --text-sm: 0.8125rem; /* 13px — secondary UI */
+  --text-sm--line-height: 1.1875rem;
+  --text-base: 0.875rem; /* 14px — UI default, table primaries */
+  --text-base--line-height: 1.3125rem;
+  --text-prose: 0.9375rem; /* 15px — running prose, empty states */
+  --text-prose--line-height: 1.5rem;
+  --text-md: 1rem; /* 16px — section titles */
+  --text-md--line-height: 1.375rem;
+  --text-lg: 1.1875rem; /* 19px — page titles */
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.75rem; /* 28px — KPI numerals */
+  --text-xl--line-height: 2rem;
+
   --container-dashboard: 100rem;
   --container-data-table: 48rem;
 
+  /* Surfaces */
+  --color-chassis: var(--chassis);
+  --color-panel: var(--panel);
+  --color-panel-raised: var(--panel-raised);
+  --color-well: var(--well);
+  --color-edge: var(--edge);
+  --color-edge-strong: var(--edge-strong);
+
+  /* Ink ramp */
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-ink-4: var(--ink-4);
+
+  /* Signal — the only chromatic colours in the system */
+  --color-sig-error: var(--sig-error);
+  --color-sig-warn: var(--sig-warn);
+  --color-sig-ok: var(--sig-ok);
+  --color-sig-info: var(--sig-info);
+  --color-sig-neutral: var(--ink-3);
+
+  /* shadcn/coss aliases — every components/ui file resolves through these */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -45,12 +119,17 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  --radius-sm: calc(var(--radius) - 0.125rem);
+  /* Instrument radii: tight. Precision reads as small corners. */
+  --radius-xs: 0.125rem;
+  --radius-sm: 0.1875rem;
   --radius-md: var(--radius);
   --radius-lg: calc(var(--radius) + 0.125rem);
   --radius-xl: calc(var(--radius) + 0.25rem);
 
   --animate-skeleton: skeleton 2s -1s infinite linear;
+  --animate-sweep: sweep 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  --animate-pulse-dot: pulse-dot 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-slide-up: slide-up 0.22s cubic-bezier(0.165, 0.84, 0.44, 1);
 
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
@@ -77,102 +156,377 @@
       background-position: -200% 0;
     }
   }
+
+  @keyframes sweep {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(100%);
+    }
+  }
+
+  @keyframes pulse-dot {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+
+  @keyframes slide-up {
+    from {
+      opacity: 0;
+      transform: translateY(2px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
 }
 
 /*
-  Scene: local AdonisJS debugging at a cool-lit desk beside an editor.
-  Restrained strategy — cool slate neutrals, green primary for action/live only.
+  ---------------------------------------------------------------------------
+  DARK — the default. The scene is a dark room beside a dark editor.
+  ---------------------------------------------------------------------------
 */
-:root {
-  color-scheme: light;
-  --radius: 0.375rem;
+:root,
+.dark {
+  color-scheme: dark;
+  --radius: 0.25rem;
 
-  --background: oklch(0.985 0.005 255);
-  --foreground: oklch(0.22 0.018 265);
-  --card: oklch(0.995 0.003 255);
-  --card-foreground: var(--foreground);
-  --popover: oklch(0.995 0.003 255);
-  --popover-foreground: var(--foreground);
-  --primary: oklch(0.52 0.145 140);
-  --primary-foreground: oklch(0.985 0.004 140);
-  --secondary: oklch(0.95 0.01 255);
-  --secondary-foreground: oklch(0.28 0.02 265);
-  --muted: oklch(0.955 0.01 255);
-  --muted-foreground: oklch(0.42 0.028 260);
-  --accent: oklch(0.945 0.02 150);
-  --accent-foreground: oklch(0.32 0.08 145);
-  --destructive: oklch(0.55 0.21 28);
-  --destructive-foreground: oklch(0.45 0.18 28);
-  --border: oklch(0.88 0.014 255);
-  --input: oklch(0.86 0.016 255);
-  --ring: oklch(0.55 0.12 145);
-  --info: oklch(0.55 0.16 255);
-  --info-foreground: oklch(0.4 0.14 255);
-  --success: oklch(0.55 0.14 145);
-  --success-foreground: oklch(0.36 0.11 145);
-  --warning: oklch(0.68 0.14 78);
-  --warning-foreground: oklch(0.4 0.11 68);
+  --chassis: oklch(0.165 0.006 265);
+  --panel: oklch(0.208 0.007 265);
+  --panel-raised: oklch(0.244 0.0075 265);
+  --well: oklch(0.142 0.0055 265);
+  --edge: oklch(0.278 0.008 265);
+  --edge-strong: oklch(0.348 0.009 265);
+  --highlight: oklch(1 0 0 / 0.055);
+  --shadow-key: oklch(0 0 0 / 0.34);
 
-  --sidebar: oklch(0.96 0.012 255);
-  --sidebar-foreground: oklch(0.3 0.02 265);
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: oklch(0.925 0.028 145);
-  --sidebar-accent-foreground: oklch(0.28 0.07 145);
-  --sidebar-border: oklch(0.88 0.014 255);
+  --ink: oklch(0.965 0.0025 265);
+  --ink-2: oklch(0.79 0.006 265);
+  --ink-3: oklch(0.655 0.007 265);
+  --ink-4: oklch(0.53 0.0075 265);
+
+  --sig-error: oklch(0.7 0.195 25);
+  --sig-warn: oklch(0.805 0.145 75);
+  --sig-ok: oklch(0.755 0.16 150);
+  --sig-info: oklch(0.735 0.135 245);
+
+  --accent-solid: oklch(0.965 0.0025 265);
+  --accent-on: oklch(0.165 0.006 265);
+
+  --selection: oklch(0.735 0.135 245 / 0.28);
+  --scrollbar-thumb: oklch(0.36 0.009 265);
+  --scrollbar-thumb-hover: oklch(0.46 0.01 265);
+
+  /* aliases */
+  --background: var(--chassis);
+  --foreground: var(--ink);
+  --card: var(--panel);
+  --card-foreground: var(--ink);
+  --popover: var(--panel-raised);
+  --popover-foreground: var(--ink);
+  --primary: var(--accent-solid);
+  --primary-foreground: var(--accent-on);
+  --secondary: var(--panel-raised);
+  --secondary-foreground: var(--ink);
+  --muted: var(--panel);
+  --muted-foreground: var(--ink-3);
+  --accent: var(--panel-raised);
+  --accent-foreground: var(--ink);
+  --destructive: var(--sig-error);
+  --destructive-foreground: var(--sig-error);
+  --border: var(--edge);
+  --input: var(--edge-strong);
+  --ring: var(--sig-info);
+  --info: var(--sig-info);
+  --info-foreground: var(--sig-info);
+  --success: var(--sig-ok);
+  --success-foreground: var(--sig-ok);
+  --warning: var(--sig-warn);
+  --warning-foreground: var(--sig-warn);
+
+  --sidebar: oklch(0.147 0.006 265);
+  --sidebar-foreground: var(--ink-2);
+  --sidebar-primary: var(--accent-solid);
+  --sidebar-primary-foreground: var(--accent-on);
+  --sidebar-accent: var(--panel-raised);
+  --sidebar-accent-foreground: var(--ink);
+  --sidebar-border: var(--edge);
   --sidebar-ring: var(--ring);
 
-  --chart-1: oklch(0.52 0.145 140);
-  --chart-2: oklch(0.55 0.15 255);
-  --chart-3: oklch(0.6 0.11 195);
-  --chart-4: oklch(0.68 0.12 78);
-  --chart-5: oklch(0.55 0.15 25);
-  --chart-background: var(--background);
-  --chart-foreground: var(--foreground);
-  --chart-foreground-muted: var(--muted-foreground);
+  --chart-1: oklch(0.735 0.135 245);
+  --chart-2: oklch(0.755 0.16 150);
+  --chart-3: oklch(0.805 0.145 75);
+  --chart-4: oklch(0.7 0.195 25);
+  --chart-5: oklch(0.72 0.13 305);
+  --chart-background: transparent;
+  --chart-foreground: var(--ink);
+  --chart-foreground-muted: var(--ink-3);
   --chart-line-primary: var(--chart-1);
   --chart-line-secondary: var(--chart-2);
-  --chart-crosshair: var(--chart-2);
-  --chart-grid: oklch(0.9 0.012 255);
-  --chart-brush-border: var(--chart-grid);
-  --chart-tooltip-background: oklch(0.22 0.02 265 / 0.96);
-  --chart-tooltip-foreground: oklch(0.985 0.004 260);
-  --chart-tooltip-muted: oklch(0.78 0.02 255);
-  --chart-marker-background: var(--background);
-  --chart-marker-border: var(--border);
-  --chart-marker-foreground: var(--foreground);
-  --chart-label: var(--muted-foreground);
+  --chart-crosshair: var(--ink-4);
+  --chart-grid: oklch(0.245 0.007 265);
+  --chart-brush-border: var(--edge-strong);
+  --chart-tooltip-background: var(--panel-raised);
+  --chart-tooltip-foreground: var(--ink);
+  --chart-tooltip-muted: var(--ink-3);
+  --chart-marker-background: var(--chassis);
+  --chart-marker-border: var(--edge-strong);
+  --chart-marker-foreground: var(--ink);
+  --chart-label: var(--ink-3);
 }
 
-* {
-  border-color: var(--border);
+/*
+  ---------------------------------------------------------------------------
+  LIGHT — a cool off-white. Deliberately NOT cream/sand/paper: chroma sits at
+  0.003 toward the chassis' own cold hue, never toward default warmth.
+  ---------------------------------------------------------------------------
+*/
+.light {
+  color-scheme: light;
+
+  --chassis: oklch(0.972 0.003 265);
+  --panel: oklch(0.995 0.001 265);
+  --panel-raised: oklch(1 0 0);
+  --well: oklch(0.945 0.004 265);
+  --edge: oklch(0.885 0.005 265);
+  --edge-strong: oklch(0.815 0.007 265);
+  --highlight: oklch(1 0 0 / 0.9);
+  --shadow-key: oklch(0.2 0.02 265 / 0.09);
+
+  --ink: oklch(0.205 0.008 265);
+  --ink-2: oklch(0.4 0.009 265);
+  --ink-3: oklch(0.508 0.0095 265);
+  --ink-4: oklch(0.615 0.009 265);
+
+  --sig-error: oklch(0.52 0.21 27);
+  --sig-warn: oklch(0.52 0.132 65);
+  --sig-ok: oklch(0.49 0.135 152);
+  --sig-info: oklch(0.5 0.17 258);
+
+  --accent-solid: oklch(0.205 0.008 265);
+  --accent-on: oklch(0.995 0.001 265);
+
+  --selection: oklch(0.5 0.17 258 / 0.18);
+  --scrollbar-thumb: oklch(0.79 0.008 265);
+  --scrollbar-thumb-hover: oklch(0.68 0.009 265);
+
+  --sidebar: oklch(0.951 0.004 265);
+  --sidebar-foreground: var(--ink-2);
+  --sidebar-accent: var(--panel-raised);
+  --sidebar-accent-foreground: var(--ink);
+
+  --chart-1: oklch(0.5 0.17 258);
+  --chart-2: oklch(0.49 0.135 152);
+  --chart-3: oklch(0.58 0.13 65);
+  --chart-4: oklch(0.52 0.21 27);
+  --chart-5: oklch(0.5 0.15 305);
+  --chart-grid: oklch(0.915 0.004 265);
 }
 
-html {
-  background: var(--background);
-  font-family: var(--font-sans);
-  text-rendering: optimizeLegibility;
+/*
+  ---------------------------------------------------------------------------
+  Density — structural, driven from <html data-density>. Compact is the
+  default because this is a scanning tool, not a reading tool.
+  ---------------------------------------------------------------------------
+*/
+:root {
+  --row-h: 2rem;
+  --cell-py: 0.3125rem;
+  /*
+    Tracks the coss control scale rather than picking an independent number:
+    `size="sm"` is h-8 (2rem) below the sm breakpoint and sm:h-7 (1.75rem)
+    above it. A fixed token here silently desyncs from any library component
+    whose height comes from a responsive variant, because a base `h-[…]`
+    utility cannot override `sm:h-7`.
+  */
+  --control-h: 2rem;
 }
 
-body {
-  min-width: 20rem;
-  min-height: 100vh;
-  margin: 0;
-  background: var(--background);
-  color: var(--foreground);
+[data-density='comfortable'] {
+  --row-h: 2.5rem;
+  --cell-py: 0.5rem;
+  --control-h: 2.25rem;
 }
 
-button,
-a,
-input,
-[role='button'] {
-  -webkit-tap-highlight-color: transparent;
+@media (width >= 40rem) {
+  :root {
+    --control-h: 1.75rem;
+  }
+
+  [data-density='comfortable'] {
+    --control-h: 2rem;
+  }
 }
 
-::selection {
-  background: oklch(0.52 0.145 140 / 0.22);
+/*
+  ---------------------------------------------------------------------------
+  Semantic z-index scale. Never arbitrary values.
+  ---------------------------------------------------------------------------
+*/
+:root {
+  --z-base: 0;
+  --z-raised: 10;
+  --z-sticky: 20;
+  --z-rail: 30;
+  --z-overlay: 40;
+  --z-drawer: 50;
+  --z-modal: 60;
+  --z-toast: 70;
+  --z-tooltip: 80;
 }
 
+/*
+  ---------------------------------------------------------------------------
+  Motion. Product register: 150-250ms, ease-out, state only.
+  ---------------------------------------------------------------------------
+*/
+:root {
+  --ease-out-quart: cubic-bezier(0.165, 0.84, 0.44, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 240ms;
+}
+
+@layer base {
+  * {
+    border-color: var(--edge);
+  }
+
+  html {
+    background: var(--chassis);
+    font-family: var(--font-sans);
+    font-size: 100%;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    font-kerning: normal;
+  }
+
+  body {
+    min-width: 20rem;
+    min-height: 100dvh;
+    margin: 0;
+    background: var(--chassis);
+    color: var(--ink);
+    font-size: var(--text-base);
+    line-height: var(--text-base--line-height);
+    overscroll-behavior-y: none;
+  }
+
+  /* Data is monospaced and figure-aligned everywhere, without exception. */
+  code,
+  kbd,
+  samp,
+  pre,
+  .font-mono {
+    font-variant-ligatures: none;
+    font-variant-numeric: tabular-nums;
+  }
+
+  button,
+  a,
+  input,
+  [role='button'] {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  ::selection {
+    background: var(--selection);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 1px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* The chassis owns its scrollbars; thin and recessive, never custom-drawn. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover);
+    background-clip: content-box;
+  }
+}
+
+/*
+  ---------------------------------------------------------------------------
+  Surface utilities — the three planes. This is the form language that carries
+  the brand in place of a brand hue.
+  ---------------------------------------------------------------------------
+*/
+@utility panel {
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-lg);
+  box-shadow:
+    inset 0 1px 0 0 var(--highlight),
+    0 1px 2px -1px var(--shadow-key);
+}
+
+@utility panel-flush {
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  box-shadow: inset 0 1px 0 0 var(--highlight);
+}
+
+@utility well {
+  background: var(--well);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  box-shadow: inset 0 1px 2px -1px var(--shadow-key);
+}
+
+/* Micro label: the ONLY uppercase treatment in the system, reserved for
+   table column heads and panel eyebrows where scanning beats reading. */
+@utility micro-label {
+  font-size: var(--text-micro);
+  line-height: 1rem;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+@utility num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-variant-ligatures: none;
+}
+
+/*
+  ---------------------------------------------------------------------------
+  Reduced motion. Every animation in the system degrades to an instant state
+  change; nothing here is load-bearing choreography.
+  ---------------------------------------------------------------------------
+*/
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -182,64 +536,4 @@ input,
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
-}
-
-.dark {
-  color-scheme: dark;
-
-  --background: oklch(0.18 0.015 260);
-  --foreground: oklch(0.92 0.01 255);
-  --card: oklch(0.205 0.017 260);
-  --card-foreground: var(--foreground);
-  --popover: oklch(0.22 0.018 260);
-  --popover-foreground: var(--foreground);
-  --primary: oklch(0.68 0.14 140);
-  --primary-foreground: oklch(0.16 0.03 145);
-  --secondary: oklch(0.26 0.018 260);
-  --secondary-foreground: oklch(0.9 0.012 255);
-  --muted: oklch(0.255 0.018 260);
-  --muted-foreground: oklch(0.72 0.025 255);
-  --accent: oklch(0.28 0.04 145);
-  --accent-foreground: oklch(0.88 0.055 145);
-  --destructive: oklch(0.64 0.2 27);
-  --destructive-foreground: oklch(0.76 0.13 25);
-  --border: oklch(0.32 0.02 260);
-  --input: oklch(0.36 0.022 260);
-  --ring: oklch(0.66 0.12 145);
-  --info: oklch(0.64 0.15 255);
-  --info-foreground: oklch(0.74 0.12 250);
-  --success: oklch(0.65 0.14 145);
-  --success-foreground: oklch(0.76 0.11 145);
-  --warning: oklch(0.72 0.14 78);
-  --warning-foreground: oklch(0.8 0.12 82);
-
-  --sidebar: oklch(0.16 0.016 260);
-  --sidebar-foreground: oklch(0.88 0.012 255);
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: oklch(0.25 0.035 145);
-  --sidebar-accent-foreground: oklch(0.88 0.055 145);
-  --sidebar-border: oklch(0.29 0.02 260);
-  --sidebar-ring: var(--ring);
-
-  --chart-1: oklch(0.68 0.14 140);
-  --chart-2: oklch(0.68 0.14 255);
-  --chart-3: oklch(0.7 0.11 195);
-  --chart-4: oklch(0.75 0.12 78);
-  --chart-5: oklch(0.68 0.15 25);
-  --chart-background: var(--background);
-  --chart-foreground: var(--foreground);
-  --chart-foreground-muted: var(--muted-foreground);
-  --chart-line-primary: var(--chart-1);
-  --chart-line-secondary: var(--chart-2);
-  --chart-crosshair: var(--chart-2);
-  --chart-grid: oklch(0.31 0.018 260);
-  --chart-brush-border: var(--chart-grid);
-  --chart-tooltip-background: oklch(0.14 0.018 260 / 0.98);
-  --chart-tooltip-foreground: oklch(0.94 0.008 255);
-  --chart-tooltip-muted: oklch(0.72 0.025 255);
-  --chart-marker-background: var(--background);
-  --chart-marker-border: var(--border);
-  --chart-marker-foreground: var(--foreground);
-  --chart-label: var(--muted-foreground);
 }

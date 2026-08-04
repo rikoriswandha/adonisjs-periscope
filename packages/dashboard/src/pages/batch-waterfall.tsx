@@ -1,7 +1,16 @@
 import { Clock3 } from 'lucide-react'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 
-import { Frame, FramePanel } from '@/components/ui/frame'
+import {
+  Panel,
+  PanelBody,
+  PanelHeader,
+  SIGNAL_BG,
+  SIGNAL_TEXT,
+  StatusDot,
+  Well,
+  type Signal,
+} from '@/components/instrument'
 import { Tooltip, TooltipPopup, TooltipTrigger } from '@/components/ui/tooltip'
 import { asNumber, formatDuration, sequenceCompareAscending } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -10,66 +19,33 @@ import { entryTypeLabel } from '@/wave2-entry-types'
 
 const AXIS_TICK_COUNT = 5
 
-const typePalette = {
-  destructive: {
-    bar: 'border-destructive/40 bg-destructive/12 text-destructive-foreground dark:bg-destructive/20',
-    dot: 'bg-destructive',
-  },
-  info: {
-    bar: 'border-info/40 bg-info/12 text-info-foreground dark:bg-info/20',
-    dot: 'bg-info',
-  },
-  primary: {
-    bar: 'border-primary/40 bg-primary/12 text-primary dark:bg-primary/20',
-    dot: 'bg-primary',
-  },
-  secondary: {
-    bar: 'border-border bg-secondary text-secondary-foreground',
-    dot: 'bg-muted-foreground',
-  },
-  success: {
-    bar: 'border-success/40 bg-success/12 text-success-foreground dark:bg-success/20',
-    dot: 'bg-success',
-  },
-  warning: {
-    bar: 'border-warning/40 bg-warning/12 text-warning-foreground dark:bg-warning/20',
-    dot: 'bg-warning',
-  },
-} as const
-
-type PaletteName = keyof typeof typePalette
-
-/**
- * Entry colors follow the semantic coss badge palette so the waterfall reads like
- * the rest of the dashboard instead of introducing a chart-only color language.
- */
-const paletteByType: Record<EntryType, PaletteName> = {
-  request: 'primary',
-  query: 'warning',
-  exception: 'destructive',
-  log: 'secondary',
+const signalByType: Record<EntryType, Signal> = {
+  request: 'neutral',
+  query: 'warn',
+  exception: 'error',
+  log: 'neutral',
   event: 'info',
-  command: 'secondary',
-  mail: 'success',
-  cache: 'warning',
-  model: 'success',
+  command: 'neutral',
+  mail: 'ok',
+  cache: 'warn',
+  model: 'ok',
   gate: 'info',
-  dump: 'secondary',
-  view: 'primary',
+  dump: 'neutral',
+  view: 'neutral',
   http_client: 'info',
-  schedule: 'warning',
-  job: 'success',
+  schedule: 'warn',
+  job: 'ok',
   broadcast: 'info',
-  health_check: 'success',
-  redis: 'destructive',
-  session: 'secondary',
-  validation: 'destructive',
-  rate_limit: 'warning',
-  lock: 'warning',
+  health_check: 'ok',
+  redis: 'error',
+  session: 'neutral',
+  validation: 'error',
+  rate_limit: 'warn',
+  lock: 'warn',
   drive: 'info',
-  ally: 'primary',
-  i18n: 'secondary',
-  notification: 'success',
+  ally: 'neutral',
+  i18n: 'neutral',
+  notification: 'ok',
   socket: 'info',
 }
 
@@ -87,30 +63,22 @@ type WaterfallLayout = {
   totalSpanMs: number
 }
 
-function entryDuration(entry: StoredEntry): number | undefined {
-  const duration = asNumber(entry.content.durationMs)
-  return duration !== undefined && duration >= 0 ? duration : undefined
-}
 
-function timestamp(entry: StoredEntry): number | undefined {
-  const value = Date.parse(entry.createdAt)
-  return Number.isFinite(value) ? value : undefined
-}
-
-/**
- * Reusing the first available lane keeps the chart compact while preserving
- * temporal overlap: entries that are active together can never occupy one lane.
- */
 function buildWaterfallLayout(entries: StoredEntry[]): WaterfallLayout {
-  const validTimestamps = entries.map(timestamp).filter((value) => value !== undefined)
+  const validTimestamps = entries
+    .map((entry) => Date.parse(entry.createdAt))
+    .filter((value) => Number.isFinite(value))
   const originMs = validTimestamps.length > 0 ? Math.min(...validTimestamps) : 0
   const laneEnds: number[] = []
   const lanes: WaterfallItem[][] = []
 
   const items = entries
     .map((entry) => {
-      const startMs = (timestamp(entry) ?? originMs) - originMs
-      const durationMs = entryDuration(entry)
+      const parsedStart = Date.parse(entry.createdAt)
+      const startMs = (Number.isFinite(parsedStart) ? parsedStart : originMs) - originMs
+      const parsedDuration = asNumber(entry.content.durationMs)
+      const durationMs =
+        parsedDuration !== undefined && parsedDuration >= 0 ? parsedDuration : undefined
       return {
         entry,
         startMs,
@@ -125,7 +93,6 @@ function buildWaterfallLayout(entries: StoredEntry[]): WaterfallLayout {
     .map((item) => {
       const lane = laneEnds.findIndex((laneEnd) => laneEnd <= item.startMs)
       const laneIndex = lane === -1 ? laneEnds.length : lane
-      // A sub-millisecond occupancy keeps simultaneous instant markers from hiding each other.
       laneEnds[laneIndex] = item.endMs > item.startMs ? item.endMs : item.startMs + 0.001
       const packed = { ...item, lane: laneIndex }
       ;(lanes[laneIndex] ??= []).push(packed)
@@ -147,21 +114,16 @@ function WaterfallTooltip({
   item: WaterfallItem
   summary: (entry: StoredEntry) => string
 }) {
-  const type = entryTypeLabel(item.entry.type)
-  const offset = formatOffset(item.startMs)
-
+  const signal = signalByType[item.entry.type]
   return (
     <div className="max-w-80 space-y-1 px-1 py-0.5">
-      <p className="flex items-center gap-1.5 text-2xs font-medium text-muted-foreground">
-        <span
-          aria-hidden="true"
-          className={cn('size-1.5 rounded-full', typePalette[paletteByType[item.entry.type]].dot)}
-        />
-        {type}
+      <p className={cn('flex items-center gap-1.5 text-micro font-medium', SIGNAL_TEXT[signal])}>
+        <StatusDot signal={signal} />
+        {entryTypeLabel(item.entry.type)}
       </p>
-      <p className="break-words text-xs font-medium text-foreground">{summary(item.entry)}</p>
-      <p className="font-mono text-2xs tabular-nums text-muted-foreground">
-        +{offset}
+      <p className="num break-words text-xs font-medium text-ink">{summary(item.entry)}</p>
+      <p className="num text-micro text-ink-3">
+        +{formatOffset(item.startMs)}
         {' · '}
         {item.durationMs === undefined ? 'Instant' : formatDuration(item.durationMs)}
       </p>
@@ -169,57 +131,33 @@ function WaterfallTooltip({
   )
 }
 
-function WaterfallEntry({
+function WaterfallBar({
+  dimmed,
   item,
+  onHover,
+  onSelect,
   summary,
   totalSpanMs,
-  onSelect,
 }: {
+  dimmed: boolean
   item: WaterfallItem
+  onHover: (uuid: string | null) => void
+  onSelect: (entry: StoredEntry) => void
   summary: (entry: StoredEntry) => string
   totalSpanMs: number
-  onSelect: (entry: StoredEntry) => void
 }) {
   const domainMs = totalSpanMs > 0 ? totalSpanMs : 1
   const left = (item.startMs / domainMs) * 100
   const width = ((item.durationMs ?? 0) / domainMs) * 100
-  const palette = typePalette[paletteByType[item.entry.type]]
+  const signal = signalByType[item.entry.type]
   const type = entryTypeLabel(item.entry.type)
   const label = summary(item.entry)
   const timingLabel =
     item.durationMs === undefined
       ? `at +${formatOffset(item.startMs)}, instant`
       : `at +${formatOffset(item.startMs)}, duration ${formatDuration(item.durationMs)}`
-
-  if (item.durationMs === undefined) {
-    const edgePosition =
-      left === 0 ? 'translate-x-0' : left === 100 ? '-translate-x-full' : '-translate-x-1/2'
-    return (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              aria-label={`Open ${type}: ${label}, ${timingLabel}`}
-              className={cn(
-                'absolute top-1 flex h-8 w-5 items-center justify-center rounded-sm outline-none hover:bg-accent/55 focus-visible:z-10 focus-visible:bg-accent/55 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background',
-                edgePosition
-              )}
-              data-entry-type={item.entry.type}
-              data-waterfall-kind="instant"
-              onClick={() => onSelect(item.entry)}
-              style={{ left: `${left}%` }}
-              type="button"
-            />
-          }
-        >
-          <span aria-hidden="true" className={cn('h-6 w-0.5 rounded-full', palette.dot)} />
-        </TooltipTrigger>
-        <TooltipPopup side="top">
-          <WaterfallTooltip item={item} summary={summary} />
-        </TooltipPopup>
-      </Tooltip>
-    )
-  }
+  const edgePosition =
+    left === 0 ? 'translate-x-0' : left === 100 ? '-translate-x-full' : '-translate-x-1/2'
 
   return (
     <Tooltip>
@@ -228,19 +166,26 @@ function WaterfallEntry({
           <button
             aria-label={`Open ${type}: ${label}, ${timingLabel}`}
             className={cn(
-              'absolute top-1 flex h-8 min-w-1.5 items-center overflow-hidden rounded-sm border px-1.5 text-left text-2xs font-medium outline-none transition-[filter,box-shadow] hover:brightness-95 focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background',
-              palette.bar
+              'absolute top-1/2 h-7 -translate-y-1/2 rounded-sm outline-none transition-[opacity,filter,box-shadow] duration-[var(--dur-fast)] hover:brightness-110 focus-visible:z-[var(--z-raised)] focus-visible:ring-2 focus-visible:ring-sig-info focus-visible:ring-offset-1 focus-visible:ring-offset-well [@media(pointer:coarse)]:h-11',
+              item.durationMs === undefined ? cn('w-1', edgePosition) : 'min-w-[3px]',
+              SIGNAL_BG[signal],
+              dimmed && 'opacity-20'
             )}
             data-entry-type={item.entry.type}
-            data-waterfall-kind="duration"
+            data-waterfall-kind={item.durationMs === undefined ? 'instant' : 'duration'}
+            onBlur={() => onHover(null)}
             onClick={() => onSelect(item.entry)}
-            style={{ left: `${left}%`, width: `${width}%` }}
+            onFocus={() => onHover(item.entry.uuid)}
+            onMouseEnter={() => onHover(item.entry.uuid)}
+            onMouseLeave={() => onHover(null)}
+            style={{
+              left: `${left}%`,
+              ...(item.durationMs === undefined ? {} : { width: `max(${width}%, 3px)` }),
+            }}
             type="button"
           />
         }
-      >
-        <span className="truncate">{label}</span>
-      </TooltipTrigger>
+      />
       <TooltipPopup side="top">
         <WaterfallTooltip item={item} summary={summary} />
       </TooltipPopup>
@@ -257,6 +202,7 @@ export function BatchWaterfall({
   onSelect: (entry: StoredEntry) => void
   summary: (entry: StoredEntry) => string
 }) {
+  const [hoveredUuid, setHoveredUuid] = useState<string | null>(null)
   const layout = useMemo(() => buildWaterfallLayout(timeline), [timeline])
   const ticks = useMemo(() => {
     if (layout.totalSpanMs === 0) return [0]
@@ -268,38 +214,29 @@ export function BatchWaterfall({
   const types = [...new Set(layout.items.map((item) => item.entry.type))]
 
   return (
-    <Frame aria-labelledby="batch-waterfall-title" className="rounded-lg p-0.5">
-      <FramePanel className="overflow-hidden rounded-md p-0 shadow-none before:shadow-none">
+    <Panel aria-labelledby="batch-waterfall-title">
+      <PanelHeader
+        action={
+          <span className="num text-micro text-ink-3">
+            {timeline.length} {timeline.length === 1 ? 'entry' : 'entries'} ·{' '}
+            {layout.lanes.length} {layout.lanes.length === 1 ? 'lane' : 'lanes'}
+          </span>
+        }
+        icon={<Clock3 aria-hidden="true" className="size-3.5" />}
+        id="batch-waterfall-title"
+        meta={`${formatOffset(layout.totalSpanMs)} total`}
+        title="Batch waterfall"
+      />
+      <PanelBody className="p-0">
         <figure>
-          <figcaption className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
-            <div>
-              <h2
-                className="flex items-center gap-2 text-xs font-semibold"
-                id="batch-waterfall-title"
-              >
-                <Clock3 aria-hidden="true" className="size-3.5 text-primary" />
-                Batch waterfall
-              </h2>
-              <p className="mt-0.5 text-2xs text-muted-foreground">
-                Entry start offsets and durations, packed into parallel lanes
-              </p>
-            </div>
-            <div className="text-right font-mono text-2xs tabular-nums text-muted-foreground">
-              <span className="block text-xs font-medium text-foreground">
-                {formatOffset(layout.totalSpanMs)} total
-              </span>
-              {timeline.length} {timeline.length === 1 ? 'entry' : 'entries'} ·{' '}
-              {layout.lanes.length} {layout.lanes.length === 1 ? 'lane' : 'lanes'}
-            </div>
+          <figcaption className="sr-only">
+            Entry start offsets and durations in sequence order
           </figcaption>
-
-          <div className="overflow-x-auto" role="group" aria-label="Batch waterfall chart">
-            <div className="min-w-data-table">
-              <div className="grid grid-cols-4 border-b bg-muted/35">
-                <div className="flex h-9 items-end px-3 pb-2 text-2xs font-medium text-muted-foreground">
-                  Lane
-                </div>
-                <div className="relative col-span-3 h-9" aria-label="Elapsed time axis">
+          <Well className="overflow-x-auto rounded-none border-0" role="group" aria-label="Batch waterfall chart">
+            <div className="min-w-[56rem]">
+              <div className="grid grid-cols-[minmax(12rem,22rem)_minmax(28rem,1fr)_5.5rem] border-b border-edge">
+                <div className="micro-label flex h-9 items-end px-3 pb-2">Entry</div>
+                <div className="relative h-9" aria-label="Elapsed time axis">
                   {ticks.map((tick, index) => {
                     const left = layout.totalSpanMs === 0 ? 0 : (tick / layout.totalSpanMs) * 100
                     const alignment =
@@ -311,7 +248,7 @@ export function BatchWaterfall({
                     return (
                       <span
                         className={cn(
-                          'absolute bottom-2 whitespace-nowrap font-mono text-2xs tabular-nums text-muted-foreground',
+                          'num absolute bottom-2 whitespace-nowrap text-micro text-ink-4',
                           alignment
                         )}
                         key={`${tick}-${index}`}
@@ -322,60 +259,80 @@ export function BatchWaterfall({
                     )
                   })}
                 </div>
+                <div className="micro-label flex h-9 items-end justify-end px-3 pb-2">Duration</div>
               </div>
 
-              {layout.lanes.map((lane, laneIndex) => (
-                <div className="grid grid-cols-4 border-b last:border-b-0" key={laneIndex}>
-                  <div className="flex h-10 items-center justify-between gap-2 px-3 text-2xs text-muted-foreground">
-                    <span className="font-medium text-foreground">Lane {laneIndex + 1}</span>
-                    <span className="font-mono tabular-nums">{lane.length}</span>
-                  </div>
-                  <div className="relative col-span-3 h-10 bg-chart-background">
-                    {ticks.map((tick, index) => {
-                      const left = layout.totalSpanMs === 0 ? 0 : (tick / layout.totalSpanMs) * 100
-                      return (
-                        <span
-                          aria-hidden="true"
-                          className="pointer-events-none absolute inset-y-0 w-px bg-chart-grid"
-                          key={`${tick}-${index}`}
-                          style={{ left: `${left}%` }}
-                        />
-                      )
-                    })}
-                    {lane.map((item) => (
-                      <WaterfallEntry
-                        item={item}
+              {layout.items.length === 0 ? (
+                <p className="p-6 text-center text-sm text-ink-3" role="status">
+                  No entries were recorded in this batch.
+                </p>
+              ) : (
+                <div>
+                  {layout.items.map((item) => {
+                    const signal = signalByType[item.entry.type]
+                    const itemSummary = summary(item.entry)
+                    return (
+                      <div
+                        className={cn(
+                          'grid min-h-[var(--row-h)] grid-cols-[minmax(12rem,22rem)_minmax(28rem,1fr)_5.5rem] border-b border-edge last:border-b-0 transition-opacity duration-[var(--dur-fast)] [@media(pointer:coarse)]:min-h-11',
+                          hoveredUuid && hoveredUuid !== item.entry.uuid && 'opacity-35'
+                        )}
                         key={item.entry.uuid}
-                        onSelect={onSelect}
-                        summary={summary}
-                        totalSpanMs={layout.totalSpanMs}
-                      />
-                    ))}
-                  </div>
+                      >
+                        <div className="flex min-w-0 items-center gap-2 px-3 py-[var(--cell-py)]">
+                          <StatusDot signal={signal} />
+                          <span className="w-20 shrink-0 truncate text-micro text-ink-3">
+                            {entryTypeLabel(item.entry.type)}
+                          </span>
+                          <span className="num min-w-0 truncate text-xs text-ink" title={itemSummary}>
+                            {itemSummary}
+                          </span>
+                        </div>
+                        <div className="relative min-h-[var(--row-h)] [@media(pointer:coarse)]:min-h-11">
+                          {ticks.map((tick, index) => {
+                            const left =
+                              layout.totalSpanMs === 0 ? 0 : (tick / layout.totalSpanMs) * 100
+                            return (
+                              <span
+                                aria-hidden="true"
+                                className="pointer-events-none absolute inset-y-0 w-px bg-edge/60"
+                                key={`${tick}-${index}`}
+                                style={{ left: `${left}%` }}
+                              />
+                            )
+                          })}
+                          <WaterfallBar
+                            dimmed={hoveredUuid !== null && hoveredUuid !== item.entry.uuid}
+                            item={item}
+                            onHover={setHoveredUuid}
+                            onSelect={onSelect}
+                            summary={summary}
+                            totalSpanMs={layout.totalSpanMs}
+                          />
+                        </div>
+                        <div className="num flex items-center justify-end px-3 py-[var(--cell-py)] text-right text-xs text-ink-2">
+                          {item.durationMs === undefined ? 'Instant' : formatDuration(item.durationMs)}
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
+              )}
+            </div>
+          </Well>
+
+          {types.length > 0 && (
+            <div className="flex flex-wrap gap-x-3 gap-y-1 border-t border-edge px-3 py-2" aria-label="Entry type legend">
+              {types.map((type) => (
+                <span className="inline-flex items-center gap-1.5 text-micro text-ink-3" key={type}>
+                  <StatusDot signal={signalByType[type]} />
+                  {entryTypeLabel(type)}
+                </span>
               ))}
             </div>
-          </div>
-
-          <div
-            className="flex flex-wrap gap-x-3 gap-y-1 border-t bg-muted/25 px-3 py-2"
-            aria-label="Entry type legend"
-          >
-            {types.map((type) => (
-              <span
-                className="inline-flex items-center gap-1.5 text-2xs text-muted-foreground"
-                key={type}
-              >
-                <span
-                  aria-hidden="true"
-                  className={cn('size-1.5 rounded-full', typePalette[paletteByType[type]].dot)}
-                />
-                {entryTypeLabel(type)}
-              </span>
-            ))}
-          </div>
+          )}
         </figure>
-      </FramePanel>
-    </Frame>
+      </PanelBody>
+    </Panel>
   )
 }

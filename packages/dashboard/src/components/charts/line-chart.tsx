@@ -1,7 +1,7 @@
 'use client'
 
 import { ParentSize } from '@visx/responsive'
-import type { Transition } from 'motion/react'
+import { useReducedMotion, type Transition } from 'motion/react'
 import {
   Children,
   type CSSProperties,
@@ -33,21 +33,21 @@ export interface LineChartProps {
   xDataKey?: string
   /** Chart margins */
   margin?: Partial<Margin>
-  /** Animation duration in milliseconds. Default: 1100 */
+  /** Animation duration in milliseconds. Default: 220 */
   animationDuration?: number
-  /** CSS easing for clip-reveal. Default: cubic-bezier(0.85, 0, 0.15, 1) */
+  /** CSS easing for clip-reveal. Default: var(--ease-out-quart) curve */
   animationEasing?: string
   enterTransition?: Transition
   revealSignature?: string
-  /** Aspect ratio as "width / height". Default: "2 / 1". Omit to fill a sized parent. */
-  aspectRatio?: string
+  /** Aspect ratio as "width / height". Default: "2 / 1". Pass `null` to fill a sized parent. */
+  aspectRatio?: string | null
   /** Additional class name for the container */
   className?: string
   /** Loading vs ready — drives chart phase and loading chrome. Default: `"ready"`. */
   status?: ChartStatus
   /** Centered shimmer label while loading. */
   loadingLabel?: string
-  /** Animate y-domain over this duration (ms) on status transitions. Default: 500. */
+  /** Animate y-domain over this duration (ms) on status transitions. Default: 220. */
   yDomainTweenDuration?: number
   /** Animate y-domain when status or target domain changes. Default: true */
   yDomainTween?: boolean
@@ -209,7 +209,7 @@ export function LineChart({
   data,
   xDataKey = 'date',
   margin: marginProp,
-  animationDuration = 1100,
+  animationDuration = 220,
   animationEasing,
   enterTransition,
   revealSignature,
@@ -226,6 +226,9 @@ export function LineChart({
   onPhaseChange,
   children,
 }: LineChartProps) {
+  const reducedMotion = useReducedMotion()
+  const effectiveAnimationDuration = reducedMotion ? 0 : animationDuration
+  const effectiveYDomainTweenDuration = reducedMotion ? 0 : yDomainTweenDuration
   const containerRef = useRef<HTMLDivElement>(null)
   const margin = { ...DEFAULT_MARGIN, ...marginProp }
   const [chartPhase, setChartPhase] = useState<ChartPhase>(() => resolveRestingChartPhase(status))
@@ -247,7 +250,7 @@ export function LineChart({
 
   return (
     <div
-      className={cn('relative w-full', className)}
+      className={cn('relative w-full', aspectRatio === null && 'h-full', className)}
       ref={containerRef}
       style={{
         ...(aspectRatio ? { aspectRatio } : undefined),
@@ -258,7 +261,7 @@ export function LineChart({
       <ParentSize debounceTime={10}>
         {({ width, height }) => (
           <ChartInner
-            animationDuration={animationDuration}
+            animationDuration={effectiveAnimationDuration}
             animationEasing={animationEasing}
             chartStatus={status}
             containerRef={containerRef}
@@ -274,8 +277,8 @@ export function LineChart({
             xDataKey={xDataKey}
             xDomain={xDomain}
             xDomainSlotCount={xDomainSlotCount}
-            yDomainTween={yDomainTween}
-            yDomainTweenDuration={yDomainTweenDuration}
+            yDomainTween={reducedMotion ? false : yDomainTween}
+            yDomainTweenDuration={effectiveYDomainTweenDuration}
           >
             {children}
           </ChartInner>

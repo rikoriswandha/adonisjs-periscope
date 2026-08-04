@@ -1,7 +1,6 @@
 import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
 import type { EntryColumn } from '@/components/entry-index-table'
 import { JsonTree } from '@/components/json-tree'
-import { Badge } from '@/components/ui/badge'
 import type { EntryTypeImplementation, RegisteredEntryDetailProps } from '@/entry-type-registry'
 import { formatDateTime, formatRelativeTime, truncate } from '@/lib/format'
 import type { BroadcastContent, StoredEntry } from '@/types'
@@ -18,7 +17,7 @@ const columns: EntryColumn[] = [
     cell: (entry) => {
       const channel = content(entry).channel
       return (
-        <span className="block max-w-2xl truncate font-mono text-xs font-medium" title={channel}>
+        <span className="num block max-w-2xl truncate text-xs font-medium" title={channel}>
           {truncate(channel, 160)}
         </span>
       )
@@ -30,10 +29,13 @@ const columns: EntryColumn[] = [
     className: 'w-48',
     cell: (entry) => {
       const event = content(entry).event
-      return event === undefined ? (
-        <span className="text-xs text-muted-foreground">Not reported</span>
-      ) : (
-        <span className="font-mono text-xs">{event}</span>
+      return (
+        <span
+          className="num block max-w-48 truncate text-xs text-ink-2"
+          title={event ?? 'Not reported'}
+        >
+          {event ?? 'Not reported'}
+        </span>
       )
     },
   },
@@ -42,7 +44,7 @@ const columns: EntryColumn[] = [
     header: 'Time',
     className: 'w-36 text-right',
     cell: (entry) => (
-      <span className="whitespace-nowrap text-xs text-muted-foreground" title={entry.createdAt}>
+      <span className="num block whitespace-nowrap text-right text-xs text-ink-3" title={entry.createdAt}>
         {formatRelativeTime(entry.createdAt)}
       </span>
     ),
@@ -55,27 +57,27 @@ function BroadcastDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
   return (
     <EntryDetailDrawer
       description={formatDateTime(entry.createdAt)}
-      meta={<Badge variant="info">broadcast</Badge>}
+      meta={<span className="num text-xs text-ink-2">broadcast</span>}
       onOpenChange={(open) => !open && onClose()}
       open={open}
       tags={entry.tags}
       title={truncate(value.channel, 96)}
     >
-      <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
-        <div className="sm:col-span-2">
-          <dt className="text-xs text-muted-foreground">Channel</dt>
-          <dd className="mt-0.5 break-all font-mono text-sm">{value.channel}</dd>
+      <dl className="well grid gap-2.5 p-3 sm:grid-cols-2">
+        <div className="min-w-0 sm:col-span-2">
+          <dt className="text-xs text-ink-3">Channel</dt>
+          <dd className="num mt-0.5 break-all text-sm">{value.channel}</dd>
         </div>
-        <div className="sm:col-span-2">
-          <dt className="text-xs text-muted-foreground">Event</dt>
-          <dd className="mt-0.5 break-all font-mono text-sm">
+        <div className="min-w-0 sm:col-span-2">
+          <dt className="text-xs text-ink-3">Event</dt>
+          <dd className="num mt-0.5 break-all text-sm">
             {value.event ?? 'Not reported by Transmit'}
           </dd>
         </div>
       </dl>
 
       {value.payloadSummary === undefined ? (
-        <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+        <div className="well p-3 text-xs text-ink-3">
           No payload summary was captured for this broadcast.
         </div>
       ) : (

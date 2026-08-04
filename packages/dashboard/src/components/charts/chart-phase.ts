@@ -21,7 +21,7 @@ export type ChartPhase =
 export const DEFAULT_CHART_STATUS: ChartStatus = 'ready'
 
 /** Default Y-domain tween when transitioning loading ↔ ready (ms). */
-export const DEFAULT_Y_DOMAIN_TWEEN_MS = 500
+export const DEFAULT_Y_DOMAIN_TWEEN_MS = 220
 
 /** Relative domain delta below which Y tween may be skipped (see plan). */
 export const Y_DOMAIN_TWEEN_SKIP_THRESHOLD = 0.02

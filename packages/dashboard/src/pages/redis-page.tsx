@@ -2,7 +2,7 @@ import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
 import type { EntryColumn } from '@/components/entry-index-table'
 import { DurationBadge } from '@/components/duration-badge'
 import { JsonTree } from '@/components/json-tree'
-import { Badge } from '@/components/ui/badge'
+import { StatusDot } from '@/components/instrument'
 import type { EntryTypeImplementation, RegisteredEntryDetailProps } from '@/entry-type-registry'
 import { formatDateTime, formatRelativeTime } from '@/lib/format'
 import type { RedisContent, StoredEntry } from '@/types'
@@ -16,33 +16,51 @@ const columns: EntryColumn[] = [
     key: 'command',
     header: 'Command',
     primary: true,
-    cell: (entry) => <span className="font-mono font-medium">{content(entry).command}</span>,
+    cell: (entry) => {
+      const command = content(entry).command
+      return (
+        <span className="num block max-w-2xl truncate font-medium" title={command}>
+          {command}
+        </span>
+      )
+    },
   },
   {
     key: 'arguments',
     header: 'Arguments',
-    cell: (entry) => content(entry).argumentCount.toLocaleString(),
+    className: 'w-28 text-right',
+    cell: (entry) => (
+      <span className="num block text-right">{content(entry).argumentCount.toLocaleString()}</span>
+    ),
   },
   {
     key: 'duration',
     header: 'Duration',
+    className: 'w-28 text-right',
     cell: (entry) => <DurationBadge value={content(entry).durationMs} />,
   },
   {
     key: 'result',
     header: 'Result',
-    cell: (entry) => (
-      <Badge variant={content(entry).error === undefined ? 'success' : 'error'}>
-        {content(entry).error === undefined ? 'completed' : 'failed'}
-      </Badge>
-    ),
+    className: 'w-28',
+    cell: (entry) => {
+      const failed = content(entry).error !== undefined
+      return (
+        <span className="num inline-flex items-center gap-2 text-xs">
+          <StatusDot signal={failed ? 'error' : 'ok'} />
+          {failed ? 'failed' : 'completed'}
+        </span>
+      )
+    },
   },
   {
     key: 'when',
     header: 'When',
-    className: 'text-right',
+    className: 'w-36 text-right',
     cell: (entry) => (
-      <span title={formatDateTime(entry.createdAt)}>{formatRelativeTime(entry.createdAt)}</span>
+      <span className="num block whitespace-nowrap text-right text-xs text-ink-3" title={formatDateTime(entry.createdAt)}>
+        {formatRelativeTime(entry.createdAt)}
+      </span>
     ),
   },
 ]
@@ -52,7 +70,15 @@ function RedisDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
   return (
     <EntryDetailDrawer
       description={formatDateTime(entry.createdAt)}
-      meta={<DurationBadge value={value.durationMs} />}
+      meta={
+        <span className="flex flex-wrap items-center gap-3">
+          <span className="num inline-flex items-center gap-2 text-xs">
+            <StatusDot signal={value.error === undefined ? 'ok' : 'error'} />
+            {value.error === undefined ? 'completed' : 'failed'}
+          </span>
+          <DurationBadge value={value.durationMs} />
+        </span>
+      }
       onOpenChange={(open) => !open && onClose()}
       open={open}
       tags={entry.tags}

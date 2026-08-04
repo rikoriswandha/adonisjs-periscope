@@ -1,7 +1,7 @@
 import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
 import type { EntryColumn } from '@/components/entry-index-table'
 import { JsonTree } from '@/components/json-tree'
-import { Badge } from '@/components/ui/badge'
+import { Panel, PanelBody, PanelHeader, StatusDot } from '@/components/instrument'
 import type { EntryTypeImplementation, RegisteredEntryDetailProps } from '@/entry-type-registry'
 import { formatDateTime, formatRelativeTime } from '@/lib/format'
 import type { StoredEntry } from '@/types'
@@ -19,7 +19,7 @@ const columns: EntryColumn[] = [
     key: 'activity',
     header: 'Activity',
     primary: true,
-    cell: (entry) => <span className="font-medium">{summary(entry)}</span>,
+    cell: (entry) => <span className="num font-medium">{summary(entry)}</span>,
   },
   {
     key: 'status',
@@ -27,7 +27,12 @@ const columns: EntryColumn[] = [
     className: 'w-28',
     cell: (entry) => {
       const status = entry.content.status
-      return typeof status === 'string' ? <Badge variant="secondary">{status}</Badge> : null
+      return typeof status === 'string' ? (
+        <span className="num inline-flex items-center gap-1.5 text-xs text-ink-2">
+          <StatusDot signal="neutral" />
+          {status}
+        </span>
+      ) : null
     },
   },
   {
@@ -35,7 +40,7 @@ const columns: EntryColumn[] = [
     header: 'When',
     className: 'w-36 text-right',
     cell: (entry) => (
-      <span className="whitespace-nowrap text-xs text-muted-foreground" title={entry.createdAt}>
+      <span className="num whitespace-nowrap text-xs text-ink-3" title={entry.createdAt}>
         {formatRelativeTime(entry.createdAt)}
       </span>
     ),
@@ -45,13 +50,44 @@ const columns: EntryColumn[] = [
 function IntegrationEntryDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
   return (
     <EntryDetailDrawer
-      description={formatDateTime(entry.createdAt)}
-      meta={<Badge variant="secondary">{entry.type.replaceAll('_', ' ')}</Badge>}
+      description="Recorded integration activity"
+      meta={<span className="num text-xs text-ink-2">{entry.type.replaceAll('_', ' ')}</span>}
       onOpenChange={(nextOpen) => !nextOpen && onClose()}
       open={open}
       tags={entry.tags}
       title={summary(entry)}
     >
+      <Panel aria-labelledby={`integration-meta-${entry.uuid}`}>
+        <PanelHeader id={`integration-meta-${entry.uuid}`} title="Entry metadata" />
+        <PanelBody>
+          <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
+            <div className="min-w-0">
+              <dt className="micro-label">Entry UUID</dt>
+              <dd className="num mt-1 truncate text-xs text-ink" title={entry.uuid}>
+                {entry.uuid}
+              </dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="micro-label">Batch ID</dt>
+              <dd className="num mt-1 truncate text-xs text-ink" title={entry.batchId}>
+                {entry.batchId}
+              </dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="micro-label">Recorded</dt>
+              <dd className="num mt-1 whitespace-nowrap text-xs text-ink">
+                <time dateTime={entry.createdAt}>{formatDateTime(entry.createdAt)}</time>
+              </dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="micro-label">Sequence</dt>
+              <dd className="num mt-1 truncate text-xs text-ink" title={entry.sequence}>
+                {entry.sequence}
+              </dd>
+            </div>
+          </dl>
+        </PanelBody>
+      </Panel>
       <JsonTree label="Recorded content" value={entry.content} />
     </EntryDetailDrawer>
   )

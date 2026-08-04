@@ -4,7 +4,6 @@ import { Link } from 'react-router-dom'
 import { DurationBadge } from '@/components/duration-badge'
 import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
 import type { EntryColumn } from '@/components/entry-index-table'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import type { EntryTypeImplementation, RegisteredEntryDetailProps } from '@/entry-type-registry'
 import { formatDateTime, formatDuration, formatRelativeTime, truncate } from '@/lib/format'
@@ -22,7 +21,7 @@ const columns: EntryColumn[] = [
     cell: (entry) => {
       const template = viewContent(entry).template
       return (
-        <span className="block max-w-3xl truncate font-mono text-xs font-medium" title={template}>
+        <span className="num block max-w-3xl truncate text-xs font-medium" title={template}>
           {template}
         </span>
       )
@@ -31,7 +30,7 @@ const columns: EntryColumn[] = [
   {
     key: 'duration',
     header: 'Duration',
-    className: 'w-28',
+    className: 'w-28 text-right',
     cell: (entry) => <DurationBadge value={viewContent(entry).durationMs} />,
   },
   {
@@ -40,7 +39,7 @@ const columns: EntryColumn[] = [
     className: 'w-36 text-right',
     cell: (entry) => (
       <span
-        className="whitespace-nowrap text-xs text-muted-foreground"
+        className="num block whitespace-nowrap text-right text-xs text-ink-3"
         title={formatDateTime(entry.createdAt)}
       >
         {formatRelativeTime(entry.createdAt)}
@@ -62,16 +61,14 @@ function ViewDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
       tags={entry.tags}
       title={truncate(content.template, 96)}
     >
-      <dl className="grid gap-3 rounded-md border p-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+      <dl className="well grid gap-3 p-3 sm:grid-cols-[minmax(0,1fr)_auto]">
         <div className="min-w-0">
-          <dt className="text-xs text-muted-foreground">Template</dt>
-          <dd className="mt-1 break-all font-mono text-sm font-medium">{content.template}</dd>
+          <dt className="text-xs text-ink-3">Template</dt>
+          <dd className="num mt-1 break-all text-sm font-medium">{content.template}</dd>
         </div>
         <div>
-          <dt className="text-xs text-muted-foreground">Duration</dt>
-          <dd className="mt-1 font-mono text-sm tabular-nums">
-            {formatDuration(content.durationMs)}
-          </dd>
+          <dt className="text-xs text-ink-3">Duration</dt>
+          <dd className="num mt-1 text-sm">{formatDuration(content.durationMs)}</dd>
         </div>
       </dl>
 
@@ -80,24 +77,24 @@ function ViewDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
           <h3 className="text-sm font-semibold" id="view-data-keys-title">
             Data keys
           </h3>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+          <p className="mt-1 text-xs leading-5 text-ink-3">
             Top-level names only. Render data values are never retained.
           </p>
         </div>
         {dataKeys === undefined ? (
-          <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+          <p className="well p-3 text-sm text-ink-3">
             Data key capture was disabled for this render.
           </p>
         ) : dataKeys.length === 0 ? (
-          <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+          <p className="well p-3 text-sm text-ink-3">
             No top-level data keys were passed to this template.
           </p>
         ) : (
-          <div className="flex flex-wrap gap-1.5">
+          <div className="well flex min-w-0 flex-wrap gap-x-4 gap-y-2 p-3">
             {dataKeys.map((key) => (
-              <Badge className="max-w-full font-mono" key={key} variant="outline">
-                <span className="truncate">{key}</span>
-              </Badge>
+              <span className="num max-w-full truncate text-xs text-ink-2" key={key} title={key}>
+                {key}
+              </span>
             ))}
           </div>
         )}

@@ -8,8 +8,10 @@ import { PageHeader } from '@/components/page-header'
 import { RequestActivityChart } from '@/components/request-activity-chart'
 import { StatusBadge } from '@/components/status-badge'
 import { TagChip } from '@/components/tag-chip'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { MethodTag } from '@/components/instrument'
+import { Group, GroupText } from '@/components/ui/group'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { Toolbar, ToolbarGroup, ToolbarSeparator } from '@/components/ui/toolbar'
 import { useDashboard } from '@/dashboard-context'
 import { useCursorPagination } from '@/hooks/use-cursor-pagination'
 import { useNewEntryPolling } from '@/hooks/use-polling'
@@ -48,11 +50,7 @@ const columns: EntryColumn[] = [
     key: 'method',
     header: 'Method',
     className: 'w-24',
-    cell: (entry) => (
-      <Badge className="font-mono" variant="outline">
-        {requestContent(entry).method}
-      </Badge>
-    ),
+    cell: (entry) => <MethodTag method={requestContent(entry).method} />,
   },
   {
     key: 'path',
@@ -62,10 +60,13 @@ const columns: EntryColumn[] = [
       const content = requestContent(entry)
       return (
         <div className="min-w-0">
-          <div className="max-w-xl truncate font-mono text-xs font-medium" title={content.url}>
+          <div className="num max-w-xl truncate text-xs font-medium" title={content.url}>
             {truncate(content.url, 120)}
           </div>
-          <div className="mt-0.5 max-w-xl truncate text-2xs text-muted-foreground">
+          <div
+            className="num mt-0.5 max-w-xl truncate text-micro text-ink-3"
+            title={content.routePattern ?? content.routeName ?? 'Unmatched route'}
+          >
             {content.routePattern ?? content.routeName ?? 'Unmatched route'}
           </div>
         </div>
@@ -89,10 +90,7 @@ const columns: EntryColumn[] = [
     header: 'When',
     className: 'w-36',
     cell: (entry) => (
-      <span
-        className="whitespace-nowrap font-mono text-2xs tabular-nums text-muted-foreground"
-        title={entry.createdAt}
-      >
+      <span className="num whitespace-nowrap text-micro text-ink-3" title={entry.createdAt}>
         {formatRelativeTime(entry.createdAt)}
       </span>
     ),
@@ -102,7 +100,7 @@ const columns: EntryColumn[] = [
     header: '',
     className: 'w-10 text-right',
     cell: () => (
-      <ArrowUpRight aria-hidden="true" className="ms-auto size-3.5 text-muted-foreground" />
+      <ArrowUpRight aria-hidden="true" className="ms-auto size-3.5 text-ink-3" />
     ),
   },
 ]
@@ -159,7 +157,7 @@ export function RequestsPage() {
       <PageHeader
         aside={
           tag ? (
-            <span className="flex items-center gap-1.5 text-2xs text-muted-foreground">
+            <span className="flex items-center gap-1.5 text-micro text-ink-3">
               <Route aria-hidden="true" className="size-3.5" />
               <TagChip tag={tag} />
             </span>
@@ -169,60 +167,79 @@ export function RequestsPage() {
         title="HTTP request batches"
       />
 
-      <RequestActivityChart entries={pagination.entries} />
-
-      <div className="flex flex-col gap-1.5">
-        <div
-          aria-label="Filter requests by kind"
-          className="flex flex-wrap items-center gap-1.5"
-          role="group"
-        >
-          <span className="mr-0.5 text-2xs font-medium text-muted-foreground">Kind</span>
-          {kindFilters.map((filter) => {
-            const selected = kind === filter.value
-            return (
-              <Button
-                aria-pressed={selected}
-                key={filter.label}
-                onClick={() => selectKind(filter.value)}
-                size="xs"
-                type="button"
-                variant={selected ? 'secondary' : 'ghost'}
-              >
-                {filter.label}
-              </Button>
-            )
-          })}
-        </div>
-        <div
-          aria-label="Filter requests by status class"
-          className="flex flex-wrap items-center gap-1.5"
-          role="group"
-        >
-          <span className="mr-0.5 text-2xs font-medium text-muted-foreground">Status</span>
-          <Button
-            aria-pressed={!statusClass}
-            onClick={() => selectStatus()}
-            size="xs"
-            type="button"
-            variant={!statusClass ? 'secondary' : 'ghost'}
-          >
-            All
-          </Button>
-          {statusClasses.map((value) => (
-            <Button
-              aria-pressed={statusClass === value}
-              key={value}
-              onClick={() => selectStatus(value)}
-              size="xs"
-              type="button"
-              variant={statusClass === value ? 'secondary' : 'ghost'}
-            >
-              {value}
-            </Button>
-          ))}
-        </div>
+      <div className="[&_[role=img]]:h-[200px]">
+        <RequestActivityChart entries={pagination.entries} />
       </div>
+
+      <section aria-label="Request filters">
+        <Toolbar className="well flex-wrap gap-2 rounded-sm border-edge bg-well p-2 text-ink max-sm:items-stretch">
+          <ToolbarGroup className="flex-wrap gap-1.5 max-sm:w-full">
+            <Group aria-label="Filter requests by kind">
+              <GroupText className="rounded-sm border-edge bg-panel px-2 text-xs text-ink-3 shadow-none">
+                Kind
+              </GroupText>
+              <ToggleGroup
+                aria-label="Request kind"
+                className="w-auto"
+                size="sm"
+                onValueChange={(value) => {
+                  const selected = value[0] ?? null
+                  selectKind(isRequestKind(selected) ? selected : undefined)
+                }}
+                value={[kind ?? 'all']}
+                variant="outline"
+              >
+                {kindFilters.map((filter) => (
+                  <ToggleGroupItem
+                    className="min-w-10 rounded-sm px-2 text-xs"
+                    key={filter.label}
+                    value={filter.value ?? 'all'}
+                  >
+                    {filter.label}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+            </Group>
+          </ToolbarGroup>
+
+          <ToolbarSeparator className="max-sm:hidden" orientation="vertical" />
+
+          <ToolbarGroup className="flex-wrap gap-1.5 max-sm:w-full">
+            <Group aria-label="Filter requests by status class">
+              <GroupText className="rounded-sm border-edge bg-panel px-2 text-xs text-ink-3 shadow-none">
+                Status
+              </GroupText>
+              <ToggleGroup
+                aria-label="Response status class"
+                className="w-auto"
+                size="sm"
+                onValueChange={(value) => {
+                  const selected = value[0] ?? null
+                  selectStatus(isStatusClass(selected) ? selected : undefined)
+                }}
+                value={[statusClass ?? 'all']}
+                variant="outline"
+              >
+                <ToggleGroupItem
+                  className="min-w-10 rounded-sm px-2 text-xs"
+                  value="all"
+                >
+                  All
+                </ToggleGroupItem>
+                {statusClasses.map((value) => (
+                  <ToggleGroupItem
+                    className="num min-w-10 rounded-sm px-2 text-xs"
+                    key={value}
+                    value={value}
+                  >
+                    {value}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+            </Group>
+          </ToolbarGroup>
+        </Toolbar>
+      </section>
 
       <EntryIndexTable
         caption="Recorded HTTP requests"

@@ -3,16 +3,18 @@ import { useMemo, useState } from 'react'
 import { format } from 'sql-formatter'
 
 import { CopyButton } from '@/components/copy-button'
+import { Well } from '@/components/instrument'
 import { JsonTree } from '@/components/json-tree'
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { tokenizeSql } from '@/components/sql-tokenizer'
 import type { SqlTokenKind } from '@/components/sql-tokenizer'
-
+import { cn } from '@/lib/utils'
 const TOKEN_CLASS_BY_KIND: Partial<Record<SqlTokenKind, string>> = {
-  keyword: 'font-semibold text-info-foreground',
-  string: 'text-success-foreground',
-  number: 'text-warning-foreground',
-  comment: 'italic text-muted-foreground',
+  plain: 'text-ink-2',
+  keyword: 'font-semibold text-sig-info',
+  string: 'text-sig-ok',
+  number: 'text-sig-warn',
+  comment: 'italic text-ink-4',
 }
 
 export function SqlBlock({ sql, bindings }: { sql: string; bindings?: unknown }) {
@@ -27,12 +29,12 @@ export function SqlBlock({ sql, bindings }: { sql: string; bindings?: unknown })
   const tokens = useMemo(() => tokenizeSql(formatted), [formatted])
 
   return (
-    <section aria-label="SQL query" className="overflow-hidden rounded-md border bg-muted/35">
-      <div className="flex min-h-8 items-center justify-between border-b px-3">
-        <span className="text-xs font-medium text-muted-foreground">SQL</span>
+    <Well aria-label="SQL query" className="overflow-hidden" role="region">
+      <header className="flex min-h-9 items-center justify-between border-b border-edge px-3">
+        <h3 className="micro-label text-ink-2">SQL</h3>
         <CopyButton label="Copy SQL" value={formatted} />
-      </div>
-      <pre className="max-h-96 overflow-auto p-3 font-mono text-xs leading-5 text-foreground">
+      </header>
+      <pre className="num max-h-96 overflow-auto p-3 text-xs leading-5 text-ink">
         <code>
           {tokens.map((token, index) => (
             <span className={TOKEN_CLASS_BY_KIND[token.kind]} key={`${index}:${token.kind}`}>
@@ -43,20 +45,23 @@ export function SqlBlock({ sql, bindings }: { sql: string; bindings?: unknown })
       </pre>
       {bindings !== undefined && (
         <Collapsible onOpenChange={setBindingsOpen} open={bindingsOpen}>
-          <CollapsibleTrigger className="flex w-full items-center justify-between border-t px-3 py-2 text-left text-xs font-medium outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring">
+          <CollapsibleTrigger className="flex min-h-(--control-h) w-full items-center justify-between border-t border-edge px-3 text-left text-xs font-medium text-ink-2 outline-none transition-colors hover:bg-panel-raised focus-visible:bg-panel-raised active:bg-panel-raised disabled:pointer-events-none disabled:opacity-50">
             <span>Bindings</span>
             <ChevronDown
               aria-hidden="true"
-              className={`size-3.5 transition-transform ${bindingsOpen ? 'rotate-180' : ''}`}
+              className={cn(
+                'size-3.5 text-ink-3 transition-transform duration-(--dur-fast)',
+                bindingsOpen && 'rotate-180'
+              )}
             />
           </CollapsibleTrigger>
           <CollapsiblePanel>
-            <div className="border-t p-3">
+            <div className="border-t border-edge p-3">
               <JsonTree label="Query bindings" value={bindings} />
             </div>
           </CollapsiblePanel>
         </Collapsible>
       )}
-    </section>
+    </Well>
   )
 }

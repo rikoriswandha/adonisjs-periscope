@@ -3,7 +3,7 @@ import { ArrowUpRight } from 'lucide-react'
 import { EntryDetailDrawer } from '@/components/entry-detail-drawer'
 import type { EntryColumn } from '@/components/entry-index-table'
 import { JsonTree } from '@/components/json-tree'
-import { Badge } from '@/components/ui/badge'
+import { StatusDot, type Signal } from '@/components/instrument'
 import type { EntryTypeImplementation, RegisteredEntryDetailProps } from '@/entry-type-registry'
 import { formatDateTime, formatRelativeTime, truncate } from '@/lib/format'
 import type { CacheContent, StoredEntry } from '@/types'
@@ -12,18 +12,26 @@ function cacheContent(entry: StoredEntry): CacheContent {
   return entry.content as CacheContent
 }
 
-function operationVariant(operation: CacheContent['operation']) {
+function operationSignal(operation: CacheContent['operation']): Signal {
   switch (operation) {
     case 'hit':
-      return 'success' as const
+      return 'ok'
     case 'miss':
-      return 'warning' as const
+      return 'warn'
     case 'set':
-      return 'info' as const
     case 'delete':
     case 'clear':
-      return 'destructive' as const
+      return 'neutral'
   }
+}
+
+function CacheOperation({ operation }: { operation: CacheContent['operation'] }) {
+  return (
+    <span className="num inline-flex items-center gap-2 text-xs">
+      <StatusDot signal={operationSignal(operation)} />
+      {operation}
+    </span>
+  )
 }
 
 const columns: EntryColumn[] = [
@@ -31,10 +39,7 @@ const columns: EntryColumn[] = [
     key: 'operation',
     header: 'Operation',
     className: 'w-24',
-    cell: (entry) => {
-      const operation = cacheContent(entry).operation
-      return <Badge variant={operationVariant(operation)}>{operation}</Badge>
-    },
+    cell: (entry) => <CacheOperation operation={cacheContent(entry).operation} />,
   },
   {
     key: 'key',
@@ -44,13 +49,17 @@ const columns: EntryColumn[] = [
       const content = cacheContent(entry)
       return (
         <div className="min-w-0">
-          <div className="max-w-2xl truncate font-mono text-xs font-medium" title={content.key}>
+          <div
+            className="num max-w-2xl truncate text-xs font-medium"
+            title={content.key ?? 'Entire store'}
+          >
             {content.key ? truncate(content.key, 140) : 'Entire store'}
           </div>
           {content.graced && (
-            <Badge className="mt-1.5" size="sm" variant="warning">
+            <span className="num mt-1.5 inline-flex items-center gap-2 text-xs">
+              <StatusDot signal="warn" />
               graced response
-            </Badge>
+            </span>
           )}
         </div>
       )
@@ -61,7 +70,9 @@ const columns: EntryColumn[] = [
     header: 'Store',
     className: 'w-32',
     cell: (entry) => (
-      <span className="font-mono text-xs text-muted-foreground">{cacheContent(entry).store}</span>
+      <span className="num block max-w-32 truncate text-xs text-ink-3" title={cacheContent(entry).store}>
+        {cacheContent(entry).store}
+      </span>
     ),
   },
   {
@@ -69,15 +80,15 @@ const columns: EntryColumn[] = [
     header: 'Layer',
     className: 'w-20',
     cell: (entry) => (
-      <Badge variant="secondary">{cacheContent(entry).layer?.toUpperCase() ?? 'all'}</Badge>
+      <span className="num text-xs text-ink-2">{cacheContent(entry).layer?.toUpperCase() ?? 'all'}</span>
     ),
   },
   {
     key: 'when',
     header: 'When',
-    className: 'w-36',
+    className: 'w-36 text-right',
     cell: (entry) => (
-      <span className="whitespace-nowrap text-xs text-muted-foreground" title={entry.createdAt}>
+      <span className="num block whitespace-nowrap text-right text-xs text-ink-3" title={entry.createdAt}>
         {formatRelativeTime(entry.createdAt)}
       </span>
     ),
@@ -87,7 +98,7 @@ const columns: EntryColumn[] = [
     header: '',
     className: 'w-10 text-right',
     cell: () => (
-      <ArrowUpRight aria-hidden="true" className="ms-auto size-4 text-muted-foreground" />
+      <ArrowUpRight aria-hidden="true" className="ms-auto size-4 text-ink-3" />
     ),
   },
 ]
@@ -99,29 +110,34 @@ function CacheDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
     <EntryDetailDrawer
       description={`${content.store} · ${formatDateTime(entry.createdAt)}`}
       meta={
-        <>
-          <Badge variant={operationVariant(content.operation)}>{content.operation}</Badge>
-          <Badge variant="secondary">{content.layer?.toUpperCase() ?? 'all layers'}</Badge>
-          {content.graced && <Badge variant="warning">graced response</Badge>}
-        </>
+        <span className="flex flex-wrap items-center gap-3">
+          <CacheOperation operation={content.operation} />
+          <span className="num text-xs text-ink-2">{content.layer?.toUpperCase() ?? 'all layers'}</span>
+          {content.graced && (
+            <span className="num inline-flex items-center gap-2 text-xs">
+              <StatusDot signal="warn" />
+              graced response
+            </span>
+          )}
+        </span>
       }
       onOpenChange={(open) => !open && onClose()}
       open={open}
       tags={entry.tags}
       title={truncate(content.key ?? `Clear ${content.store}`, 96)}
     >
-      <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
-        <div>
-          <dt className="text-xs text-muted-foreground">Store</dt>
-          <dd className="mt-0.5 break-all font-mono text-sm">{content.store}</dd>
+      <dl className="well grid gap-2.5 p-3 sm:grid-cols-2">
+        <div className="min-w-0">
+          <dt className="text-xs text-ink-3">Store</dt>
+          <dd className="num mt-0.5 break-all text-sm">{content.store}</dd>
         </div>
         <div>
-          <dt className="text-xs text-muted-foreground">Layer</dt>
-          <dd className="mt-0.5 font-mono text-sm">{content.layer?.toUpperCase() ?? 'All layers'}</dd>
+          <dt className="text-xs text-ink-3">Layer</dt>
+          <dd className="num mt-0.5 text-sm">{content.layer?.toUpperCase() ?? 'All layers'}</dd>
         </div>
-        <div className="sm:col-span-2">
-          <dt className="text-xs text-muted-foreground">Cache key</dt>
-          <dd className="mt-0.5 max-h-24 overflow-auto break-all font-mono text-sm">
+        <div className="min-w-0 sm:col-span-2">
+          <dt className="text-xs text-ink-3">Cache key</dt>
+          <dd className="num mt-0.5 max-h-24 overflow-auto break-all text-sm">
             {content.key ?? 'Operation applies to the entire store'}
           </dd>
         </div>
@@ -129,9 +145,9 @@ function CacheDetail({ entry, open, onClose }: RegisteredEntryDetailProps) {
       {hasCapturedValue ? (
         <JsonTree label="Captured cache value" value={content.value} />
       ) : (
-        <section className="rounded-md border bg-muted/25 p-3">
+        <section className="well p-3">
           <h3 className="text-sm font-semibold">No value payload recorded</h3>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+          <p className="mt-1 text-xs leading-5 text-ink-3">
             Values are omitted for this operation or value capture is disabled. Keys and operation
             metadata remain available.
           </p>

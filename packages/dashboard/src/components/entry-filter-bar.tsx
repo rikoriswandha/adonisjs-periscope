@@ -1,12 +1,25 @@
-import { Clock3, Plus, X } from 'lucide-react'
-import { useState } from 'react'
-import type { FormEvent } from 'react'
+import { Clock3, Search, X } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import type { KeyboardEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Combobox,
+  ComboboxChip,
+  ComboboxChips,
+  ComboboxChipsInput,
+  ComboboxEmpty,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxPopup,
+  ComboboxValue,
+} from '@/components/ui/combobox'
 import { DatePicker } from '@/components/ui/date-picker'
-import { Input } from '@/components/ui/input'
+import { Group, GroupText } from '@/components/ui/group'
+import { Switch } from '@/components/ui/switch'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { Toolbar, ToolbarGroup, ToolbarSeparator } from '@/components/ui/toolbar'
 import {
   endOfLocalDayIso,
   entryUrlFilterState,
@@ -22,137 +35,142 @@ const presets = [
   { label: '24h', minutes: 1_440 },
 ] as const
 
+type TagOption = { label: string; value: string }
+
 export function EntryFilterBar() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [tagInput, setTagInput] = useState('')
   const { tags, from, to } = entryUrlFilterState(searchParams)
   const fromDate = parseFilterDate(from)
   const toDate = parseFilterDate(to)
+  const liveTail = searchParams.get('tail') === '1'
   const activeMinutes =
     from && to ? Math.round((new Date(to).getTime() - new Date(from).getTime()) / 60_000) : null
+  const activePreset = presets.find((preset) => preset.minutes === activeMinutes)?.label ?? ''
+  const tagOptions = useMemo<TagOption[]>(
+    () => tags.map((tag) => ({ label: tag, value: tag })),
+    [tags]
+  )
+  const activeFilterCount = tags.length + (from || to ? 1 : 0)
 
-  const addTag = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
+  const replaceTags = (nextTags: string[]) => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('tag')
+    for (const tag of nextTags) next.append('tag', tag)
+    setSearchParams(next)
+  }
+
+  const commitTag = () => {
     const tag = normalizeExactTag(tagInput)
     if (!tag) return
-    if (!tags.includes(tag)) {
-      const next = new URLSearchParams(searchParams)
-      next.append('tag', tag)
-      setSearchParams(next)
-    }
+    if (!tags.includes(tag)) replaceTags([...tags, tag])
+    setTagInput('')
+  }
+
+  const handleTagKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== 'Enter') return
+    event.preventDefault()
+    commitTag()
+  }
+
+  const clearFilters = () => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('tag')
+    next.delete('from')
+    next.delete('to')
+    setSearchParams(next)
     setTagInput('')
   }
 
   return (
-    <section
-      aria-label="Entry filters"
-      className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-3 lg:flex-row lg:items-end lg:justify-between"
-    >
-      <div className="min-w-0 flex-1 space-y-2">
-        <div className="flex items-center justify-between gap-3">
-          <label className="text-xs font-medium" htmlFor="entry-filter-tag">
-            Exact tags
-          </label>
-          {tags.length > 0 && (
-            <Button
-              onClick={() => {
-                const next = new URLSearchParams(searchParams)
-                next.delete('tag')
-                setSearchParams(next)
-              }}
-              size="xs"
-              type="button"
-              variant="ghost"
-            >
-              Clear tags
-            </Button>
-          )}
-        </div>
-        <form className="flex max-w-xl items-center gap-2" onSubmit={addTag}>
-          <Input
-            autoComplete="off"
-            id="entry-filter-tag"
-            onChange={(event) => setTagInput(event.target.value)}
-            placeholder="Add an exact tag"
-            type="text"
-            value={tagInput}
-          />
-          <Button disabled={!normalizeExactTag(tagInput)} size="sm" type="submit" variant="outline">
-            <Plus aria-hidden="true" />
-            Add
-          </Button>
-        </form>
-        {tags.length > 0 && (
-          <div aria-label="Active exact tags" className="flex flex-wrap gap-1.5">
-            {tags.map((tag) => (
-              <Badge key={tag} variant="secondary">
-                <span className="font-mono">{tag}</span>
-                <button
-                  aria-label={`Remove exact tag ${tag}`}
-                  className="-me-1 rounded-sm p-0.5 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  onClick={() => {
-                    const next = new URLSearchParams(searchParams)
-                    next.delete('tag')
-                    for (const activeTag of tags) {
-                      if (activeTag !== tag) next.append('tag', activeTag)
-                    }
-                    setSearchParams(next)
-                  }}
-                  type="button"
-                >
-                  <X aria-hidden="true" className="size-3" />
-                </button>
-              </Badge>
-            ))}
-          </div>
-        )}
-      </div>
+    <section aria-label="Entry filters">
+      <Toolbar className="well flex-wrap gap-2 rounded-sm border-edge bg-well p-2 text-ink max-sm:items-stretch">
+        <ToolbarGroup className="min-w-52 flex-1 max-sm:w-full">
+          <Combobox
+            items={tagOptions}
+            inputValue={tagInput}
+            multiple
+            onInputValueChange={setTagInput}
+            onValueChange={(value) => replaceTags(value.map((option) => option.value))}
+            value={tagOptions}
+          >
+            <ComboboxChips className="min-h-[var(--control-h)] rounded-sm border-edge bg-panel p-0.5 shadow-none pointer-coarse:min-h-11" startAddon={<Search />}>
+              <ComboboxValue>
+                {(value: TagOption[]) => (
+                  <>
+                    {value.map((option) => (
+                      <ComboboxChip aria-label={option.label} key={option.value}>
+                        <span className="num max-w-40 truncate">{option.label}</span>
+                      </ComboboxChip>
+                    ))}
+                    <ComboboxChipsInput
+                      aria-label="Filter by exact tags"
+                      className="num h-[var(--control-h)] text-xs text-ink placeholder:text-ink-3"
+                      onKeyDown={handleTagKeyDown}
+                      placeholder={tags.length > 0 ? 'Add tag…' : 'Filter exact tags…'}
+                      size="sm"
+                    />
+                  </>
+                )}
+              </ComboboxValue>
+            </ComboboxChips>
+            <ComboboxPopup className="rounded-sm">
+              <ComboboxEmpty>
+                {normalizeExactTag(tagInput) ? 'Press Enter to add this exact tag.' : 'Type an exact tag.'}
+              </ComboboxEmpty>
+              <ComboboxList>
+                {(option: TagOption) => (
+                  <ComboboxItem key={option.value} value={option}>
+                    <span className="num">{option.label}</span>
+                  </ComboboxItem>
+                )}
+              </ComboboxList>
+            </ComboboxPopup>
+          </Combobox>
+        </ToolbarGroup>
 
-      <div className="space-y-2">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="me-1 flex items-center gap-1.5 text-xs font-medium">
-            <Clock3 aria-hidden="true" className="size-3.5 text-muted-foreground" />
-            Time range
-          </span>
-          {presets.map((preset) => (
-            <Button
-              aria-pressed={activeMinutes === preset.minutes}
-              key={preset.label}
-              onClick={() => {
+        <ToolbarSeparator className="max-sm:hidden" orientation="vertical" />
+
+        <ToolbarGroup className="flex-wrap gap-1.5 max-sm:w-full">
+          <Group aria-label="Time range presets">
+            <GroupText className="rounded-sm border-edge bg-panel px-2 text-xs text-ink-3 shadow-none">
+              <Clock3 aria-hidden="true" className="size-3.5" />
+              Range
+            </GroupText>
+            <ToggleGroup
+              aria-label="Time range"
+              className="w-auto"
+              size="sm"
+              onValueChange={(value) => {
+                const selected = value[0]
+                if (!selected) return
+                const preset = presets.find((candidate) => candidate.label === selected)
+                if (!preset) return
                 const next = new URLSearchParams(searchParams)
                 const range = presetTimeRange(preset.minutes)
                 next.set('from', range.from)
                 next.set('to', range.to)
                 setSearchParams(next)
               }}
-              size="xs"
-              type="button"
-              variant={activeMinutes === preset.minutes ? 'secondary' : 'ghost'}
+              value={activePreset ? [activePreset] : []}
+              variant="outline"
             >
-              {preset.label}
-            </Button>
-          ))}
-          {(from || to) && (
-            <Button
-              onClick={() => {
-                const next = new URLSearchParams(searchParams)
-                next.delete('from')
-                next.delete('to')
-                setSearchParams(next)
-              }}
-              size="xs"
-              type="button"
-              variant="ghost"
-            >
-              Clear
-            </Button>
-          )}
-        </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <label className="flex items-center gap-2 text-2xs text-muted-foreground">
-            From
+              {presets.map((preset) => (
+                <ToggleGroupItem
+                  className="num min-w-10 rounded-sm px-2 text-xs"
+                  key={preset.label}
+                  value={preset.label}
+                >
+                  {preset.label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </Group>
+
+          <Group aria-label="Custom time range" className="max-sm:w-full max-sm:flex-wrap">
             <DatePicker
               aria-label="Entries created from"
+              className="h-[var(--control-h)] w-36 rounded-sm text-xs"
               disabled={toDate ? { after: toDate } : undefined}
               onChange={(date) => {
                 const next = new URLSearchParams(searchParams)
@@ -163,11 +181,9 @@ export function EntryFilterBar() {
               placeholder="From date"
               value={fromDate}
             />
-          </label>
-          <label className="flex items-center gap-2 text-2xs text-muted-foreground">
-            To
             <DatePicker
               aria-label="Entries created through"
+              className="h-[var(--control-h)] w-36 rounded-sm text-xs"
               disabled={fromDate ? { before: fromDate } : undefined}
               onChange={(date) => {
                 const next = new URLSearchParams(searchParams)
@@ -178,9 +194,45 @@ export function EntryFilterBar() {
               placeholder="To date"
               value={toDate}
             />
+          </Group>
+        </ToolbarGroup>
+
+        <ToolbarSeparator className="max-lg:hidden" orientation="vertical" />
+
+        <ToolbarGroup className="ms-auto gap-2 max-sm:ms-0 max-sm:w-full max-sm:justify-between">
+          <label className="flex h-[var(--control-h)] items-center gap-2 rounded-sm px-1.5 text-xs text-ink-2 pointer-coarse:min-h-11">
+            Live tail
+            <Switch
+              aria-label="Automatically show new entries"
+              checked={liveTail}
+              onCheckedChange={(checked) => {
+                const next = new URLSearchParams(searchParams)
+                if (checked) next.set('tail', '1')
+                else next.delete('tail')
+                setSearchParams(next)
+              }}
+            />
           </label>
-        </div>
-      </div>
+          {activeFilterCount > 0 && (
+            <div className="flex items-center gap-1.5">
+              <span className="num text-micro text-ink-3" role="status">
+                {activeFilterCount} active
+              </span>
+              <Button
+                aria-label={`Clear ${activeFilterCount} active ${activeFilterCount === 1 ? 'filter' : 'filters'}`}
+                className="h-[var(--control-h)] rounded-sm px-2"
+                onClick={clearFilters}
+                size="xs"
+                type="button"
+                variant="ghost"
+              >
+                <X aria-hidden="true" />
+                Clear
+              </Button>
+            </div>
+          )}
+        </ToolbarGroup>
+      </Toolbar>
     </section>
   )
 }

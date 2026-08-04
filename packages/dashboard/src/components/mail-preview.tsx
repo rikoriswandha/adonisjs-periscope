@@ -1,3 +1,6 @@
+import { ShieldCheck } from 'lucide-react'
+
+import { Well } from '@/components/instrument'
 import { sanitizeMailPreviewHtml } from '@/components/mail-preview-sanitizer'
 
 export function MailPreview({
@@ -11,28 +14,39 @@ export function MailPreview({
 }) {
   if (html?.trim()) {
     return (
-      <iframe
-        className="h-96 w-full rounded-md border bg-background"
-        referrerPolicy="no-referrer"
-        sandbox=""
-        srcDoc={sanitizeMailPreviewHtml(html)}
-        title={title}
-      />
+      <Well aria-label={title} className="overflow-hidden" role="region">
+        <header className="flex min-h-9 items-center justify-between gap-2 border-b border-edge px-3">
+          <h3 className="micro-label truncate text-ink-2">Rendered message</h3>
+          <span className="flex shrink-0 items-center gap-1.5 text-xs text-ink-3">
+            <ShieldCheck aria-hidden="true" className="size-3.5 text-sig-ok" />
+            HTML sanitized
+          </span>
+        </header>
+        <iframe
+          className="h-96 w-full border-0 bg-well"
+          referrerPolicy="no-referrer"
+          sandbox=""
+          srcDoc={sanitizeMailPreviewHtml(html)}
+          title={title}
+        />
+      </Well>
     )
   }
 
   if (text?.trim()) {
     return (
-      <section aria-label={title} className="overflow-hidden rounded-md border bg-muted/25">
-        <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words p-3 font-sans text-sm leading-6 text-foreground">
+      <Well aria-label={title} className="overflow-hidden" role="region">
+        <header className="flex min-h-9 items-center border-b border-edge px-3">
+          <h3 className="micro-label text-ink-2">Plain-text message</h3>
+        </header>
+        <pre className="num max-h-96 overflow-auto whitespace-pre-wrap break-words p-3 text-sm leading-6 text-ink-2">
           {text}
         </pre>
-      </section>
+      </Well>
     )
   }
-
   return (
-    <p className="rounded-md border bg-muted/25 p-3 text-sm leading-6 text-muted-foreground">
+    <p className="well num p-3 text-sm leading-6 text-ink-3">
       No HTML or plain-text body was captured for this message.
     </p>
   )
