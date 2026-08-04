@@ -155,7 +155,7 @@ export function EntryDetailDrawer({
     </div>
   )
   const panel = (
-    <div className="space-y-4">
+    <div className="min-w-0 max-w-full space-y-4 max-sm:[&_[role=tablist]]:w-full max-sm:[&_[role=tablist]]:min-w-0 max-sm:[&_[role=tablist]]:overflow-x-auto">
       {tags && tags.length > 0 && <EntryTagChips tags={tags} />}
       {children}
     </div>
@@ -163,7 +163,7 @@ export function EntryDetailDrawer({
 
   if (context?.presentation === 'page') {
     return (
-      <section className="panel overflow-clip">
+      <section className="panel min-w-0 overflow-clip">
         <header className="sticky top-0 z-(--z-sticky) border-b border-edge bg-panel px-4 py-3">
           {header}
         </header>
@@ -174,13 +174,13 @@ export function EntryDetailDrawer({
 
   return (
     <Sheet onOpenChange={onOpenChange} open={present}>
-      <SheetPopup className="w-full bg-chassis sm:max-w-2xl" side="right">
+      <SheetPopup className="w-full bg-chassis max-sm:border-s-0 sm:max-w-2xl" side="right">
         <SheetHeader className="shrink-0 border-b border-edge bg-panel px-4 py-3">
           <SheetTitle className="sr-only">{title}</SheetTitle>
           <SheetDescription className="sr-only">{description}</SheetDescription>
           {header}
         </SheetHeader>
-        <SheetPanel className="bg-chassis p-4">{panel}</SheetPanel>
+        <SheetPanel className="min-w-0 bg-chassis p-3 sm:p-4">{panel}</SheetPanel>
       </SheetPopup>
     </Sheet>
   )

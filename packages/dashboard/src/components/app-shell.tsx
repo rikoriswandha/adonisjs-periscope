@@ -178,7 +178,7 @@ function Rail({
               <NavLink
                 aria-label={collapsed ? item.label : undefined}
                 className={cn(
-                  'group relative flex h-7 shrink-0 items-center gap-2 rounded-sm px-2',
+                  'group relative flex h-7 shrink-0 items-center gap-2 rounded-sm px-2 pointer-coarse:h-11',
                   'transition-colors duration-(--dur-fast) ease-(--ease-out-quart)',
                   collapsed && 'justify-center px-0',
                   active
@@ -635,7 +635,11 @@ export function AppShell() {
           }}
           value={selectedApplication}
         >
-          <SelectTrigger aria-label="Recording application" className="w-full" size="sm">
+          <SelectTrigger
+            aria-label="Recording application"
+            className="w-full pointer-coarse:min-h-11"
+            size="sm"
+          >
             <Database aria-hidden="true" />
             <SelectValue placeholder="Application" />
           </SelectTrigger>
@@ -665,7 +669,7 @@ export function AppShell() {
 
   return (
     <DashboardContext.Provider value={contextValue}>
-      <div className="flex h-dvh overflow-hidden bg-chassis text-ink">
+      <div className="flex h-dvh min-w-0 overflow-hidden bg-chassis text-ink">
         <aside
           className={cn(
             'relative hidden shrink-0 flex-col border-r border-edge bg-[var(--sidebar)] lg:flex',
@@ -702,7 +706,7 @@ export function AppShell() {
 
         <div className="flex min-w-0 flex-1 flex-col">
           <header
-            className="z-[var(--z-sticky)] flex h-11 shrink-0 items-center gap-2 border-b border-edge bg-chassis px-3"
+            className="z-[var(--z-sticky)] flex h-11 min-w-0 shrink-0 items-center gap-2 border-b border-edge bg-chassis ps-[max(0.75rem,env(safe-area-inset-left))] pe-[max(0.75rem,env(safe-area-inset-right))]"
           >
             <Button
               aria-label="Open navigation"
@@ -723,7 +727,7 @@ export function AppShell() {
               <PanelLeft aria-hidden="true" />
             </Button>
 
-            <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5">
+            <nav aria-label="Breadcrumb" className="flex min-w-0 flex-1 items-center gap-1.5">
               <span className="hidden text-sm text-ink-4 sm:inline">{sectionLabel}</span>
               <span aria-hidden="true" className="hidden text-ink-4 sm:inline">
                 /
@@ -736,7 +740,7 @@ export function AppShell() {
             {status?.paused && (
               <button
                 aria-label="Recording paused. Resume recording"
-                className="inline-flex h-5 shrink-0 items-center gap-1.5 rounded-sm border border-sig-warn/35 bg-sig-warn/10 px-1.5 text-micro text-sig-warn transition-colors hover:bg-sig-warn/16"
+                className="relative inline-flex h-5 shrink-0 items-center gap-1.5 rounded-sm border border-sig-warn/35 bg-sig-warn/10 px-1.5 text-micro text-sig-warn transition-colors hover:bg-sig-warn/16 pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11"
                 disabled={mutating}
                 onClick={() => void togglePaused(false)}
                 type="button"
@@ -750,7 +754,8 @@ export function AppShell() {
               <button
                 aria-label="Open command palette"
                 className={cn(
-                  'group flex h-7 items-center gap-2 rounded-sm border border-edge bg-well px-2',
+                  'group relative flex h-7 items-center gap-2 rounded-sm border border-edge bg-well px-2',
+                  'pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11',
                   'text-ink-3 transition-colors duration-(--dur-fast) ease-(--ease-out-quart)',
                   'hover:border-edge-strong hover:text-ink-2'
                 )}
@@ -858,7 +863,7 @@ export function AppShell() {
             </div>
           )}
 
-          <main className="min-h-0 flex-1 overflow-y-auto bg-chassis px-4 py-4">
+          <main className="min-h-0 flex-1 overflow-y-auto bg-chassis pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))]">
             <Outlet />
           </main>
         </div>

@@ -16,6 +16,13 @@ export const hmsTimeFmt = new Intl.DateTimeFormat('en-US', {
   hour12: false,
 })
 
+export function compactHmsTimeLabel(label: string): string {
+  if (/^\d{2}:\d{2}:\d{2}$/.test(label)) {
+    return label.slice(0, 5)
+  }
+  return label
+}
+
 export const shortDateTimeFmt = new Intl.DateTimeFormat('en-US', {
   month: 'short',
   day: 'numeric',

@@ -236,7 +236,7 @@ export function OverviewPage() {
               <Metric
                 className="border-edge p-4 border-b lg:border-r lg:border-b-0"
                 detail={
-                  <span className="num">
+                  <span className="num max-sm:block max-sm:whitespace-normal">
                     {visibleStats.requests.errorCount.toLocaleString()} errors /{' '}
                     {visibleStats.requests.sampled.toLocaleString()} sampled
                   </span>
@@ -249,7 +249,7 @@ export function OverviewPage() {
               <Metric
                 className="border-edge p-4 border-r lg:border-r"
                 detail={
-                  <span>
+                  <span className="max-sm:block max-sm:whitespace-normal">
                     Across{' '}
                     <span className="num">{visibleStats.requests.sampled.toLocaleString()}</span>{' '}
                     sampled requests
@@ -261,7 +261,7 @@ export function OverviewPage() {
               <Metric
                 className="p-4"
                 detail={
-                  <span>
+                  <span className="max-sm:block max-sm:whitespace-normal">
                     Across{' '}
                     <span className="num">{visibleStats.requests.sampled.toLocaleString()}</span>{' '}
                     sampled requests

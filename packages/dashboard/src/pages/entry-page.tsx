@@ -102,7 +102,7 @@ export function EntryPage() {
 
   if (state.status === 'loading') {
     return (
-      <div aria-label="Loading entry" className="space-y-4" role="status">
+      <div aria-label="Loading entry" className="min-w-0 space-y-4" role="status">
         <Skeleton className="h-8 w-44" />
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-96 w-full" />
@@ -119,8 +119,8 @@ export function EntryPage() {
           </EmptyMedia>
           <EmptyTitle>Entry not found</EmptyTitle>
           <EmptyDescription>
-            No recorded entry has UUID <span className="num">{uuid}</span>. It may have expired
-            under the retention policy.
+            No recorded entry has UUID <span className="num break-all">{uuid}</span>. It may have
+            expired under the retention policy.
           </EmptyDescription>
         </EmptyHeader>
         <Button render={<Link to="/requests" />} variant="outline">
@@ -155,15 +155,16 @@ export function EntryPage() {
 
   const { entry } = state
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-4">
       <Button render={<Link to="/requests" />} size="sm" variant="ghost">
         <ArrowLeft aria-hidden="true" />
         Back to requests
       </Button>
 
       <PageHeader
+        className="max-sm:[&>div:last-child]:w-full max-sm:[&>div:last-child]:min-w-0 max-sm:[&>div:last-child]:shrink"
         aside={
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 max-sm:w-full">
             <label className="flex min-h-[var(--control-h)] items-center gap-2 rounded-sm border border-edge bg-panel px-2 text-xs font-medium text-ink [@media(pointer:coarse)]:min-h-11">
               <Pin
                 aria-hidden="true"

@@ -76,7 +76,7 @@ export function EntryCompare({
 
   return (
     <Sheet onOpenChange={onOpenChange} open={open}>
-      <SheetPopup className="w-full bg-chassis min-[900px]:max-w-5xl" side="right">
+      <SheetPopup className="w-full bg-chassis max-sm:border-s-0 min-[900px]:max-w-5xl" side="right">
         <SheetHeader className="shrink-0 border-b border-edge bg-panel px-4 py-3">
           <SheetTitle className="text-md text-ink">Compare entries</SheetTitle>
           <SheetDescription className="text-xs text-ink-3">
@@ -114,10 +114,12 @@ export function EntryCompare({
             <div className="space-y-3">
               <div className="grid gap-2 min-[900px]:grid-cols-2">
                 <Well className="num min-w-0 p-3">
+                  <p className="micro-label mb-1 text-ink-3">Left entry</p>
                   <p className="break-all text-xs font-medium text-ink">{state.left.uuid}</p>
                   <p className="mt-1 text-micro text-ink-3">{state.left.type}</p>
                 </Well>
                 <Well className="num min-w-0 p-3">
+                  <p className="micro-label mb-1 text-ink-3">Right entry</p>
                   <p className="break-all text-xs font-medium text-ink">{state.right.uuid}</p>
                   <p className="mt-1 text-micro text-ink-3">{state.right.type}</p>
                 </Well>
@@ -137,6 +139,7 @@ export function EntryCompare({
                   </div>
                   <div className="grid gap-2 min-[900px]:grid-cols-2">
                     <div className={cn('min-w-0 rounded-sm p-0.5', DIFF_TONE[row.status])}>
+                      <p className="micro-label px-2 py-1 text-ink-3 sm:hidden">Left</p>
                       {row.status === 'right-only' ? (
                         <Well className="num flex min-h-16 items-center p-3 text-xs text-ink-4">
                           Not present
@@ -146,6 +149,7 @@ export function EntryCompare({
                       )}
                     </div>
                     <div className={cn('min-w-0 rounded-sm p-0.5', DIFF_TONE[row.status])}>
+                      <p className="micro-label px-2 py-1 text-ink-3 sm:hidden">Right</p>
                       {row.status === 'left-only' ? (
                         <Well className="num flex min-h-16 items-center p-3 text-xs text-ink-4">
                           Not present

@@ -14,7 +14,7 @@ export function MailPreview({
 }) {
   if (html?.trim()) {
     return (
-      <Well aria-label={title} className="overflow-hidden" role="region">
+      <Well aria-label={title} className="min-w-0 max-w-full overflow-hidden" role="region">
         <header className="flex min-h-9 items-center justify-between gap-2 border-b border-edge px-3">
           <h3 className="micro-label truncate text-ink-2">Rendered message</h3>
           <span className="flex shrink-0 items-center gap-1.5 text-xs text-ink-3">
@@ -35,7 +35,7 @@ export function MailPreview({
 
   if (text?.trim()) {
     return (
-      <Well aria-label={title} className="overflow-hidden" role="region">
+      <Well aria-label={title} className="min-w-0 max-w-full overflow-hidden" role="region">
         <header className="flex min-h-9 items-center border-b border-edge px-3">
           <h3 className="micro-label text-ink-2">Plain-text message</h3>
         </header>
@@ -46,7 +46,7 @@ export function MailPreview({
     )
   }
   return (
-    <p className="well num p-3 text-sm leading-6 text-ink-3">
+    <p className="well num min-w-0 max-w-full break-words p-3 text-sm leading-6 text-ink-3">
       No HTML or plain-text body was captured for this message.
     </p>
   )

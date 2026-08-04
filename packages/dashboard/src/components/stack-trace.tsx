@@ -42,9 +42,9 @@ export function StackTrace({
   const vendorFrames = frames.filter((frame) => frame.type !== 'app')
 
   return (
-    <div className="space-y-3">
+    <div className="min-w-0 max-w-full space-y-3">
       {codeFrame && codeFrame.length > 0 && (
-        <Well aria-label="Source code frame" className="overflow-hidden" role="region">
+        <Well aria-label="Source code frame" className="min-w-0 max-w-full overflow-hidden" role="region">
           <header className="flex min-h-9 items-center border-b border-edge px-3">
             <h3 className="micro-label text-ink-2">Source context</h3>
           </header>
@@ -72,7 +72,7 @@ export function StackTrace({
         </Well>
       )}
 
-      <Well aria-label="Stack frames" className="overflow-hidden" role="region">
+      <Well aria-label="Stack frames" className="min-w-0 max-w-full overflow-hidden" role="region">
         <header className="flex min-h-9 items-center justify-between border-b border-edge px-3">
           <h3 className="micro-label text-ink-2">Stack trace</h3>
           {frames.length > 0 && <span className="num text-micro text-ink-4">{frames.length} frames</span>}
@@ -95,7 +95,7 @@ export function StackTrace({
 
             {vendorFrames.length > 0 && (
               <Collapsible onOpenChange={setVendorOpen} open={vendorOpen}>
-                <CollapsibleTrigger className="flex min-h-(--control-h) w-full items-center gap-2 border-t border-edge px-3 text-left text-xs text-ink-3 outline-none transition-colors first:border-t-0 hover:bg-panel-raised hover:text-ink-2 focus-visible:bg-panel-raised active:bg-panel-raised disabled:pointer-events-none disabled:opacity-50">
+                <CollapsibleTrigger className="flex min-h-(--control-h) w-full items-center gap-2 border-t border-edge px-3 text-left text-xs text-ink-3 outline-none transition-colors pointer-coarse:min-h-11 first:border-t-0 hover:bg-panel-raised hover:text-ink-2 focus-visible:bg-panel-raised active:bg-panel-raised disabled:pointer-events-none disabled:opacity-50">
                   <ChevronRight
                     aria-hidden="true"
                     className={cn(

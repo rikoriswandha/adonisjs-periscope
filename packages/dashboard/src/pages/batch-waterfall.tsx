@@ -8,9 +8,9 @@ import {
   SIGNAL_BG,
   SIGNAL_TEXT,
   StatusDot,
-  Well,
   type Signal,
 } from '@/components/instrument'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipPopup, TooltipTrigger } from '@/components/ui/tooltip'
 import { asNumber, formatDuration, sequenceCompareAscending } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -232,10 +232,16 @@ export function BatchWaterfall({
           <figcaption className="sr-only">
             Entry start offsets and durations in sequence order
           </figcaption>
-          <Well className="overflow-x-auto rounded-none border-0" role="group" aria-label="Batch waterfall chart">
-            <div className="min-w-[56rem]">
-              <div className="grid grid-cols-[minmax(12rem,22rem)_minmax(28rem,1fr)_5.5rem] border-b border-edge">
-                <div className="micro-label flex h-9 items-end px-3 pb-2">Entry</div>
+          <ScrollArea
+            aria-label="Batch waterfall chart"
+            className="well h-auto w-full rounded-none border-0"
+            overscrollContain
+            role="group"
+            scrollFade
+          >
+            <div className="min-w-[56rem] max-sm:min-w-0">
+              <div className="grid grid-cols-[minmax(12rem,22rem)_minmax(28rem,1fr)_5.5rem] border-b border-edge max-sm:grid-cols-[5.5rem_minmax(0,1fr)_3.25rem]">
+                <div className="micro-label flex h-9 items-end px-3 pb-2 max-sm:px-2">Entry</div>
                 <div className="relative h-9" aria-label="Elapsed time axis">
                   {ticks.map((tick, index) => {
                     const left = layout.totalSpanMs === 0 ? 0 : (tick / layout.totalSpanMs) * 100
@@ -249,6 +255,7 @@ export function BatchWaterfall({
                       <span
                         className={cn(
                           'num absolute bottom-2 whitespace-nowrap text-micro text-ink-4',
+                          index % 2 === 1 && 'max-sm:hidden',
                           alignment
                         )}
                         key={`${tick}-${index}`}
@@ -259,7 +266,10 @@ export function BatchWaterfall({
                     )
                   })}
                 </div>
-                <div className="micro-label flex h-9 items-end justify-end px-3 pb-2">Duration</div>
+                <div className="micro-label flex h-9 items-end justify-end px-3 pb-2 max-sm:px-1">
+                  <span className="max-sm:hidden">Duration</span>
+                  <span className="sm:hidden">Dur.</span>
+                </div>
               </div>
 
               {layout.items.length === 0 ? (
@@ -274,14 +284,14 @@ export function BatchWaterfall({
                     return (
                       <div
                         className={cn(
-                          'grid min-h-[var(--row-h)] grid-cols-[minmax(12rem,22rem)_minmax(28rem,1fr)_5.5rem] border-b border-edge last:border-b-0 transition-opacity duration-[var(--dur-fast)] [@media(pointer:coarse)]:min-h-11',
+                          'grid min-h-[var(--row-h)] grid-cols-[minmax(12rem,22rem)_minmax(28rem,1fr)_5.5rem] border-b border-edge last:border-b-0 transition-opacity duration-[var(--dur-fast)] max-sm:grid-cols-[5.5rem_minmax(0,1fr)_3.25rem] [@media(pointer:coarse)]:min-h-11',
                           hoveredUuid && hoveredUuid !== item.entry.uuid && 'opacity-35'
                         )}
                         key={item.entry.uuid}
                       >
-                        <div className="flex min-w-0 items-center gap-2 px-3 py-[var(--cell-py)]">
+                        <div className="flex min-w-0 items-center gap-2 px-3 py-[var(--cell-py)] max-sm:gap-1.5 max-sm:px-2">
                           <StatusDot signal={signal} />
-                          <span className="w-20 shrink-0 truncate text-micro text-ink-3">
+                          <span className="w-20 shrink-0 truncate text-micro text-ink-3 max-sm:hidden">
                             {entryTypeLabel(item.entry.type)}
                           </span>
                           <span className="num min-w-0 truncate text-xs text-ink" title={itemSummary}>
@@ -295,7 +305,10 @@ export function BatchWaterfall({
                             return (
                               <span
                                 aria-hidden="true"
-                                className="pointer-events-none absolute inset-y-0 w-px bg-edge/60"
+                                className={cn(
+                                  'pointer-events-none absolute inset-y-0 w-px bg-edge/60',
+                                  index % 2 === 1 && 'max-sm:hidden'
+                                )}
                                 key={`${tick}-${index}`}
                                 style={{ left: `${left}%` }}
                               />
@@ -310,7 +323,7 @@ export function BatchWaterfall({
                             totalSpanMs={layout.totalSpanMs}
                           />
                         </div>
-                        <div className="num flex items-center justify-end px-3 py-[var(--cell-py)] text-right text-xs text-ink-2">
+                        <div className="num flex items-center justify-end px-3 py-[var(--cell-py)] text-right text-xs text-ink-2 max-sm:overflow-hidden max-sm:whitespace-nowrap max-sm:px-1 max-sm:text-micro">
                           {item.durationMs === undefined ? 'Instant' : formatDuration(item.durationMs)}
                         </div>
                       </div>
@@ -319,7 +332,7 @@ export function BatchWaterfall({
                 </div>
               )}
             </div>
-          </Well>
+          </ScrollArea>
 
           {types.length > 0 && (
             <div className="flex flex-wrap gap-x-3 gap-y-1 border-t border-edge px-3 py-2" aria-label="Entry type legend">

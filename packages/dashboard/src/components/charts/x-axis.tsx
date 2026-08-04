@@ -4,14 +4,29 @@ import { memo, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '@/lib/utils'
 import { useChart, useChartStable } from './chart-context'
-import { shortDateFmt } from './chart-formatters'
+import { compactHmsTimeLabel, shortDateFmt } from './chart-formatters'
 import { DEFAULT_Y_DOMAIN_TWEEN_MS } from './chart-phase'
 import { LINE_LOADING_PULSE_EASE } from './line-loading-timing'
 
 const X_AXIS_POSITION_TWEEN_MS = DEFAULT_Y_DOMAIN_TWEEN_MS
+const X_AXIS_MIN_LABEL_BUDGET_PX = 112
+const X_AXIS_COMPACT_TIME_WIDTH_PX = 400
+
+export function resolveXAxisTickCount(availableWidth: number, requestedTickCount = 5): number {
+  const requested = Number.isFinite(requestedTickCount)
+    ? Math.max(2, Math.round(requestedTickCount))
+    : 5
+  if (!Number.isFinite(availableWidth)) {
+    return requested
+  }
+  return Math.min(
+    requested,
+    Math.max(2, Math.floor(availableWidth / X_AXIS_MIN_LABEL_BUDGET_PX))
+  )
+}
 
 export interface XAxisProps {
-  /** Number of ticks to show (including first and last). Default: 5. */
+  /** Maximum number of ticks to show (including first and last). Default: 5. */
   numTicks?: number
   /** Width of the date ticker box for fade calculation. Default: 50 */
   tickerHalfWidth?: number
@@ -26,6 +41,14 @@ interface AxisTick {
   date: Date
   x: number
   label: string
+}
+
+function compactTimeLabelsWhenDistinct(ticks: AxisTick[]): AxisTick[] {
+  const labels = ticks.map((tick) => compactHmsTimeLabel(tick.label))
+  if (new Set(labels).size !== labels.length) {
+    return ticks
+  }
+  return ticks.map((tick, index) => ({ ...tick, label: labels[index] ?? tick.label }))
 }
 
 interface XAxisLabelProps {
@@ -565,52 +588,66 @@ const XAxisInner = memo(function XAxisInner({
   tickMode = 'data',
   container,
 }: XAxisProps & { container: HTMLDivElement }) {
-  const { xScale, margin, tooltipData, data, xAccessor, dateLabels, xDomain } = useChart()
+  const { xScale, margin, tooltipData, data, xAccessor, dateLabels, xDomain, innerWidth } =
+    useChart()
+  const targetTickCount = resolveXAxisTickCount(innerWidth, numTicks)
 
   const labelsToShow = useMemo(() => {
     const projectionExtendsScale =
       tickMode === 'data' && domainExtendsPastData(data, xAccessor, xScale)
+    let ticks: AxisTick[]
 
     if (tickMode === 'domain') {
-      return buildDomainTicks({
+      ticks = buildDomainTicks({
         marginLeft: margin.left,
-        numTicks,
+        numTicks: targetTickCount,
         xScale,
       })
-    }
-
-    // No brush: evenly spaced ticks across the full domain (data + projection).
-    if (projectionExtendsScale && xDomain == null) {
-      return buildDomainTicks({
+    } else if (projectionExtendsScale && xDomain == null) {
+      // No brush: evenly spaced ticks across the full domain (data + projection).
+      ticks = buildDomainTicks({
         marginLeft: margin.left,
-        numTicks,
+        numTicks: targetTickCount,
         xScale,
       })
-    }
-
-    const dataTicks = buildDataAlignedTicks({
-      data,
-      dateLabels,
-      marginLeft: margin.left,
-      targetTickCount: numTicks,
-      xAccessor,
-      xScale,
-    })
-
-    // Brush: keep data-aligned ticks, add labels only in the projection tail.
-    if (projectionExtendsScale && xDomain != null) {
-      return appendProjectionTailTicks(
-        dataTicks,
+    } else {
+      const dataTicks = buildDataAlignedTicks({
         data,
+        dateLabels,
+        marginLeft: margin.left,
+        targetTickCount,
         xAccessor,
         xScale,
-        margin.left,
-        Math.max(1, numTicks - dataTicks.length + 1)
-      )
+      })
+
+      // Brush: keep data-aligned ticks, add labels only in the projection tail.
+      ticks =
+        projectionExtendsScale && xDomain != null
+          ? appendProjectionTailTicks(
+              dataTicks,
+              data,
+              xAccessor,
+              xScale,
+              margin.left,
+              Math.max(1, targetTickCount - dataTicks.length + 1)
+            )
+          : dataTicks
     }
 
-    return dataTicks
-  }, [tickMode, xDomain, data, dateLabels, xAccessor, xScale, margin.left, numTicks])
+    return innerWidth < X_AXIS_COMPACT_TIME_WIDTH_PX
+      ? compactTimeLabelsWhenDistinct(ticks)
+      : ticks
+  }, [
+    tickMode,
+    xDomain,
+    data,
+    dateLabels,
+    xAccessor,
+    xScale,
+    margin.left,
+    targetTickCount,
+    innerWidth,
+  ])
 
   const isHovering = tooltipData !== null
   const crosshairX = tooltipData ? tooltipData.x + margin.left : null

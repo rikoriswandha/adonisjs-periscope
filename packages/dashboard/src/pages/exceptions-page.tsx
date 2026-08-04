@@ -138,8 +138,8 @@ function ExceptionOccurrenceContent({ entry }: { entry: StoredEntry }) {
         <JsonTree label="Exception context" value={content.context} />
       )}
 
-      <dl className="grid gap-2.5 rounded-md border p-3 sm:grid-cols-2">
-        <div>
+      <dl className="grid min-w-0 gap-2.5 rounded-md border p-3 sm:grid-cols-2">
+        <div className="min-w-0">
           <dt className="text-xs text-ink-3">Family hash</dt>
           <dd className="num mt-0.5 truncate text-xs" title={entry.familyHash ?? undefined}>
             {entry.familyHash ?? 'Unavailable'}
@@ -576,7 +576,7 @@ export function ExceptionsPage() {
   }, [error, familyHash, groups, indexLoading, loadMore, loadingMore, nextCursor, openGroup])
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-4">
       <PageHeader
         title="Exception families"
         description="Recurring failures are grouped by stack signature so frequency and the latest occurrence stay visible together."
@@ -634,9 +634,9 @@ export function ExceptionsPage() {
         />
         <PanelBody className="p-0">
           <div className="overflow-x-auto">
-            <Table className="min-w-data-table text-xs">
+            <Table className="min-w-data-table text-xs max-sm:min-w-0">
               <TableCaption className="sr-only">Grouped recorded exceptions</TableCaption>
-              <TableHeader>
+              <TableHeader className="max-sm:hidden">
                 <TableRow className="hover:bg-transparent">
                   <TableHead className="micro-label w-32 text-right" scope="col">
                     Occurrences
@@ -664,26 +664,36 @@ export function ExceptionsPage() {
               <TableBody>
                 {indexLoading &&
                   Array.from({ length: 7 }, (_, index) => (
-                    <TableRow key={index}>
-                      <TableCell className="px-2.5 py-2">
-                        <Skeleton className="h-8 w-full max-w-xl" />
-                      </TableCell>
-                      <TableCell className="px-2.5 py-2">
+                    <TableRow
+                      className="max-sm:flex max-sm:h-auto max-sm:flex-wrap max-sm:items-center max-sm:py-1"
+                      key={index}
+                    >
+                      <TableCell className="w-32 px-2.5 py-2 max-sm:order-4 max-sm:h-auto max-sm:w-auto max-sm:py-0">
                         <Skeleton className="h-5 w-14" />
                       </TableCell>
-                      <TableCell className="px-2.5 py-2">
+                      <TableCell className="max-w-0 px-2.5 py-2 max-sm:order-1 max-sm:h-auto max-sm:w-0 max-sm:max-w-none max-sm:flex-1 max-sm:py-1 max-sm:pr-1">
+                        <div className="space-y-1">
+                          <Skeleton className="h-3 w-32 max-w-full" />
+                          <Skeleton className="h-4 w-full max-w-xl" />
+                        </div>
+                      </TableCell>
+                      <TableCell className="px-2.5 py-2 max-sm:order-5 max-sm:h-auto max-sm:py-0">
                         <Skeleton className="h-5 w-14" />
                       </TableCell>
-                      <TableCell className="px-2.5 py-2">
-                        <Skeleton className="ms-auto h-5 w-10" />
+                      <TableCell className="px-2.5 py-2 max-sm:order-2 max-sm:ms-auto max-sm:h-auto max-sm:py-1 max-sm:pl-1">
+                        <Skeleton className="h-5 w-14" />
                       </TableCell>
-                      <TableCell className="px-2.5 py-2">
+                      <TableCell
+                        aria-hidden="true"
+                        className="hidden max-sm:order-3 max-sm:block max-sm:h-0 max-sm:w-full max-sm:p-0"
+                      />
+                      <TableCell className="px-2.5 py-2 max-sm:hidden">
                         <Skeleton className="h-4 w-24" />
                       </TableCell>
-                      <TableCell className="px-2.5 py-2">
+                      <TableCell className="px-2.5 py-2 max-sm:order-6 max-sm:ms-auto max-sm:h-auto max-sm:py-0">
                         <Skeleton className="h-7 w-24" />
                       </TableCell>
-                      <TableCell className="px-2.5 py-2" />
+                      <TableCell className="px-2.5 py-2 max-sm:hidden" />
                     </TableRow>
                   ))}
                 {!indexLoading &&
@@ -692,7 +702,7 @@ export function ExceptionsPage() {
                     return (
                       <TableRow
                         aria-selected={familyHash === group.familyHash}
-                        className={`cursor-pointer transition-colors duration-(--dur-fast) hover:bg-panel-raised ${
+                        className={`cursor-pointer transition-colors duration-(--dur-fast) hover:bg-panel-raised max-sm:flex max-sm:h-auto max-sm:flex-wrap max-sm:items-center max-sm:py-1 ${
                           familyHash === group.familyHash
                             ? 'bg-sig-error/10 outline outline-1 -outline-offset-1 outline-sig-error/60'
                             : ''
@@ -701,20 +711,20 @@ export function ExceptionsPage() {
                         key={group.familyHash}
                         onClick={() => openGroup(group)}
                       >
-                        <TableCell className="w-32 py-[var(--cell-py)] text-right">
-                          <div className="ms-auto w-24 space-y-1">
-                            <span className="num block text-sm font-semibold text-ink">
+                        <TableCell className="w-32 py-[var(--cell-py)] text-right max-sm:order-4 max-sm:h-auto max-sm:w-auto max-sm:py-0 max-sm:pl-2.5 max-sm:pr-1 max-sm:text-left max-sm:text-micro max-sm:text-ink-3">
+                          <div className="ms-auto w-24 space-y-1 max-sm:ms-0 max-sm:w-auto max-sm:space-y-0">
+                            <span className="num block text-sm font-semibold text-ink max-sm:text-micro max-sm:font-normal max-sm:text-ink-3">
                               {group.count.toLocaleString()}
                             </span>
                             <SignalMeter
-                              className="ms-auto"
+                              className="ms-auto max-sm:hidden"
                               max={maxOccurrenceCount}
                               signal="error"
                               value={group.count}
                             />
                           </div>
                         </TableCell>
-                        <TableCell className="max-w-0 py-[var(--cell-py)]">
+                        <TableCell className="max-w-0 py-[var(--cell-py)] max-sm:order-1 max-sm:h-auto max-sm:w-0 max-sm:max-w-none max-sm:flex-1 max-sm:py-1 max-sm:pr-1">
                           <button
                             className="block w-full min-w-0 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                             type="button"
@@ -736,13 +746,20 @@ export function ExceptionsPage() {
                             </span>
                           </button>
                         </TableCell>
-                        <TableCell className="num whitespace-nowrap py-[var(--cell-py)] text-xs text-ink-3">
+                        <TableCell className="num whitespace-nowrap py-[var(--cell-py)] text-xs text-ink-3 max-sm:order-5 max-sm:h-auto max-sm:py-0 max-sm:pr-1 max-sm:text-micro">
+                          <span aria-hidden="true" className="hidden max-sm:inline">
+                            ·{' '}
+                          </span>
                           {formatRelativeTime(group.lastSeen)}
                         </TableCell>
-                        <TableCell className="py-[var(--cell-py)]">
+                        <TableCell className="py-[var(--cell-py)] max-sm:order-2 max-sm:ms-auto max-sm:h-auto max-sm:py-1 max-sm:pl-1">
                           <ExceptionStateBadge state={group.state} />
                         </TableCell>
-                        <TableCell className="py-[var(--cell-py)]">
+                        <TableCell
+                          aria-hidden="true"
+                          className="hidden max-sm:order-3 max-sm:block max-sm:h-0 max-sm:w-full max-sm:p-0"
+                        />
+                        <TableCell className="py-[var(--cell-py)] max-sm:hidden">
                           {trendBucketsByFamily[group.familyHash] ? (
                             <ExceptionTrend buckets={trendBucketsByFamily[group.familyHash]} />
                           ) : selectedGroup?.familyHash === group.familyHash ? (
@@ -755,12 +772,13 @@ export function ExceptionsPage() {
                           )}
                         </TableCell>
                         <TableCell
-                          className="py-[var(--cell-py)]"
+                          className="py-[var(--cell-py)] max-sm:order-6 max-sm:ms-auto max-sm:h-auto max-sm:py-0 max-sm:pl-1 max-sm:pr-2"
                           onClick={(event) => event.stopPropagation()}
                         >
                           <div className="flex items-center gap-0.5">
                             <Button
                               aria-label="Resolve exception family"
+                              className="relative pointer-coarse:after:absolute pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11"
                               disabled={
                                 triagePending.has(group.familyHash) || group.state === 'resolved'
                               }
@@ -774,6 +792,7 @@ export function ExceptionsPage() {
                             </Button>
                             <Button
                               aria-label="Ignore exception family"
+                              className="relative pointer-coarse:after:absolute pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11"
                               disabled={
                                 triagePending.has(group.familyHash) || group.state === 'ignored'
                               }
@@ -787,6 +806,7 @@ export function ExceptionsPage() {
                             </Button>
                             <Button
                               aria-label="Reopen exception family"
+                              className="relative pointer-coarse:after:absolute pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11"
                               disabled={
                                 triagePending.has(group.familyHash) || group.state === 'open'
                               }
@@ -800,7 +820,7 @@ export function ExceptionsPage() {
                             </Button>
                           </div>
                         </TableCell>
-                        <TableCell className="py-[var(--cell-py)]">
+                        <TableCell className="py-[var(--cell-py)] max-sm:hidden">
                           <ArrowUpRight aria-hidden="true" className="size-4 text-ink-3" />
                         </TableCell>
                       </TableRow>
@@ -878,8 +898,8 @@ export function ExceptionsPage() {
       </Panel>
 
       {error && visibleGroups.length > 0 && (
-        <div className="flex items-center justify-between rounded-lg border bg-destructive/5 px-3 py-2 text-sm text-destructive-foreground">
-          <span>{error.message}</span>
+        <div className="flex min-w-0 items-center justify-between gap-2 rounded-lg border bg-destructive/5 px-3 py-2 text-sm text-destructive-foreground max-sm:flex-wrap">
+          <span className="min-w-0 break-words">{error.message}</span>
           <Button onClick={() => void loadInitial()} size="sm" variant="ghost">
             Retry
           </Button>
@@ -887,10 +907,10 @@ export function ExceptionsPage() {
       )}
       {triageError && (
         <div
-          className="flex items-center justify-between rounded-lg border bg-destructive/5 px-3 py-2 text-sm text-destructive-foreground"
+          className="flex min-w-0 items-center justify-between gap-2 rounded-lg border bg-destructive/5 px-3 py-2 text-sm text-destructive-foreground max-sm:flex-wrap"
           role="alert"
         >
-          <span>
+          <span className="min-w-0 break-words">
             {triageError.message}. The exception family was returned to its previous state.
           </span>
           <Button onClick={() => setTriageError(null)} size="sm" variant="ghost">
@@ -933,7 +953,7 @@ export function ExceptionsPage() {
                 <>
                   <ExceptionOccurrenceContent entry={selectedOccurrence} />
 
-                  <section className="overflow-hidden rounded-lg border">
+                  <section className="min-w-0 overflow-hidden rounded-lg border">
                     <div className="flex items-center justify-between border-b px-3 py-2">
                       <h3 className="text-sm font-semibold">Occurrences</h3>
                       <Badge variant="secondary">
@@ -954,7 +974,10 @@ export function ExceptionsPage() {
                               onClick={() => setSelectedOccurrence(entry)}
                               type="button"
                             >
-                              <span className="block truncate text-xs font-medium">
+                              <span
+                                className="block truncate text-xs font-medium"
+                                title={occurrence.message}
+                              >
                                 {occurrence.message}
                               </span>
                               <span className="mt-0.5 block text-2xs text-muted-foreground">

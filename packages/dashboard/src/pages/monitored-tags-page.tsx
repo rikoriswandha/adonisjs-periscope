@@ -64,7 +64,7 @@ export function MonitoredTagsPage() {
                   aria-describedby={validationError ? 'monitored-tag-error' : 'monitored-tag-help'}
                   aria-invalid={validationError ? true : undefined}
                   autoComplete="off"
-                  className="num mt-1.5 h-[var(--control-h)] rounded-sm border-edge bg-well text-sm text-ink shadow-none placeholder:text-ink-3 [@media(pointer:coarse)]:h-11"
+                  className="num mt-1.5 h-[var(--control-h)] items-center rounded-sm border-edge bg-well text-sm text-ink shadow-none placeholder:text-ink-3 max-sm:text-md [@media(pointer:coarse)]:h-11"
                   maxLength={TAG_MAX_LENGTH + 1}
                   nativeInput
                   onChange={(event) => {
@@ -72,11 +72,12 @@ export function MonitoredTagsPage() {
                     if (validationError) setValidationError(null)
                   }}
                   placeholder="e.g. tenant:acme"
+                  size="sm"
                   value={value}
                 />
               </label>
               <Button
-                className="h-[var(--control-h)] rounded-sm"
+                className="h-[var(--control-h)] rounded-sm sm:h-[var(--control-h)]"
                 disabled={!monitoredTagsReady || submitting}
                 loading={submitting}
                 type="submit"
@@ -129,7 +130,7 @@ export function MonitoredTagsPage() {
               </p>
             </div>
             <Button
-              className="h-[var(--control-h)] rounded-sm"
+              className="h-[var(--control-h)] rounded-sm sm:h-[var(--control-h)]"
               render={<Link to="/search" />}
               variant="outline"
             >
@@ -151,7 +152,7 @@ export function MonitoredTagsPage() {
                   className="flex min-h-[var(--row-h)] min-w-0 items-center gap-3 px-3 py-[var(--cell-py)]"
                   key={monitoredTag}
                 >
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1 pointer-coarse:[&>button]:min-h-11">
                     <TagChip tag={monitoredTag} />
                   </div>
                   <Button

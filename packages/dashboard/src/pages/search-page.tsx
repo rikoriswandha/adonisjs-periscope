@@ -206,7 +206,7 @@ export function SearchPage() {
               <InputGroup className="well h-[var(--control-h)] min-w-0 rounded-sm border-edge shadow-none [@media(pointer:coarse)]:h-11">
                 <InputGroupInput
                   autoComplete="off"
-                  className="num h-[var(--control-h)] text-sm text-ink placeholder:text-ink-3"
+                  className="num h-[var(--control-h)] text-sm text-ink placeholder:text-ink-3 max-sm:text-md"
                   id="recording-search-text"
                   onChange={(event) => setTextInput(event.target.value)}
                   placeholder="Search requests, messages, commands, payloads…"

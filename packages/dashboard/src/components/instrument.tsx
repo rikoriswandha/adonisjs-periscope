@@ -68,15 +68,19 @@ export function PanelHeader({
   return (
     <header
       className={cn(
-        'flex h-9 shrink-0 items-center gap-2 border-b border-edge px-3 text-ink-2',
+        'flex h-9 shrink-0 items-center gap-2 border-b border-edge px-3 text-ink-2 max-sm:h-auto max-sm:min-h-9 max-sm:flex-wrap max-sm:py-1',
         className
       )}
       {...props}
     >
       {icon && <span className="flex size-3.5 shrink-0 items-center text-ink-3">{icon}</span>}
-      <h2 className="micro-label truncate text-ink-2">{title}</h2>
+      <h2 className="micro-label truncate text-ink-2 max-sm:min-w-0 max-sm:flex-1">{title}</h2>
       {meta && <span className="num shrink-0 text-micro text-ink-4">{meta}</span>}
-      {action && <div className="ms-auto flex shrink-0 items-center gap-1">{action}</div>}
+      {action && (
+        <div className="ms-auto flex shrink-0 items-center gap-1 max-sm:basis-full max-sm:justify-end">
+          {action}
+        </div>
+      )}
     </header>
   )
 }

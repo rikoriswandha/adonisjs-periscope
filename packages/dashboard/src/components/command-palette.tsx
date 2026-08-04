@@ -197,9 +197,9 @@ export function CommandPalette({
 
   return (
     <CommandDialog onOpenChange={onOpenChange} open={open}>
-      <CommandDialogPopup>
+      <CommandDialogPopup className="max-sm:max-w-none">
         <Command items={groups}>
-          <CommandInput placeholder="Jump to a watcher, or run a command…" />
+          <CommandInput className="max-sm:text-md" placeholder="Jump to a watcher, or run a command…" />
           <CommandPanel>
             <CommandEmpty>No matching watcher or command.</CommandEmpty>
             <CommandList>
@@ -211,7 +211,12 @@ export function CommandPalette({
                       {(item: PaletteItem) => {
                         const Icon = item.icon
                         return (
-                          <CommandItem key={item.value} onClick={item.run} value={item.value}>
+                          <CommandItem
+                            className="pointer-coarse:min-h-11"
+                            key={item.value}
+                            onClick={item.run}
+                            value={item.value}
+                          >
                             <Icon aria-hidden="true" />
                             <span className="flex-1 truncate">{item.label}</span>
                             {item.hint && (

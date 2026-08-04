@@ -105,7 +105,7 @@ export function EntryFilterBar() {
                     ))}
                     <ComboboxChipsInput
                       aria-label="Filter by exact tags"
-                      className="num h-[var(--control-h)] text-xs text-ink placeholder:text-ink-3"
+                      className="num h-[var(--control-h)] text-xs text-ink placeholder:text-ink-3 max-sm:text-md"
                       onKeyDown={handleTagKeyDown}
                       placeholder={tags.length > 0 ? 'Add tag…' : 'Filter exact tags…'}
                       size="sm"

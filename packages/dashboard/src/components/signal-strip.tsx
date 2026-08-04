@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import type { Signal } from '@/components/instrument'
 import { SIGNAL_BG } from '@/components/instrument'
 import { useDashboard } from '@/dashboard-context'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type { EntryType } from '@/types'
@@ -23,7 +24,8 @@ import type { EntryType } from '@/types'
  * params the API already supports, so it is a navigation control, not decoration.
  */
 
-const BUCKET_COUNT = 96
+const DESKTOP_BUCKET_COUNT = 96
+const MOBILE_BUCKET_COUNT = 32
 /** How often the trailing edge of the window advances while idle. */
 const CLOCK_TICK_MS = 15_000
 const SAMPLE_SIZE = 400
@@ -58,6 +60,7 @@ function sampleSignal(type: EntryType, content: Record<string, unknown>): Signal
 
 export function SignalStrip({ className }: { className?: string }) {
   const navigate = useNavigate()
+  const bucketCount = useMediaQuery('max-sm') ? MOBILE_BUCKET_COUNT : DESKTOP_BUCKET_COUNT
   const { selectedApplication, flushEvent, flushRevision, revision, status } = useDashboard()
   const [samples, setSamples] = useState<Sample[]>([])
   const [ready, setReady] = useState(false)
@@ -123,9 +126,9 @@ export function SignalStrip({ className }: { className?: string }) {
     const first = samples[0].at
     const last = Math.max(samples[samples.length - 1].at, now)
     const span = Math.max(last - first, 1)
-    const width = span / BUCKET_COUNT
+    const width = span / bucketCount
 
-    const list: Bucket[] = Array.from({ length: BUCKET_COUNT }, (_, index) => ({
+    const list: Bucket[] = Array.from({ length: bucketCount }, (_, index) => ({
       count: 0,
       signal: 'neutral',
       from: first + index * width,
@@ -133,7 +136,7 @@ export function SignalStrip({ className }: { className?: string }) {
     }))
 
     for (const sample of samples) {
-      const index = Math.min(BUCKET_COUNT - 1, Math.floor((sample.at - first) / width))
+      const index = Math.min(bucketCount - 1, Math.floor((sample.at - first) / width))
       const bucket = list[index]
       bucket.count += 1
       if (SIGNAL_RANK[sample.signal] > SIGNAL_RANK[bucket.signal]) bucket.signal = sample.signal
@@ -145,7 +148,7 @@ export function SignalStrip({ className }: { className?: string }) {
       end: last,
       max: list.reduce((highest, bucket) => Math.max(highest, bucket.count), 0),
     }
-  }, [samples, now])
+  }, [bucketCount, samples, now])
 
   const openBucket = useCallback(
     (bucket: Bucket) => {
@@ -183,19 +186,24 @@ export function SignalStrip({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        'relative flex h-9 shrink-0 items-stretch gap-3 border-b border-edge bg-chassis px-3',
+        'relative flex h-9 min-w-0 shrink-0 items-stretch gap-3 border-b border-edge bg-chassis px-3 max-sm:gap-2',
         className
       )}
     >
-      <div className="flex shrink-0 items-center gap-2 py-1">
-        <span className="micro-label">Activity</span>
-        <span className="num text-micro text-ink-4">
+      {/*
+        The kicker is the first thing to go on a phone: every pixel it costs is a
+        pixel off each bucket's tap target, and the strip's `aria-label` already
+        names it. The sample count stays — it is the readout, not the label.
+      */}
+      <div className="flex min-w-0 items-center gap-2 py-1">
+        <span className="micro-label shrink-0 max-sm:hidden">Activity</span>
+        <span className="num min-w-0 truncate text-micro text-ink-4">
           {ready ? `${total.toLocaleString()} sampled` : '—'}
         </span>
       </div>
 
       {!ready ? (
-        <div className="flex flex-1 items-end gap-px py-1.5" aria-hidden="true">
+        <div className="flex min-w-0 flex-1 items-end gap-px py-1.5" aria-hidden="true">
           {Array.from({ length: 48 }, (_, index) => (
             <span
               className="h-1 flex-1 rounded-[1px] bg-edge/60 animate-skeleton"
@@ -205,8 +213,8 @@ export function SignalStrip({ className }: { className?: string }) {
           ))}
         </div>
       ) : buckets.length === 0 ? (
-        <div className="flex flex-1 items-center">
-          <span className="text-micro text-ink-4">
+        <div className="flex min-w-0 flex-1 items-center">
+          <span className="truncate text-micro text-ink-4">
             No recorded activity yet — this fills in as your application handles traffic.
           </span>
         </div>
@@ -214,7 +222,7 @@ export function SignalStrip({ className }: { className?: string }) {
         <>
           <div
             aria-label={`Recent activity: ${total} entries, ${errors} errors, between ${stampFormat.format(start)} and ${stampFormat.format(end)}`}
-            className="group/strip relative flex flex-1 items-end gap-px py-1.5"
+            className="group/strip relative flex min-w-0 flex-1 items-end gap-px py-1.5"
             onMouseLeave={() => setHovered(null)}
             role="img"
           >
@@ -251,24 +259,24 @@ export function SignalStrip({ className }: { className?: string }) {
             })}
           </div>
 
-          <div className="flex shrink-0 items-center gap-2 py-1">
+          <div className="flex min-w-0 items-center gap-2 py-1">
             {active && active.count > 0 ? (
-              <span className="num text-micro text-ink-2" role="status">
+              <span className="num min-w-0 truncate text-micro text-ink-2" role="status">
                 {active.count.toLocaleString()} @ {stampFormat.format(active.from)}
               </span>
             ) : (
-              <span className="num text-micro text-ink-4">
+              <span className="num text-micro text-ink-4 max-sm:hidden">
                 {timeFormat.format(start)} → {timeFormat.format(end)}
               </span>
             )}
             {errors > 0 && (
-              <span className="num inline-flex items-center gap-1 text-micro text-sig-error">
+              <span className="num inline-flex shrink-0 items-center gap-1 text-micro text-sig-error">
                 <span className={cn('size-[5px] rounded-full', SIGNAL_BG.error)} />
                 {errors.toLocaleString()}
               </span>
             )}
             {status?.paused && (
-              <span className="micro-label text-sig-warn" title="Recording is paused">
+              <span className="micro-label shrink-0 text-sig-warn" title="Recording is paused">
                 Paused
               </span>
             )}

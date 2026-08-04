@@ -81,11 +81,16 @@ function queryColumns(maxDurationMs: number): EntryColumn[] {
     cell: (entry) => {
       const durationMs = queryContent(entry).durationMs
       const slow = entry.tags.includes('slow')
+      /*
+        The meter is a magnitude cue for a wide, scannable column. Restacked into
+        the phone meta line it reads as a stray rule under the number, so below
+        `sm` the badge carries the value on its own.
+      */
       return (
-        <div className="ms-auto w-24 space-y-1 text-right">
+        <div className="ms-auto w-24 space-y-1 text-right max-sm:ms-0 max-sm:w-auto max-sm:space-y-0">
           <DurationBadge slow={slow} value={durationMs} />
           <SignalMeter
-            className="ms-auto"
+            className="ms-auto max-sm:hidden"
             max={maxDurationMs}
             signal={slow ? 'warn' : 'neutral'}
             value={durationMs ?? 0}

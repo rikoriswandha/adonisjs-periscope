@@ -386,6 +386,7 @@ export function RequestBatchPage() {
 
         <Panel aria-labelledby="ambient-batch-title">
           <PanelHeader
+            className="max-sm:h-auto max-sm:flex-wrap max-sm:gap-y-1 max-sm:py-2 max-sm:[&>h2]:basis-full max-sm:[&>h2]:shrink-0"
             action={
               <Button
                 render={<a download href={api.getBatchExportUrl(batchId)} />}
@@ -466,6 +467,7 @@ export function RequestBatchPage() {
 
       <Panel aria-labelledby="request-batch-title">
         <PanelHeader
+          className="max-sm:h-auto max-sm:flex-wrap max-sm:gap-y-1 max-sm:py-2 max-sm:[&>h2]:basis-full max-sm:[&>h2]:shrink-0"
           action={
             <Button
               render={<a download href={api.getBatchExportUrl(batchId)} />}

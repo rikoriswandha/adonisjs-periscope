@@ -29,7 +29,7 @@ export function SqlBlock({ sql, bindings }: { sql: string; bindings?: unknown })
   const tokens = useMemo(() => tokenizeSql(formatted), [formatted])
 
   return (
-    <Well aria-label="SQL query" className="overflow-hidden" role="region">
+    <Well aria-label="SQL query" className="min-w-0 max-w-full overflow-hidden" role="region">
       <header className="flex min-h-9 items-center justify-between border-b border-edge px-3">
         <h3 className="micro-label text-ink-2">SQL</h3>
         <CopyButton label="Copy SQL" value={formatted} />
@@ -45,7 +45,7 @@ export function SqlBlock({ sql, bindings }: { sql: string; bindings?: unknown })
       </pre>
       {bindings !== undefined && (
         <Collapsible onOpenChange={setBindingsOpen} open={bindingsOpen}>
-          <CollapsibleTrigger className="flex min-h-(--control-h) w-full items-center justify-between border-t border-edge px-3 text-left text-xs font-medium text-ink-2 outline-none transition-colors hover:bg-panel-raised focus-visible:bg-panel-raised active:bg-panel-raised disabled:pointer-events-none disabled:opacity-50">
+          <CollapsibleTrigger className="flex min-h-(--control-h) w-full items-center justify-between border-t border-edge px-3 text-left text-xs font-medium text-ink-2 outline-none transition-colors pointer-coarse:min-h-11 hover:bg-panel-raised focus-visible:bg-panel-raised active:bg-panel-raised disabled:pointer-events-none disabled:opacity-50">
             <span>Bindings</span>
             <ChevronDown
               aria-hidden="true"
