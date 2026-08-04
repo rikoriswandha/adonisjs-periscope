@@ -863,8 +863,17 @@ export function AppShell() {
             </div>
           )}
 
-          <main className="min-h-0 flex-1 overflow-y-auto bg-chassis pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))]">
-            <Outlet />
+          {/*
+            Vertical breathing room lives on the inner wrapper, not on the
+            scroll container. `overflow` clips at the padding box while a
+            sticky offset is measured from inside it, so padding here would
+            leave a band above every sticky table header that rows scroll
+            through in full view.
+          */}
+          <main className="min-h-0 flex-1 overflow-y-auto bg-chassis ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))]">
+            <div className="pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+              <Outlet />
+            </div>
           </main>
         </div>
       </div>
