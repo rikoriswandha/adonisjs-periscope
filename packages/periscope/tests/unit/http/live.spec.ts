@@ -229,13 +229,13 @@ test.group('Dashboard live HTTP API', () => {
     await streaming
     source.publish(makeFlushedEvent('13', 'alpha'))
 
-    for (const sequence of ['11', '12', '13']) {
-      const event = makeFlushedEvent(sequence, 'alpha')
-      assert.equal(
-        body.read().toString(),
-        `event: flush\nid: ${sequence}\ndata: ${JSON.stringify(event)}\n\n`
-      )
-    }
+    const expected = ['11', '12', '13']
+      .map((sequence) => {
+        const event = makeFlushedEvent(sequence, 'alpha')
+        return `event: flush\nid: ${sequence}\ndata: ${JSON.stringify(event)}\n\n`
+      })
+      .join('')
+    assert.equal(body.read().toString(), expected)
     assert.deepEqual(store.queries, [
       {
         afterSequence: '10',
