@@ -1,0 +1,44 @@
+name: Validate reviewed performance gate
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  performance:
+    name: Performance gate
+    if: github.head_ref == 'codex/public-repo-review-20260907'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Provision playground env
+        shell: bash
+        run: |
+          if [ -f playground/.env ]; then
+            echo "playground/.env already present; leaving it untouched."
+          elif [ -f playground/.env.example ]; then
+            cp playground/.env.example playground/.env
+          else
+            echo "::error::playground/.env.example is missing; the benchmark cannot boot."
+            exit 1
+          fi
+
+      - name: Baseline, enabled load, record-path, and 10-minute soak
+        run: npm run bench
+        env:
+          PERISCOPE_BENCH_DURATION_SECONDS: '30'
+          PERISCOPE_SOAK_SECONDS: '600'
+          PERISCOPE_SOAK_RPS: '200'
