@@ -5,6 +5,8 @@
  * file that was distributed with this source code.
  */
 
+import { basename } from 'node:path'
+
 import { test } from '@japa/runner'
 import { cliui } from '@poppinss/cliui'
 import { Codemods } from '@adonisjs/core/ace/codemods'
@@ -141,7 +143,7 @@ test.group('Configure', () => {
   test('exports the named v7 hook and stubs root from the package root', ({ assert }) => {
     assert.strictEqual(rootConfigure, configure)
     assert.isString(stubsRoot)
-    assert.isTrue(stubsRoot.endsWith('/stubs'))
+    assert.equal(basename(stubsRoot), 'stubs')
   })
 
   test('configures the default sqlite-local installation and is idempotent', async ({
