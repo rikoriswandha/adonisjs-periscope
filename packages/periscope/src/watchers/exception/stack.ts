@@ -144,7 +144,9 @@ function normalizeFile(file: string): string {
   }
 
   try {
-    return fileURLToPath(file)
+    const url = new URL(file)
+    const windows = url.hostname !== '' || /^\/[a-z]:\//i.test(url.pathname)
+    return fileURLToPath(url, { windows })
   } catch {
     return file
   }

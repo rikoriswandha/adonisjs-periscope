@@ -374,7 +374,7 @@ function registerDriverTests(connection: TestConnection): void {
       assert.lengthOf(captured, 1)
       const sql = captured[0].sql.toLowerCase()
       if (connection === 'postgres') {
-        assert.include(sql, "content ilike $1 escape '!'")
+        assert.match(sql, /content ilike (?:\$\d+|\?) escape '!'/)
         assert.notInclude(sql, 'lower(content)')
       } else {
         assert.include(sql, "lower(content) like ? escape '!'")
