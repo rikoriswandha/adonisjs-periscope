@@ -48,15 +48,19 @@ const exportedFiles = Object.entries(packageJson.exports).flatMap(([specifier, t
   })
 )
 
+const npmCli = process.env.npm_execpath
+if (!npmCli) throw new Error('Run this verifier through npm run pack:test')
+
 const destination = mkdtempSync(join(tmpdir(), 'periscope-pack-'))
 
 try {
   const packed = spawnSync(
-    process.platform === 'win32' ? 'npm.cmd' : 'npm',
-    ['pack', '--json', '--silent', '--pack-destination', destination],
+    process.execPath,
+    [npmCli, 'pack', '--json', '--silent', '--pack-destination', destination],
     { cwd: packageRoot, encoding: 'utf8' }
   )
 
+  if (packed.error) throw packed.error
   if (packed.status !== 0) {
     throw new Error(`npm pack failed:\n${packed.stderr || packed.stdout}`)
   }
