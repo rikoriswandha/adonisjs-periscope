@@ -235,7 +235,10 @@ test.group('Dashboard live HTTP API', () => {
         return `event: flush\nid: ${sequence}\ndata: ${JSON.stringify(event)}\n\n`
       })
       .join('')
-    assert.equal(body.read().toString(), expected)
+    const chunks: string[] = []
+    let chunk: Buffer | null
+    while ((chunk = body.read()) !== null) chunks.push(chunk.toString())
+    assert.equal(chunks.join(''), expected)
     assert.deepEqual(store.queries, [
       {
         afterSequence: '10',
