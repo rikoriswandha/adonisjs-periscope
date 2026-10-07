@@ -54,7 +54,15 @@ if (audit.stdout.trim() === '') {
 }
 
 const report = JSON.parse(audit.stdout) as AuditReport
-const vulnerabilities = report.vulnerabilities ?? {}
+if (
+  (audit.status !== 0 && audit.status !== 1) ||
+  report.vulnerabilities === null ||
+  typeof report.vulnerabilities !== 'object' ||
+  Array.isArray(report.vulnerabilities)
+) {
+  throw new Error(`npm audit did not return a valid vulnerability report\n${audit.stdout}`)
+}
+const vulnerabilities = report.vulnerabilities
 const memo = new Map<string, boolean>()
 
 function reviewed(name: string, visiting = new Set<string>()): boolean {

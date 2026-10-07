@@ -370,3 +370,13 @@ test.group('ExceptionWatcher | capture', () => {
     assert.notInclude(process.listeners('uncaughtExceptionMonitor'), observer!)
   })
 })
+
+test('normalize POSIX and Windows file URLs independently of the host OS', ({ assert }) => {
+  const frames = parseStack(
+    'Error: failed\n    at file:///app/a%20b.ts:1:2\n    at file:///C:/app/a%20b.ts:3:4'
+  )
+  assert.deepEqual(
+    frames.map((frame) => frame.file),
+    ['/app/a b.ts', 'C:\\app\\a b.ts']
+  )
+})

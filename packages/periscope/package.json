@@ -60,7 +60,7 @@
     "compile": "tsc",
     "postcompile": "npm run copy:templates && npm run index:commands",
     "copy:templates": "node --input-type=module -e \"import { cpSync } from 'node:fs'; cpSync('stubs', 'build/stubs', { recursive: true })\"",
-    "index:commands": "adonis-kit index build/commands",
+    "index:commands": "node --input-type=module -e \"import { IndexGenerator } from '@adonisjs/ace'; import { resolve } from 'node:path'; await new IndexGenerator(resolve('build/commands')).generate()\"",
     "prepack": "npm run build && npm -w @periscope/dashboard run build && node --input-type=module -e \"import { cpSync } from 'node:fs'; cpSync('../../README.md', 'README.md')\"",
     "build": "npm run clean && npm run compile",
     "test": "node --import=@poppinss/ts-exec --enable-source-maps bin/test.ts",
